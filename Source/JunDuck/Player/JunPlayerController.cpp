@@ -123,6 +123,13 @@ void AJunPlayerController::Input_Move(const FInputActionValue& InputValue)
 		JunPlayer->BufferParrySuccessCancelAction(EJunBufferedParrySuccessCancelAction::Move);
 	}
 
+	if (JunPlayer->IsJumpAttacking() &&
+		(MoveVec.X != 0.f || MoveVec.Y != 0.f) &&
+		JunPlayer->TryCancelJumpAttackEndIntoMove())
+	{
+		return;
+	}
+
 	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Block_Move) || 
 		JunPlayer->GetPlayerIsFalling())
 	{
@@ -176,6 +183,7 @@ void AJunPlayerController::Input_Jump(const FInputActionValue& InputValue)
 
 	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Action_Dodge))
 	{
+		JunPlayer->TryCancelDodgeIntoJump();
 		return;
 	}
 
@@ -191,6 +199,12 @@ void AJunPlayerController::Input_Jump(const FInputActionValue& InputValue)
 		{
 			JunPlayer->BufferBasicAttackRecoveryAction(EJunBufferedRecoveryAction::Jump);
 		}
+		return;
+	}
+
+	if (JunPlayer->IsHeavyAttacking())
+	{
+		JunPlayer->Jump();
 		return;
 	}
 
@@ -238,6 +252,18 @@ void AJunPlayerController::Input_Dodge(const FInputActionValue& InputValue)
 		return;
 	}
 
+	if (JunPlayer->IsHeavyAttacking())
+	{
+		JunPlayer->StartDodge();
+		return;
+	}
+
+	if (JunPlayer->IsJumpAttacking())
+	{
+		JunPlayer->TryCancelJumpAttackEndIntoDodge();
+		return;
+	}
+
 	if (JunPlayer->CanBufferDefenseTransitionCancel())
 	{
 		JunPlayer->BufferDefenseTransitionCancelAction(EJunBufferedDefenseCancelAction::Dodge);
@@ -247,6 +273,12 @@ void AJunPlayerController::Input_Dodge(const FInputActionValue& InputValue)
 	if (JunPlayer->CanCancelBasicAttackIntoRecoveryAction(EJunBufferedRecoveryAction::Dodge))
 	{
 		JunPlayer->BufferBasicAttackRecoveryAction(EJunBufferedRecoveryAction::Dodge);
+		return;
+	}
+
+	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Action_Dodge))
+	{
+		JunPlayer->StartDodge();
 		return;
 	}
 
@@ -275,19 +307,36 @@ void AJunPlayerController::Input_BasicAttack(const FInputActionValue& InputValue
 		return;
 	}
 
-	if (JunPlayer->GetPlayerIsFalling())
-	{
-		return;
-	}
-
 	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Action_Dodge))
 	{
+		if (!JunPlayer->TryStartDodgeAttack())
+		{
+			JunPlayer->TryCancelDodgeIntoBasicAttack();
+		}
 		return;
 	}
 
 	if (JunPlayer->IsInParrySuccess())
 	{
 		JunPlayer->BufferParrySuccessCancelAction(EJunBufferedParrySuccessCancelAction::BasicAttack);
+		return;
+	}
+
+	if (JunPlayer->IsJumpAttacking())
+	{
+		JunPlayer->TryCancelJumpAttackEndIntoBasicAttack();
+		return;
+	}
+
+	if (JunPlayer->IsDodgeAttacking())
+	{
+		JunPlayer->TryCancelDodgeAttackIntoBasicAttack();
+		return;
+	}
+
+	if (JunPlayer->IsHeavyAttacking())
+	{
+		JunPlayer->TryCancelHeavyAttackIntoBasicAttack();
 		return;
 	}
 

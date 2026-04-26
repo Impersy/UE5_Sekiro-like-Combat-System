@@ -123,6 +123,8 @@ public:
 	virtual void EndAttackTraceWindow() override;
 	virtual void BeginKickAttackTraceWindow(EHitReactType HitReactType = EHitReactType::LightHit) override;
 	virtual void EndKickAttackTraceWindow() override;
+	void BeginAttackFacingWindow(float InterpSpeed);
+	void EndAttackFacingWindow();
 
 protected:
 	// Spawn-time setup: team, weapon, home position and initial top-level state.
@@ -374,6 +376,12 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Attack")
 	FMonsterAttackSelection CurrentAttackSelection;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Attack")
+	bool bAttackFacingWindowActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Attack")
+	float AttackFacingWindowInterpSpeed = 0.f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Turn")
 	TObjectPtr<class UAnimMontage> TurnLeft90Montage = nullptr;
 
@@ -446,6 +454,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact")
 	float LargeHitDuration = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float LargeHitLongDuration = 0.8f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
 	TObjectPtr<class UAnimMontage> HeavyHitFront_AMontage = nullptr;

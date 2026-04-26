@@ -1,5 +1,6 @@
 #include "Character/WukongBoss.h"
 
+#include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Engine/Engine.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -124,10 +125,6 @@ namespace
 			return TEXT("DodgeAttack");
 		case EWukongNormalAttackType::Ambush:
 			return TEXT("Ambush");
-		case EWukongNormalAttackType::Heavy:
-			return TEXT("Heavy");
-		case EWukongNormalAttackType::Spin:
-			return TEXT("Spin");
 		case EWukongNormalAttackType::NinjaA:
 			return TEXT("NinjaA");
 		case EWukongNormalAttackType::NinjaB:
@@ -140,13 +137,35 @@ namespace
 		}
 	}
 
+	const TCHAR* GetWukongCodeMoveStopReasonDebugText(EWukongCodeMoveStopReason StopReason)
+	{
+		switch (StopReason)
+		{
+		case EWukongCodeMoveStopReason::Started:
+			return TEXT("Started");
+		case EWukongCodeMoveStopReason::TooClose:
+			return TEXT("TooClose");
+		case EWukongCodeMoveStopReason::MaxDistance:
+			return TEXT("MaxDistance");
+		case EWukongCodeMoveStopReason::DurationEnd:
+			return TEXT("DurationEnd");
+		case EWukongCodeMoveStopReason::LostTarget:
+			return TEXT("LostTarget");
+		case EWukongCodeMoveStopReason::InvalidMovement:
+			return TEXT("InvalidMovement");
+		case EWukongCodeMoveStopReason::Interrupted:
+			return TEXT("Interrupted");
+		case EWukongCodeMoveStopReason::None:
+		default:
+			return TEXT("None");
+		}
+	}
+
 	constexpr EWukongNormalAttackType AllWukongNormalAttackTypes[] = {
 		EWukongNormalAttackType::JumpAttack,
 		EWukongNormalAttackType::ChargeAttack,
 		EWukongNormalAttackType::DodgeAttack,
 		EWukongNormalAttackType::Ambush,
-		EWukongNormalAttackType::Heavy,
-		EWukongNormalAttackType::Spin,
 		EWukongNormalAttackType::NinjaA,
 		EWukongNormalAttackType::NinjaB,
 		EWukongNormalAttackType::Execution
@@ -157,6 +176,10 @@ AWukongBoss::AWukongBoss()
 {
 	WalkMoveSpeed = 200.f;
 	RunMoveSpeed = 700.f;
+
+	ComboAttackA.PlayRate = 0.8f;
+	ComboAttackB.PlayRate = 0.8f;
+
 	JumpAttack.MinRange = 0.f;
 	JumpAttack.MaxRange = 700.f;
 	JumpAttack.CandidateMaxRange = 900.f;
@@ -169,6 +192,8 @@ AWukongBoss::AWukongBoss()
 	JumpAttack.MoveStandOffDistance = 20.f;
 	JumpAttack.GroundMotionOverrideDuration = 0.8f;
 	JumpAttack.AirTrackInterpSpeed = 8.f;
+	JumpAttack.CodeMoveStopDistance = 20.f;
+	JumpAttack.CodeMoveMaxDistance = 700.f;
 	JumpAttack.bTryTurnAfterAttack = true;
 	JumpAttack.PostAttackTurnStartAngle = TurnStartAngle;
 
@@ -193,15 +218,6 @@ AWukongBoss::AWukongBoss()
 
 	AmbushAttack.FacingDuration = 0.5f;
 	ExecutionAttack.FacingDuration = 1.5f;
-	HeavyAttack.FacingDuration = 1.2f;
-	HeavyAttack.PlayRate = 0.8f;
-	HeavyAttack.MoveStartTimeAtPlayRateOne = 0.82f;
-	HeavyAttack.MoveSpeed = 2000.f;
-	HeavyAttack.MoveStandOffDistance = 30.f;
-	HeavyAttack.GroundMotionOverrideDuration = 0.35f;
-	SpinAttack.bFaceTargetDuringAttack = false;
-	SpinAttack.FacingDuration = 0.f;
-	SpinAttack.MaxRange = 200.f;
 	NinjaAAttack.FacingDuration = 1.7f;
 	NinjaBAttack.FacingDuration = 1.4f;
 }
@@ -297,7 +313,7 @@ FMonsterAttackSelection AWukongBoss::ChooseNextAttackSelection() const
 				Selection.Montage = NormalAttackData->Montage;
 				Selection.AttackRange = NormalAttackData->MaxRange;
 				Selection.bFaceTargetDuringAttack = NormalAttackData->bFaceTargetDuringAttack;
-				Selection.FacingDuration = NormalAttackData->FacingDuration;
+				Selection.FacingDuration = NormalAttackData->bUseAnimNotifyTiming ? 0.f : NormalAttackData->FacingDuration;
 				Selection.FacingInterpSpeed = NormalAttackData->FacingInterpSpeed;
 				Selection.PlayRate = NormalAttackData->PlayRate;
 				Selection.bTryTurnAfterAttack = NormalAttackData->bTryTurnAfterAttack;
@@ -315,8 +331,11 @@ FMonsterAttackSelection AWukongBoss::ChooseNextAttackSelection() const
 			Selection.Montage = PlannedComboMontage;
 			Selection.AttackRange = ComboAttackData ? ComboAttackData->AttackRange : 250.f;
 			Selection.bFaceTargetDuringAttack = true;
-			Selection.FacingDuration = GetPlannedComboFacingDuration();
+			Selection.FacingDuration = ComboAttackData && ComboAttackData->bUseAnimNotifyTiming
+				? 0.f
+				: GetPlannedComboFacingDuration();
 			Selection.FacingInterpSpeed = AttackFacingInterpSpeed;
+			Selection.PlayRate = ComboAttackData ? ComboAttackData->PlayRate : 1.f;
 			Selection.bTryTurnAfterAttack = true;
 			Selection.PostAttackTurnStartAngle = TurnStartAngle;
 			return Selection;
@@ -375,7 +394,6 @@ void AWukongBoss::EnterApproachState()
 	CombatMoveInput = FVector2D::ZeroVector;
 	GetCharacterMovement()->bOrientRotationToMovement = false;
 	bRunLocomotionRequested = false;
-	ResetApproachRuntimeState();
 }
 
 void AWukongBoss::EnterIdleState()
@@ -417,7 +435,6 @@ void AWukongBoss::EnterHitState()
 	ResetReactiveActionState();
 	ResetActiveReactiveActionState();
 	ResetPendingAttackMotionState();
-	ResetComboDodgeFollowUpState();
 	ResetCurrentAttackRuntimeState();
 	ResetPlannedCombatPlan();
 }
@@ -446,35 +463,41 @@ void AWukongBoss::EnterAttackState()
 	{
 		CurrentAttackActionType = EWukongActionType::ComboAttack;
 		CurrentAttackComboSet = PlannedComboSet;
-		CurrentAttackComboLength = PlannedComboLength;
+		CurrentAttackComboLength = 1;
+		PlannedComboLength = 1;
 	}
 
-	if (CurrentAttackActionType == EWukongActionType::NormalAttack &&
+	const bool bUseNormalAttackAnimNotifyTiming = CurrentNormalAttackData && CurrentNormalAttackData->bUseAnimNotifyTiming;
+	const FWukongComboAttackData* CurrentComboAttackData =
+		(CurrentAttackActionType == EWukongActionType::ComboAttack)
+			? GetComboAttackData(CurrentAttackComboSet)
+			: nullptr;
+	const bool bUseComboAttackAnimNotifyTiming = CurrentComboAttackData && CurrentComboAttackData->bUseAnimNotifyTiming;
+
+	if (!bUseNormalAttackAnimNotifyTiming &&
+		CurrentAttackActionType == EWukongActionType::NormalAttack &&
 		CurrentAttackNormalAttackType == EWukongNormalAttackType::JumpAttack)
 	{
 		const float JumpMoveStartTime = CurrentNormalAttackData
 			? CurrentNormalAttackData->MoveStartTimeAtPlayRateOne
 			: 0.f;
-		bPendingJumpAttackLaunch = true;
-		JumpAttackLaunchDelayRemainTime = JumpMoveStartTime / CurrentNormalAttackPlayRate;
-	}
-
-	if (CurrentAttackActionType == EWukongActionType::NormalAttack &&
-		CurrentAttackNormalAttackType == EWukongNormalAttackType::Heavy)
-	{
-		const float HeavyMoveStartTime = CurrentNormalAttackData
-			? CurrentNormalAttackData->MoveStartTimeAtPlayRateOne
-			: 0.f;
-		bPendingHeavyAttackMove = true;
-		HeavyAttackMoveDelayRemainTime = HeavyMoveStartTime / CurrentNormalAttackPlayRate;
+		QueueCodeDrivenAttackMove(EWukongNormalAttackType::JumpAttack, JumpMoveStartTime / CurrentNormalAttackPlayRate);
 	}
 
 	const float AttackMontageDuration = AttackSelection.Montage
 		? AttackSelection.Montage->GetPlayLength() / FMath::Max(AttackSelection.PlayRate, KINDA_SMALL_NUMBER)
 		: 0.f;
-	ApplyTimedMontageSuperArmor(AttackMontageDuration);
+	if (!bUseNormalAttackAnimNotifyTiming && !bUseComboAttackAnimNotifyTiming)
+	{
+		ApplyTimedMontageSuperArmor(AttackMontageDuration);
+	}
 
 	TryAttack();
+
+	if (CurrentAttackActionType == EWukongActionType::ComboAttack)
+	{
+		ConfigurePlannedComboMontageSections();
+	}
 }
 
 void AWukongBoss::EnterRecoveryState()
@@ -486,53 +509,10 @@ void AWukongBoss::EnterRecoveryState()
 	SetDesiredMoveAxes(0.f, 0.f);
 	StopAIMovement();
 	RestoreAttackGroundMotionOverride();
-	ResetComboDodgeFollowUpState();
 
 	if (!bAttackInterruptedByHitReact && CurrentAttackActionType != EWukongActionType::None)
 	{
 		RecordAction(CurrentAttackActionType, CurrentAttackComboSet, CurrentAttackComboLength, CurrentAttackNormalAttackType);
-	}
-
-	const bool bCanStartComboDodgeFollowUp =
-		!bAttackInterruptedByHitReact &&
-		CurrentAttackActionType == EWukongActionType::ComboAttack &&
-		!bCurrentAttackStartedFromComboDodgeFollowUp &&
-		(CurrentAttackComboLength == 1 || CurrentAttackComboLength == 2);
-
-	if (bCanStartComboDodgeFollowUp)
-	{
-		TArray<TPair<UAnimMontage*, EWukongMovementDirection>> DodgeCandidates;
-		if (DodgeLeftMontage)
-		{
-			DodgeCandidates.Emplace(DodgeLeftMontage.Get(), EWukongMovementDirection::Left);
-		}
-		if (DodgeRightMontage)
-		{
-			DodgeCandidates.Emplace(DodgeRightMontage.Get(), EWukongMovementDirection::Right);
-		}
-
-		if (DodgeCandidates.Num() > 0)
-		{
-			const TPair<UAnimMontage*, EWukongMovementDirection>& SelectedDodge =
-				DodgeCandidates[FMath::RandRange(0, DodgeCandidates.Num() - 1)];
-			if (CurrentTarget)
-			{
-				FVector ToTarget = CurrentTarget->GetActorLocation() - GetActorLocation();
-				ToTarget.Z = 0.f;
-				if (!ToTarget.IsNearlyZero())
-				{
-					SetActorRotation(ToTarget.Rotation());
-				}
-			}
-			PlayAnimMontage(SelectedDodge.Key);
-			PlannedNonAttackType = EWukongPlannedNonAttackType::Dodge;
-			PlannedMovementDirection = SelectedDodge.Value;
-			PendingComboDodgeFollowUpDuration = SelectedDodge.Key
-				? SelectedDodge.Key->GetPlayLength()
-				: ComboDodgeFollowUpFallbackDuration;
-			PendingComboDodgeFollowUpMinComboLengthExclusive = CurrentAttackComboLength;
-			bPendingComboDodgeFollowUp = true;
-		}
 	}
 
 	ResetPlannedCombatPlan();
@@ -741,45 +721,6 @@ void AWukongBoss::UpdateApproachState(float DeltaTime)
 		return;
 	}
 
-	if (bApproachComeHereInProgress)
-	{
-		ApproachComeHereRemainTime = FMath::Max(0.f, ApproachComeHereRemainTime - DeltaTime);
-		StopAIMovement();
-		GetCharacterMovement()->StopMovementImmediately();
-		bRunLocomotionRequested = false;
-		SetDesiredMoveAxes(0.f, 0.f);
-
-		if (ApproachComeHereRemainTime <= 0.f)
-		{
-			bApproachComeHereInProgress = false;
-			if (bDiscardPlannedAttackAfterApproachComeHere)
-			{
-				bDiscardPlannedAttackAfterApproachComeHere = false;
-				ResetPlannedCombatPlan();
-				SetWukongCombatState(EWukongCombatState::Idle);
-				return;
-			}
-		}
-
-		return;
-	}
-
-	if (!bApproachComeHereTriggered &&
-		ComeHereMontage &&
-		CombatSubStateElapsedTime >= ApproachComeHereDelay)
-	{
-		bApproachComeHereTriggered = true;
-		bApproachComeHereInProgress = true;
-		bDiscardPlannedAttackAfterApproachComeHere = true;
-		ApproachComeHereRemainTime = ComeHereMontage->GetPlayLength();
-		StopAIMovement();
-		GetCharacterMovement()->StopMovementImmediately();
-		bRunLocomotionRequested = false;
-		SetDesiredMoveAxes(0.f, 0.f);
-		PlayAnimMontage(ComeHereMontage);
-		return;
-	}
-
 	UpdateFacingTowardsTargetWithoutTurn(DeltaTime, ApproachFacingInterpSpeed);
 
 	if (IsTargetTooFarForPlannedAttack())
@@ -859,40 +800,6 @@ void AWukongBoss::UpdateHitState(float DeltaTime)
 
 void AWukongBoss::UpdateRecoveryState(float DeltaTime)
 {
-	if (bPendingComboDodgeFollowUp)
-	{
-		if (CurrentTarget)
-		{
-			UpdateFacingTowardsTargetWithoutTurn(DeltaTime, EvadeFacingInterpSpeed);
-		}
-
-		if (CombatSubStateElapsedTime < PendingComboDodgeFollowUpDuration)
-		{
-			return;
-		}
-
-		bPendingComboDodgeFollowUp = false;
-		PendingComboDodgeFollowUpDuration = 0.f;
-		RecordAction(EWukongActionType::Dodge);
-		ResetPlannedCombatPlan();
-
-		if (TryPlanComboAttackOnly(PendingComboDodgeFollowUpMinComboLengthExclusive))
-		{
-			if (!IsTargetTooFarForPlannedAttack() && !IsTargetTooCloseForPlannedAttack())
-			{
-				bCurrentAttackStartedFromComboDodgeFollowUp = true;
-				SetWukongCombatState(EWukongCombatState::Attack);
-				return;
-			}
-
-			SetWukongCombatState(EWukongCombatState::Approach);
-			return;
-		}
-
-		SetWukongCombatState(EWukongCombatState::Idle);
-		return;
-	}
-
 	if (CombatSubStateElapsedTime < RecoveryDuration)
 	{
 		return;
@@ -953,6 +860,7 @@ void AWukongBoss::UpdateRepositionState(float DeltaTime)
 			CombatMoveInput = FVector2D::ZeroVector;
 			SetDesiredMoveAxes(0.f, 0.f);
 			LastCompletedNonAttackType = EWukongPlannedNonAttackType::Strafe;
+			LastCompletedStrafeDirection = PlannedMovementDirection;
 			ResetPlannedCombatPlan();
 			SetWukongCombatState(EWukongCombatState::Idle);
 		}
@@ -1093,8 +1001,6 @@ bool AWukongBoss::HasAnyAttackCandidateForCurrentDistance() const
 		EWukongNormalAttackType::ChargeAttack,
 		EWukongNormalAttackType::DodgeAttack,
 		EWukongNormalAttackType::Ambush,
-		EWukongNormalAttackType::Heavy,
-		EWukongNormalAttackType::Spin,
 		EWukongNormalAttackType::NinjaA,
 		EWukongNormalAttackType::NinjaB,
 		EWukongNormalAttackType::Execution })
@@ -1173,6 +1079,27 @@ bool AWukongBoss::IsExpressiveNonAttackType(EWukongPlannedNonAttackType NonAttac
 		NonAttackType == EWukongPlannedNonAttackType::Hold;
 }
 
+EWukongMovementDirection AWukongBoss::ChooseStrafeDirectionAvoidingImmediateReverse() const
+{
+	EWukongMovementDirection ChosenDirection = FMath::RandBool()
+		? EWukongMovementDirection::Left
+		: EWukongMovementDirection::Right;
+
+	if (LastCompletedNonAttackType == EWukongPlannedNonAttackType::Strafe &&
+		IsOppositeStrafeDirection(ChosenDirection, LastCompletedStrafeDirection))
+	{
+		ChosenDirection = LastCompletedStrafeDirection;
+	}
+
+	return ChosenDirection;
+}
+
+bool AWukongBoss::IsOppositeStrafeDirection(EWukongMovementDirection A, EWukongMovementDirection B) const
+{
+	return (A == EWukongMovementDirection::Left && B == EWukongMovementDirection::Right) ||
+		(A == EWukongMovementDirection::Right && B == EWukongMovementDirection::Left);
+}
+
 void AWukongBoss::CollectNormalAttackCandidates(float TargetDistance, bool bIgnoreRepeat, TArray<EWukongNormalAttackType>& OutCandidates) const
 {
 	auto IsWithinRange = [TargetDistance](float MinRange, float MaxRange)
@@ -1198,13 +1125,6 @@ void AWukongBoss::CollectNormalAttackCandidates(float TargetDistance, bool bIgno
 			continue;
 		}
 
-		if (NormalAttackType == EWukongNormalAttackType::Spin &&
-			!bIgnoreRepeat &&
-			FMath::FRand() > SpinAttackSelectionChance)
-		{
-			continue;
-		}
-
 		for (int32 WeightIndex = 0; WeightIndex < FMath::Max(1, NormalAttackData->SelectionWeight); ++WeightIndex)
 		{
 			OutCandidates.Add(NormalAttackType);
@@ -1215,12 +1135,12 @@ void AWukongBoss::CollectNormalAttackCandidates(float TargetDistance, bool bIgno
 int32 AWukongBoss::GetComboAttackSelectionWeight() const
 {
 	int32 ComboAttackSelectionWeight = 0;
-	if (ComboAttackA.Montages.Num() > 0)
+	if (IsComboAttackUsable(ComboAttackA))
 	{
 		ComboAttackSelectionWeight += FMath::Max(1, ComboAttackA.SelectionWeight);
 	}
 
-	if (ComboAttackB.Montages.Num() > 0)
+	if (IsComboAttackUsable(ComboAttackB))
 	{
 		ComboAttackSelectionWeight += FMath::Max(1, ComboAttackB.SelectionWeight);
 	}
@@ -1230,7 +1150,7 @@ int32 AWukongBoss::GetComboAttackSelectionWeight() const
 
 bool AWukongBoss::HasAnyComboMontage() const
 {
-	return ComboAttackA.Montages.Num() > 0 || ComboAttackB.Montages.Num() > 0;
+	return IsComboAttackUsable(ComboAttackA) || IsComboAttackUsable(ComboAttackB);
 }
 
 const FWukongComboAttackData* AWukongBoss::GetComboAttackData(EWukongComboSet ComboSet) const
@@ -1245,6 +1165,21 @@ const FWukongComboAttackData* AWukongBoss::GetComboAttackData(EWukongComboSet Co
 	default:
 		return nullptr;
 	}
+}
+
+bool AWukongBoss::IsComboAttackUsable(const FWukongComboAttackData& ComboAttackData) const
+{
+	return ComboAttackData.Montage != nullptr && GetComboAttackMaxLength(ComboAttackData) >= 2;
+}
+
+int32 AWukongBoss::GetComboAttackMaxLength(const FWukongComboAttackData& ComboAttackData) const
+{
+	return FMath::Max(0, ComboAttackData.MaxComboLength);
+}
+
+FName AWukongBoss::GetComboSectionName(int32 ComboLength) const
+{
+	return FName(*FString::FromInt(ComboLength));
 }
 
 const FWukongReactiveActionTuningData* AWukongBoss::GetReactiveActionTuningData(EWukongReactiveActionType ReactiveActionType) const
@@ -1282,10 +1217,6 @@ const FWukongNormalAttackData* AWukongBoss::GetNormalAttackData(EWukongNormalAtt
 		return &DodgeAttack;
 	case EWukongNormalAttackType::Ambush:
 		return &AmbushAttack;
-	case EWukongNormalAttackType::Heavy:
-		return &HeavyAttack;
-	case EWukongNormalAttackType::Spin:
-		return &SpinAttack;
 	case EWukongNormalAttackType::NinjaA:
 		return &NinjaAAttack;
 	case EWukongNormalAttackType::NinjaB:
@@ -1306,16 +1237,14 @@ const FWukongNormalAttackData* AWukongBoss::GetPlannedNormalAttackData() const
 UAnimMontage* AWukongBoss::GetPlannedComboMontage() const
 {
 	const FWukongComboAttackData* ComboAttackData = GetComboAttackData(PlannedComboSet);
-	const TArray<TObjectPtr<UAnimMontage>>* ComboMontages = ComboAttackData ? &ComboAttackData->Montages : nullptr;
 
-	if (!ComboMontages || PlannedComboLength <= 0)
+	if (!ComboAttackData || !ComboAttackData->Montage || PlannedComboLength <= 0)
 	{
 		return nullptr;
 	}
 
-	const int32 MontageIndex = PlannedComboLength - 1;
-	return ComboMontages->IsValidIndex(MontageIndex)
-		? (*ComboMontages)[MontageIndex].Get()
+	return PlannedComboLength <= GetComboAttackMaxLength(*ComboAttackData)
+		? ComboAttackData->Montage.Get()
 		: nullptr;
 }
 
@@ -1333,6 +1262,88 @@ float AWukongBoss::GetPlannedComboFacingDuration() const
 	return FacingDurations->IsValidIndex(DurationIndex)
 		? (*FacingDurations)[DurationIndex]
 		: -1.f;
+}
+
+void AWukongBoss::ConfigurePlannedComboMontageSections()
+{
+	if (PlannedAttackType != EWukongPlannedAttackType::ComboAttack)
+	{
+		return;
+	}
+
+	const FWukongComboAttackData* ComboAttackData = GetComboAttackData(PlannedComboSet);
+	UAnimMontage* ComboMontage = GetPlannedComboMontage();
+	UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+	if (!ComboAttackData || !ComboMontage || !AnimInstance)
+	{
+		return;
+	}
+
+	const FName FirstSectionName = GetComboSectionName(1);
+	if (ComboMontage->GetSectionIndex(FirstSectionName) != INDEX_NONE)
+	{
+		AnimInstance->Montage_JumpToSection(FirstSectionName, ComboMontage);
+	}
+}
+
+bool AWukongBoss::ShouldContinueComboAttack(const FWukongComboAttackData& ComboAttackData, int32 CurrentComboLength) const
+{
+	const int32 MaxComboLength = GetComboAttackMaxLength(ComboAttackData);
+	if (CurrentComboLength >= MaxComboLength)
+	{
+		return false;
+	}
+
+	if (!CurrentTarget)
+	{
+		return false;
+	}
+
+	if (GetTargetDistance2D() > ComboAttackData.CandidateRange)
+	{
+		return false;
+	}
+
+	return FMath::FRand() <= FMath::Clamp(ComboAttackData.ContinueChance, 0.f, 1.f);
+}
+
+void AWukongBoss::HandleComboDecisionPoint()
+{
+	if (CurrentAttackActionType != EWukongActionType::ComboAttack)
+	{
+		return;
+	}
+
+	const FWukongComboAttackData* ComboAttackData = GetComboAttackData(CurrentAttackComboSet);
+	UAnimMontage* ComboMontage = ComboAttackData ? ComboAttackData->Montage.Get() : nullptr;
+	UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+	if (!ComboAttackData || !ComboMontage || !AnimInstance)
+	{
+		return;
+	}
+
+	const int32 CurrentComboLength = FMath::Max(1, CurrentAttackComboLength);
+	const FName CurrentSectionName = GetComboSectionName(CurrentComboLength);
+	if (ComboMontage->GetSectionIndex(CurrentSectionName) == INDEX_NONE)
+	{
+		return;
+	}
+
+	if (!ShouldContinueComboAttack(*ComboAttackData, CurrentComboLength))
+	{
+		return;
+	}
+
+	const int32 NextComboLength = CurrentComboLength + 1;
+	const FName NextSectionName = GetComboSectionName(NextComboLength);
+	if (ComboMontage->GetSectionIndex(NextSectionName) == INDEX_NONE)
+	{
+		return;
+	}
+
+	CurrentAttackComboLength = NextComboLength;
+	PlannedComboLength = NextComboLength;
+	AnimInstance->Montage_JumpToSection(NextSectionName, ComboMontage);
 }
 
 UAnimMontage* AWukongBoss::GetExpressiveNonAttackMontage(EWukongPlannedNonAttackType NonAttackType) const
@@ -1598,17 +1609,7 @@ void AWukongBoss::ResetReactiveEvadePressure()
 
 void AWukongBoss::ResetPendingAttackMotionState()
 {
-	bPendingJumpAttackLaunch = false;
-	JumpAttackLaunchDelayRemainTime = 0.f;
-	bPendingHeavyAttackMove = false;
-	HeavyAttackMoveDelayRemainTime = 0.f;
-}
-
-void AWukongBoss::ResetComboDodgeFollowUpState()
-{
-	bPendingComboDodgeFollowUp = false;
-	PendingComboDodgeFollowUpDuration = 0.f;
-	PendingComboDodgeFollowUpMinComboLengthExclusive = 0;
+	StopCodeDrivenAttackMove(false);
 }
 
 void AWukongBoss::ResetCurrentAttackRuntimeState()
@@ -1617,7 +1618,6 @@ void AWukongBoss::ResetCurrentAttackRuntimeState()
 	CurrentAttackComboSet = EWukongComboSet::None;
 	CurrentAttackComboLength = 0;
 	CurrentAttackNormalAttackType = EWukongNormalAttackType::None;
-	bCurrentAttackStartedFromComboDodgeFollowUp = false;
 }
 
 void AWukongBoss::ApplyTimedMontageSuperArmor(float MontageDuration, float DurationScale)
@@ -1647,6 +1647,18 @@ void AWukongBoss::UpdateTimedMontageSuperArmor(float DeltaTime)
 }
 
 void AWukongBoss::ClearTimedMontageSuperArmor()
+{
+	TimedMontageSuperArmorRemainTime = 0.f;
+	RemoveGameplayTag(JunGameplayTags::State_Condition_SuperArmor);
+}
+
+void AWukongBoss::BeginAttackSuperArmorWindow()
+{
+	TimedMontageSuperArmorRemainTime = 0.f;
+	AddGameplayTag(JunGameplayTags::State_Condition_SuperArmor);
+}
+
+void AWukongBoss::EndAttackSuperArmorWindow()
 {
 	TimedMontageSuperArmorRemainTime = 0.f;
 	RemoveGameplayTag(JunGameplayTags::State_Condition_SuperArmor);
@@ -1836,8 +1848,10 @@ float AWukongBoss::GetHitReactDuration(EHitReactType HitType) const
 	{
 	case EHitReactType::LightHit:
 		return WukongLightHitDuration;
-	case EHitReactType::LargeHit:
+	case EHitReactType::LargeHit_Short:
 		return WukongLargeHitDuration;
+	case EHitReactType::LargeHit_Long:
+		return WukongLargeHitLongDuration;
 	default:
 		return Super::GetHitReactDuration(HitType);
 	}
@@ -1868,12 +1882,7 @@ void AWukongBoss::OnHitReactStarted(EHitReactType NewHitReact, ECharacterHitReac
 
 bool AWukongBoss::ShouldStartHitReact(EHitReactType IncomingHitReact) const
 {
-	const bool bIsIncomingHeavy =
-		IncomingHitReact == EHitReactType::HeavyHit_A ||
-		IncomingHitReact == EHitReactType::HeavyHit_B ||
-		IncomingHitReact == EHitReactType::HeavyHit_C;
-
-	if (PostHeavyHitSuperArmorRemainTime > 0.f && bIsIncomingHeavy)
+	if (PostHeavyHitSuperArmorRemainTime > 0.f)
 	{
 		return false;
 	}
@@ -1913,15 +1922,33 @@ void AWukongBoss::OnHitReactEnded(EHitReactType EndedHitReact)
 
 FString AWukongBoss::GetMonsterDebugExtraText() const
 {
+	const FString StateText = IsInHitReact()
+		? TEXT("Wukong State: HitReact")
+		: FString::Printf(
+			TEXT("Wukong State: %s"),
+			GetWukongCombatStateDebugText(CurrentCombatSubState)
+		);
+
+	if (bDebugCodeDrivenAttackMove)
+	{
+		return FString::Printf(
+			TEXT("%s\nCodeMove: %s %s\nDist %.0f / Travel %.0f / Stop %.0f / Max %.0f"),
+			*StateText,
+			GetWukongNormalAttackDebugText(CodeDrivenAttackMoveType),
+			GetWukongCodeMoveStopReasonDebugText(LastCodeDrivenAttackMoveStopReason),
+			LastCodeDrivenAttackMoveTargetDistance,
+			LastCodeDrivenAttackMoveTravelDistance,
+			LastCodeDrivenAttackMoveStopDistance,
+			LastCodeDrivenAttackMoveMaxDistance
+		);
+	}
+
 	if (IsInHitReact())
 	{
 		return TEXT("Wukong State: HitReact");
 	}
 
-	return FString::Printf(
-		TEXT("Wukong State: %s"),
-		GetWukongCombatStateDebugText(CurrentCombatSubState)
-	);
+	return StateText;
 }
 
 void AWukongBoss::ResetPlannedCombatPlan()
@@ -1934,14 +1961,6 @@ void AWukongBoss::ResetPlannedCombatPlan()
 	PlannedMovementDuration = 0.f;
 	PlannedComboSet = EWukongComboSet::None;
 	PlannedComboLength = 0;
-}
-
-void AWukongBoss::ResetApproachRuntimeState()
-{
-	bApproachComeHereTriggered = false;
-	bApproachComeHereInProgress = false;
-	ApproachComeHereRemainTime = 0.f;
-	bDiscardPlannedAttackAfterApproachComeHere = false;
 }
 
 void AWukongBoss::BeginNoAttackCandidateApproach()
@@ -2088,130 +2107,241 @@ void AWukongBoss::OnAttackTick(float DeltaTime)
 {
 	Super::OnAttackTick(DeltaTime);
 
-	if (bPendingJumpAttackLaunch)
+	if (CurrentAttackActionType == EWukongActionType::ComboAttack)
 	{
-		JumpAttackLaunchDelayRemainTime = FMath::Max(0.f, JumpAttackLaunchDelayRemainTime - DeltaTime);
-		if (JumpAttackLaunchDelayRemainTime <= 0.f)
+		UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+		UAnimMontage* ComboMontage = GetPlannedComboMontage();
+		if (AnimInstance && ComboMontage && !AnimInstance->Montage_IsPlaying(ComboMontage))
 		{
-			bPendingJumpAttackLaunch = false;
-			ExecuteJumpAttackLaunch();
+			FinishAttack();
+			return;
 		}
 	}
 
-	if (bPendingHeavyAttackMove)
+	if (bPendingCodeDrivenAttackMove)
 	{
-		HeavyAttackMoveDelayRemainTime = FMath::Max(0.f, HeavyAttackMoveDelayRemainTime - DeltaTime);
-		if (HeavyAttackMoveDelayRemainTime <= 0.f)
+		CodeDrivenAttackMoveDelayRemainTime = FMath::Max(0.f, CodeDrivenAttackMoveDelayRemainTime - DeltaTime);
+		if (CodeDrivenAttackMoveDelayRemainTime <= 0.f)
 		{
-			bPendingHeavyAttackMove = false;
-			ExecuteHeavyAttackMove();
+			StartCodeDrivenAttackMove(CodeDrivenAttackMoveType);
 		}
 	}
+
+	UpdateCodeDrivenAttackMove(DeltaTime);
 
 	if (bAttackGroundMotionOverrideActive)
 	{
-		AttackGroundMotionOverrideRemainTime = FMath::Max(0.f, AttackGroundMotionOverrideRemainTime - DeltaTime);
-
-		if (!GetCharacterMovement()->IsMovingOnGround() || AttackGroundMotionOverrideRemainTime <= 0.f)
+		if (AttackGroundMotionOverrideRemainTime > 0.f)
 		{
-			RestoreAttackGroundMotionOverride();
+			AttackGroundMotionOverrideRemainTime = FMath::Max(0.f, AttackGroundMotionOverrideRemainTime - DeltaTime);
 		}
-	}
 
-	if (CurrentAttackActionType == EWukongActionType::NormalAttack &&
-		CurrentAttackNormalAttackType == EWukongNormalAttackType::JumpAttack &&
-		CurrentTarget &&
-		GetCharacterMovement() &&
-		GetCharacterMovement()->IsFalling())
-	{
-		const FWukongNormalAttackData* JumpAttackData = GetNormalAttackData(EWukongNormalAttackType::JumpAttack);
-		FVector ToTarget = CurrentTarget->GetActorLocation() - GetActorLocation();
-		ToTarget.Z = 0.f;
-
-		if (!ToTarget.IsNearlyZero())
+		if (!GetCharacterMovement()->IsMovingOnGround() || AttackGroundMotionOverrideRemainTime == 0.f)
 		{
-			UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
-			FVector Velocity = MovementComponent->Velocity;
-			const float HorizontalSpeed = FVector(Velocity.X, Velocity.Y, 0.f).Size();
-			const FVector TargetHorizontalVelocity = ToTarget.GetSafeNormal() * HorizontalSpeed;
-			const FVector CurrentHorizontalVelocity(Velocity.X, Velocity.Y, 0.f);
-			const FVector NewHorizontalVelocity = FMath::VInterpTo(
-				CurrentHorizontalVelocity,
-				TargetHorizontalVelocity,
-				DeltaTime,
-				JumpAttackData ? JumpAttackData->AirTrackInterpSpeed : 0.f
-			);
-
-			Velocity.X = NewHorizontalVelocity.X;
-			Velocity.Y = NewHorizontalVelocity.Y;
-			MovementComponent->Velocity = Velocity;
+			StopCodeDrivenAttackMove(true, EWukongCodeMoveStopReason::DurationEnd);
 		}
 	}
 }
 
-void AWukongBoss::ExecuteJumpAttackLaunch()
+void AWukongBoss::QueueCodeDrivenAttackMove(EWukongNormalAttackType AttackType, float Delay)
 {
-	const FWukongNormalAttackData* JumpAttackData = GetNormalAttackData(EWukongNormalAttackType::JumpAttack);
-	FVector LaunchVelocity = FVector::ZeroVector;
-	if (CurrentTarget && JumpAttackData && JumpAttackData->MoveSpeed > 0.f)
+	const FWukongNormalAttackData* AttackData = GetNormalAttackData(AttackType);
+	if (!AttackData || AttackData->MoveSpeed <= 0.f)
 	{
-		FVector ToTarget = CurrentTarget->GetActorLocation() - GetActorLocation();
-		ToTarget.Z = 0.f;
-
-		if (!ToTarget.IsNearlyZero())
-		{
-			const FVector LaunchDirection = ToTarget.GetSafeNormal();
-			const float DistanceToTarget = ToTarget.Size();
-			const float DesiredTravelDistance = FMath::Max(0.f, DistanceToTarget - JumpAttackData->MoveStandOffDistance);
-			const float ForwardSpeed = DesiredTravelDistance > 0.f
-				? JumpAttackData->MoveSpeed
-				: 0.f;
-
-			LaunchVelocity.X = LaunchDirection.X * ForwardSpeed;
-			LaunchVelocity.Y = LaunchDirection.Y * ForwardSpeed;
-		}
+		CacheCodeDrivenAttackMoveDebug(EWukongCodeMoveStopReason::InvalidMovement);
+		return;
 	}
 
-	ApplyAttackGroundMotionOverride(JumpAttackData ? JumpAttackData->GroundMotionOverrideDuration : 0.f);
-
-	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	bPendingCodeDrivenAttackMove = true;
+	bCodeDrivenAttackMoveActive = false;
+	CodeDrivenAttackMoveType = AttackType;
+	CodeDrivenAttackMoveDelayRemainTime = FMath::Max(0.f, Delay);
+	CacheCodeDrivenAttackMoveDebug(EWukongCodeMoveStopReason::Started);
+	if (CodeDrivenAttackMoveDelayRemainTime <= 0.f)
 	{
-		FVector NewVelocity = MovementComponent->Velocity;
-		NewVelocity.X = LaunchVelocity.X;
-		NewVelocity.Y = LaunchVelocity.Y;
-		MovementComponent->Velocity = NewVelocity;
+		StartCodeDrivenAttackMove(AttackType);
 	}
 }
 
-void AWukongBoss::ExecuteHeavyAttackMove()
+void AWukongBoss::BeginCodeDrivenAttackMoveWindow(EWukongNormalAttackType AttackType)
 {
-	const FWukongNormalAttackData* HeavyAttackData = GetNormalAttackData(EWukongNormalAttackType::Heavy);
-	if (!CurrentTarget || !HeavyAttackData || HeavyAttackData->MoveSpeed <= 0.f)
+	if (AttackType == EWukongNormalAttackType::None)
 	{
+		AttackType = CurrentAttackNormalAttackType;
+	}
+
+	bPendingCodeDrivenAttackMove = false;
+	CodeDrivenAttackMoveDelayRemainTime = 0.f;
+	StartCodeDrivenAttackMove(AttackType);
+}
+
+void AWukongBoss::EndCodeDrivenAttackMoveWindow()
+{
+	StopCodeDrivenAttackMove(true, EWukongCodeMoveStopReason::DurationEnd);
+}
+
+void AWukongBoss::StartCodeDrivenAttackMove(EWukongNormalAttackType AttackType)
+{
+	const FWukongNormalAttackData* AttackData = GetNormalAttackData(AttackType);
+	if (!CurrentTarget || !AttackData || AttackData->MoveSpeed <= 0.f)
+	{
+		StopCodeDrivenAttackMove(true, !CurrentTarget ? EWukongCodeMoveStopReason::LostTarget : EWukongCodeMoveStopReason::InvalidMovement);
+		return;
+	}
+
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent)
+	{
+		StopCodeDrivenAttackMove(true, EWukongCodeMoveStopReason::InvalidMovement);
 		return;
 	}
 
 	FVector ToTarget = CurrentTarget->GetActorLocation() - GetActorLocation();
 	ToTarget.Z = 0.f;
-
 	if (ToTarget.IsNearlyZero())
 	{
+		StopCodeDrivenAttackMove(true, EWukongCodeMoveStopReason::InvalidMovement);
 		return;
 	}
 
 	const FVector MoveDirection = ToTarget.GetSafeNormal();
 	const float DistanceToTarget = ToTarget.Size();
-	const float DesiredTravelDistance = FMath::Max(0.f, DistanceToTarget - HeavyAttackData->MoveStandOffDistance);
-	const float MoveSpeed = DesiredTravelDistance > 0.f ? HeavyAttackData->MoveSpeed : 0.f;
-
-	ApplyAttackGroundMotionOverride(HeavyAttackData->GroundMotionOverrideDuration);
-
-	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	const float StopDistance = FMath::Max(AttackData->MoveStandOffDistance, AttackData->CodeMoveStopDistance);
+	if (DistanceToTarget <= StopDistance)
 	{
-		FVector NewVelocity = MovementComponent->Velocity;
-		NewVelocity.X = MoveDirection.X * MoveSpeed;
-		NewVelocity.Y = MoveDirection.Y * MoveSpeed;
-		MovementComponent->Velocity = NewVelocity;
+		StopCodeDrivenAttackMove(true, EWukongCodeMoveStopReason::TooClose);
+		return;
+	}
+
+	const float GroundMotionOverrideDuration = AttackData->bUseAnimNotifyTiming
+		? -1.f
+		: AttackData->GroundMotionOverrideDuration;
+	ApplyAttackGroundMotionOverride(GroundMotionOverrideDuration);
+
+	bPendingCodeDrivenAttackMove = false;
+	bCodeDrivenAttackMoveActive = true;
+	CodeDrivenAttackMoveType = AttackType;
+	CodeDrivenAttackMoveDelayRemainTime = 0.f;
+	CodeDrivenAttackMoveStartLocation = GetActorLocation();
+	CacheCodeDrivenAttackMoveDebug(EWukongCodeMoveStopReason::Started);
+
+	FVector NewVelocity = MovementComponent->Velocity;
+	NewVelocity.X = MoveDirection.X * AttackData->MoveSpeed;
+	NewVelocity.Y = MoveDirection.Y * AttackData->MoveSpeed;
+	MovementComponent->Velocity = NewVelocity;
+}
+
+void AWukongBoss::UpdateCodeDrivenAttackMove(float DeltaTime)
+{
+	if (!bCodeDrivenAttackMoveActive)
+	{
+		return;
+	}
+
+	const FWukongNormalAttackData* AttackData = GetNormalAttackData(CodeDrivenAttackMoveType);
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!CurrentTarget || !AttackData || !MovementComponent)
+	{
+		StopCodeDrivenAttackMove(true, !CurrentTarget ? EWukongCodeMoveStopReason::LostTarget : EWukongCodeMoveStopReason::InvalidMovement);
+		return;
+	}
+
+	FVector ToTarget = CurrentTarget->GetActorLocation() - GetActorLocation();
+	ToTarget.Z = 0.f;
+	const float DistanceToTarget = ToTarget.Size();
+	const float StopDistance = FMath::Max(AttackData->MoveStandOffDistance, AttackData->CodeMoveStopDistance);
+	if (DistanceToTarget <= StopDistance)
+	{
+		StopCodeDrivenAttackMove(true, EWukongCodeMoveStopReason::TooClose);
+		return;
+	}
+
+	const float MaxDistance = AttackData->CodeMoveMaxDistance;
+	if (MaxDistance > 0.f &&
+		FVector::Dist2D(CodeDrivenAttackMoveStartLocation, GetActorLocation()) >= MaxDistance)
+	{
+		StopCodeDrivenAttackMove(true, EWukongCodeMoveStopReason::MaxDistance);
+		return;
+	}
+
+	if (ToTarget.IsNearlyZero())
+	{
+		StopCodeDrivenAttackMove(true, EWukongCodeMoveStopReason::InvalidMovement);
+		return;
+	}
+
+	FVector Velocity = MovementComponent->Velocity;
+	FVector MoveDirection = FVector(Velocity.X, Velocity.Y, 0.f).GetSafeNormal();
+	if (MoveDirection.IsNearlyZero() || AttackData->bTrackTargetDuringCodeMove)
+	{
+		MoveDirection = ToTarget.GetSafeNormal();
+	}
+
+	if (AttackData->bTrackTargetDuringCodeMove && AttackData->AirTrackInterpSpeed > 0.f)
+	{
+		const FVector CurrentHorizontalVelocity(Velocity.X, Velocity.Y, 0.f);
+		const FVector TargetHorizontalVelocity = ToTarget.GetSafeNormal() * AttackData->MoveSpeed;
+		const FVector NewHorizontalVelocity = FMath::VInterpTo(
+			CurrentHorizontalVelocity,
+			TargetHorizontalVelocity,
+			DeltaTime,
+			AttackData->AirTrackInterpSpeed
+		);
+		Velocity.X = NewHorizontalVelocity.X;
+		Velocity.Y = NewHorizontalVelocity.Y;
+	}
+	else
+	{
+		Velocity.X = MoveDirection.X * AttackData->MoveSpeed;
+		Velocity.Y = MoveDirection.Y * AttackData->MoveSpeed;
+	}
+
+	MovementComponent->Velocity = Velocity;
+}
+
+void AWukongBoss::StopCodeDrivenAttackMove(bool bClearVelocity, EWukongCodeMoveStopReason StopReason)
+{
+	CacheCodeDrivenAttackMoveDebug(StopReason);
+	bPendingCodeDrivenAttackMove = false;
+	bCodeDrivenAttackMoveActive = false;
+	CodeDrivenAttackMoveType = EWukongNormalAttackType::None;
+	CodeDrivenAttackMoveDelayRemainTime = 0.f;
+	CodeDrivenAttackMoveStartLocation = FVector::ZeroVector;
+
+	if (bClearVelocity)
+	{
+		if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+		{
+			FVector NewVelocity = MovementComponent->Velocity;
+			NewVelocity.X = 0.f;
+			NewVelocity.Y = 0.f;
+			MovementComponent->Velocity = NewVelocity;
+		}
+	}
+
+	RestoreAttackGroundMotionOverride();
+}
+
+void AWukongBoss::CacheCodeDrivenAttackMoveDebug(EWukongCodeMoveStopReason StopReason)
+{
+	LastCodeDrivenAttackMoveStopReason = StopReason;
+
+	const FWukongNormalAttackData* AttackData = GetNormalAttackData(CodeDrivenAttackMoveType);
+	LastCodeDrivenAttackMoveStopDistance = AttackData
+		? FMath::Max(AttackData->MoveStandOffDistance, AttackData->CodeMoveStopDistance)
+		: 0.f;
+	LastCodeDrivenAttackMoveMaxDistance = AttackData ? AttackData->CodeMoveMaxDistance : 0.f;
+	LastCodeDrivenAttackMoveTravelDistance = CodeDrivenAttackMoveStartLocation.IsNearlyZero()
+		? 0.f
+		: FVector::Dist2D(CodeDrivenAttackMoveStartLocation, GetActorLocation());
+
+	if (CurrentTarget)
+	{
+		LastCodeDrivenAttackMoveTargetDistance = FVector::Dist2D(GetActorLocation(), CurrentTarget->GetActorLocation());
+	}
+	else
+	{
+		LastCodeDrivenAttackMoveTargetDistance = 0.f;
 	}
 }
 
@@ -2336,14 +2466,14 @@ void AWukongBoss::RefreshPlannedAttackType()
 	}
 
 	TArray<EWukongComboSet> ComboSetCandidates;
-	if (ComboAttackA.Montages.Num() > 0)
+	if (IsComboAttackUsable(ComboAttackA))
 	{
 		for (int32 WeightIndex = 0; WeightIndex < FMath::Max(1, ComboAttackA.SelectionWeight); ++WeightIndex)
 		{
 			ComboSetCandidates.Add(EWukongComboSet::ComboA);
 		}
 	}
-	if (ComboAttackB.Montages.Num() > 0)
+	if (IsComboAttackUsable(ComboAttackB))
 	{
 		for (int32 WeightIndex = 0; WeightIndex < FMath::Max(1, ComboAttackB.SelectionWeight); ++WeightIndex)
 		{
@@ -2367,26 +2497,7 @@ void AWukongBoss::RefreshPlannedAttackType()
 		return;
 	}
 
-	const TArray<TObjectPtr<UAnimMontage>>& SelectedComboMontages = SelectedComboAttackData->Montages;
-
-	TArray<int32> ComboLengthCandidates;
-	for (int32 ComboLength = 1; ComboLength <= SelectedComboMontages.Num(); ++ComboLength)
-	{
-		if (!WasRecentlyUsed(PlannedComboSet, ComboLength, 1))
-		{
-			ComboLengthCandidates.Add(ComboLength);
-		}
-	}
-
-	if (ComboLengthCandidates.Num() == 0)
-	{
-		for (int32 ComboLength = 1; ComboLength <= SelectedComboMontages.Num(); ++ComboLength)
-		{
-			ComboLengthCandidates.Add(ComboLength);
-		}
-	}
-
-	PlannedComboLength = ComboLengthCandidates[FMath::RandRange(0, ComboLengthCandidates.Num() - 1)];
+	PlannedComboLength = 1;
 }
 
 void AWukongBoss::RefreshPlannedCombatPlan()
@@ -2429,22 +2540,7 @@ void AWukongBoss::RefreshPlannedCombatPlan()
 
 void AWukongBoss::RefreshPlannedNonAttackType()
 {
-	PlannedMovementDirection = FMath::RandBool() ? EWukongMovementDirection::Left : EWukongMovementDirection::Right;
-	const bool bUsedDodgeRecently = WasRecentlyUsed(EWukongActionType::Dodge, 1);
-	const bool bWithinSideDodgeRange =
-		!CurrentTarget || GetTargetDistance2D() <= SideDodgeMaxDistanceToTarget;
-
-	const bool bCanUseSideDodge =
-		(PlannedMovementDirection == EWukongMovementDirection::Left && DodgeLeftMontage) ||
-		(PlannedMovementDirection == EWukongMovementDirection::Right && DodgeRightMontage);
-
-	if (!bUsedDodgeRecently && bWithinSideDodgeRange && bCanUseSideDodge && FMath::FRand() <= DodgeMovementPlanWeight)
-	{
-		PlannedNonAttackType = EWukongPlannedNonAttackType::Dodge;
-		PlannedMovementDuration = 0.f;
-		return;
-	}
-
+	PlannedMovementDirection = ChooseStrafeDirectionAvoidingImmediateReverse();
 	PlannedNonAttackType = EWukongPlannedNonAttackType::Strafe;
 	PlannedMovementDuration = StrafeMinDuration;
 }
@@ -2455,7 +2551,7 @@ void AWukongBoss::RefreshNoAttackFallbackMovementType()
 	{
 		bShouldStartNoAttackFallbackWithStrafe = false;
 		PlannedNonAttackType = EWukongPlannedNonAttackType::Strafe;
-		PlannedMovementDirection = FMath::RandBool() ? EWukongMovementDirection::Left : EWukongMovementDirection::Right;
+		PlannedMovementDirection = ChooseStrafeDirectionAvoidingImmediateReverse();
 		PlannedMovementDuration = StrafeMinDuration;
 		return;
 	}
@@ -2521,7 +2617,7 @@ void AWukongBoss::RefreshNoAttackFallbackMovementType()
 	}
 
 	PlannedNonAttackType = NonAttackCandidates[FMath::RandRange(0, NonAttackCandidates.Num() - 1)];
-	PlannedMovementDirection = FMath::RandBool() ? EWukongMovementDirection::Left : EWukongMovementDirection::Right;
+	PlannedMovementDirection = ChooseStrafeDirectionAvoidingImmediateReverse();
 
 	if (PlannedNonAttackType == EWukongPlannedNonAttackType::Strafe)
 	{
@@ -2628,87 +2724,5 @@ bool AWukongBoss::TryPlanReactiveBackwardEvade()
 	ActiveReactiveActionData.NonAttackType = SelectedEvadeType;
 	ActiveReactiveActionData.MovementDirection = ReactiveEvadeTuningData->MovementDirection;
 	ActiveReactiveActionData.Duration = 0.f;
-	return true;
-}
-
-bool AWukongBoss::TryPlanComboAttackOnly(int32 MinComboLengthExclusive)
-{
-	const bool bHasComboA = ComboAttackA.Montages.Num() > 0;
-	const bool bHasComboB = ComboAttackB.Montages.Num() > 0;
-	if (!bHasComboA && !bHasComboB)
-	{
-		return false;
-	}
-
-	PlannedActionType = EWukongPlannedActionType::Attack;
-	PlannedAttackType = EWukongPlannedAttackType::ComboAttack;
-	PlannedNormalAttackType = EWukongNormalAttackType::None;
-	PlannedComboSet = EWukongComboSet::None;
-	PlannedComboLength = 0;
-
-	TArray<EWukongComboSet> ComboSetCandidates;
-	if (bHasComboA)
-	{
-		for (int32 WeightIndex = 0; WeightIndex < FMath::Max(1, ComboAttackA.SelectionWeight); ++WeightIndex)
-		{
-			ComboSetCandidates.Add(EWukongComboSet::ComboA);
-		}
-	}
-	if (bHasComboB)
-	{
-		for (int32 WeightIndex = 0; WeightIndex < FMath::Max(1, ComboAttackB.SelectionWeight); ++WeightIndex)
-		{
-			ComboSetCandidates.Add(EWukongComboSet::ComboB);
-		}
-	}
-
-	PlannedComboSet = ComboSetCandidates[FMath::RandRange(0, ComboSetCandidates.Num() - 1)];
-
-	const FWukongComboAttackData* SelectedComboAttackData = GetComboAttackData(PlannedComboSet);
-	if (!SelectedComboAttackData)
-	{
-		return false;
-	}
-
-	const TArray<TObjectPtr<UAnimMontage>>& SelectedComboMontages = SelectedComboAttackData->Montages;
-
-	if (SelectedComboMontages.Num() <= 0)
-	{
-		return false;
-	}
-
-	TArray<int32> ComboLengthCandidates;
-	for (int32 ComboLength = 1; ComboLength <= SelectedComboMontages.Num(); ++ComboLength)
-	{
-		if (ComboLength <= MinComboLengthExclusive)
-		{
-			continue;
-		}
-
-		if (!WasRecentlyUsed(PlannedComboSet, ComboLength, 1))
-		{
-			ComboLengthCandidates.Add(ComboLength);
-		}
-	}
-
-	if (ComboLengthCandidates.Num() == 0)
-	{
-		for (int32 ComboLength = 1; ComboLength <= SelectedComboMontages.Num(); ++ComboLength)
-		{
-			if (ComboLength <= MinComboLengthExclusive)
-			{
-				continue;
-			}
-
-			ComboLengthCandidates.Add(ComboLength);
-		}
-	}
-
-	if (ComboLengthCandidates.Num() == 0)
-	{
-		return false;
-	}
-
-	PlannedComboLength = ComboLengthCandidates[FMath::RandRange(0, ComboLengthCandidates.Num() - 1)];
 	return true;
 }

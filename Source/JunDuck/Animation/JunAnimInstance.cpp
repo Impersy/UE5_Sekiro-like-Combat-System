@@ -66,7 +66,7 @@ void UJunAnimInstance::UpdateMovementDirectionData(float DeltaSeconds)
 
 	if (const AJunPlayer* Player = Cast<AJunPlayer>(Character))
 	{
-		if (Player->HasGameplayTag(JunGameplayTags::State_Action_Dodge))
+		if (Player->HasGameplayTag(JunGameplayTags::State_Action_Dodge) || Player->IsDodgeAttacking())
 		{
 			// Do not drive lock-on locomotion direction from dodge velocity.
 			// Otherwise the locomotion BS is already near full input before dodge ends,

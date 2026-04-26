@@ -21,6 +21,12 @@ namespace
 			|| HitType == EHitReactType::HeavyHit_C;
 	}
 
+	bool IsLargeHitType(const EHitReactType HitType)
+	{
+		return HitType == EHitReactType::LargeHit_Short
+			|| HitType == EHitReactType::LargeHit_Long;
+	}
+
 	ECharacterHitReactDirection ResolveHitReactDirectionFromSwing(const AActor& CharacterActor, const FVector& SwingDirection)
 	{
 		const FVector SafeSwingDirection = SwingDirection.GetSafeNormal();
@@ -278,7 +284,7 @@ void AJunMonster::ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* 
 			return;
 		}
 
-		if (IsHeavyHitType(CurrentHitReact) && HitType == EHitReactType::LargeHit)
+		if (IsHeavyHitType(CurrentHitReact) && IsLargeHitType(HitType))
 		{
 			return;
 		}
@@ -1374,6 +1380,20 @@ void AJunMonster::ResetCurrentAttackRuntimeState()
 {
 	CurrentAttackMontage = nullptr;
 	CurrentAttackSelection = FMonsterAttackSelection();
+	bAttackFacingWindowActive = false;
+	AttackFacingWindowInterpSpeed = 0.f;
+}
+
+void AJunMonster::BeginAttackFacingWindow(float InterpSpeed)
+{
+	bAttackFacingWindowActive = true;
+	AttackFacingWindowInterpSpeed = FMath::Max(InterpSpeed, 0.f);
+}
+
+void AJunMonster::EndAttackFacingWindow()
+{
+	bAttackFacingWindowActive = false;
+	AttackFacingWindowInterpSpeed = 0.f;
 }
 
 void AJunMonster::TryAttack()
@@ -1430,7 +1450,7 @@ void AJunMonster::UpdateAttack(float DeltaTime)
 
 	const bool bCanFaceDuringAttack =
 		CurrentAttackSelection.bFaceTargetDuringAttack &&
-		(AttackFacingRemainTime > 0.f || CurrentAttackSelection.FacingDuration < 0.f);
+		(bAttackFacingWindowActive || AttackFacingRemainTime > 0.f || CurrentAttackSelection.FacingDuration < 0.f);
 
 	if (bCanFaceDuringAttack && CurrentTarget)
 	{
@@ -1441,11 +1461,14 @@ void AJunMonster::UpdateAttack(float DeltaTime)
 		{
 			const FRotator CurrentRotation = GetActorRotation();
 			const FRotator TargetRotation = ToTarget.Rotation();
+			const float FacingInterpSpeed = bAttackFacingWindowActive && AttackFacingWindowInterpSpeed > 0.f
+				? AttackFacingWindowInterpSpeed
+				: CurrentAttackSelection.FacingInterpSpeed;
 			const FRotator NewRotation = FMath::RInterpTo(
 				CurrentRotation,
 				TargetRotation,
 				DeltaTime,
-				CurrentAttackSelection.FacingInterpSpeed
+				FacingInterpSpeed
 			);
 
 			SetActorRotation(NewRotation);
@@ -1771,7 +1794,7 @@ bool AJunMonster::CanBeInterruptedBy(EHitReactType IncomingHitReact) const
 
 	if (HasGameplayTag(JunGameplayTags::State_Condition_SuperArmor))
 	{
-		return IsHeavyHitType(IncomingHitReact);
+		return IsHeavyHitType(IncomingHitReact) || IncomingHitReact == EHitReactType::LargeHit_Long;
 	}
 
 	return true;
@@ -1792,8 +1815,10 @@ float AJunMonster::GetHitReactDuration(EHitReactType HitType) const
 	case EHitReactType::HeavyHit_B:
 	case EHitReactType::HeavyHit_C:
 		return HeavyHitDuration;
-	case EHitReactType::LargeHit:
+	case EHitReactType::LargeHit_Short:
 		return LargeHitDuration;
+	case EHitReactType::LargeHit_Long:
+		return LargeHitLongDuration;
 	default:
 		return 0.f;
 	}
@@ -1908,7 +1933,8 @@ UAnimMontage* AJunMonster::GetHitReactMontage(EHitReactType HitType, ECharacterH
 			);
 		}
 		return HeavyHitFront_CMontage;
-	case EHitReactType::LargeHit:
+	case EHitReactType::LargeHit_Short:
+	case EHitReactType::LargeHit_Long:
 		return ResolveDirectionalHitReactMontage(
 			HitDirection,
 			LargeHitBackMontage,
