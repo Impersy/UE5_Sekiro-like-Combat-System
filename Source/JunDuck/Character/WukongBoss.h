@@ -227,10 +227,16 @@ struct FWukongReactiveActionTuningData
 	float TriggerRange = 180.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|ReactiveAction", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float TriggerChancePerHit = 0.3f;
+	float BaseTriggerChance = 0.1f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|ReactiveAction", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float MaxTriggerChance = 0.9f;
+	float TriggerChancePerHitCount = 0.066f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|ReactiveAction", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float TriggerChanceBonus = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|ReactiveAction", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float MaxTriggerChance = 0.3f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|ReactiveAction")
 	EWukongPlannedNonAttackType PrimaryNonAttackType = EWukongPlannedNonAttackType::Dash;
@@ -324,6 +330,9 @@ protected:
 	bool HasValidPlannedMovement() const;
 	bool IsMobilityNonAttackType(EWukongPlannedNonAttackType NonAttackType) const;
 	bool IsExpressiveNonAttackType(EWukongPlannedNonAttackType NonAttackType) const;
+	bool IsComboSetEnabledByTestFilter(EWukongComboSet ComboSet) const;
+	bool IsNormalAttackEnabledByTestFilter(EWukongNormalAttackType NormalAttackType) const;
+	float GetMaxEnabledComboCandidateRange() const;
 	EWukongMovementDirection ChooseStrafeDirectionAvoidingImmediateReverse() const;
 	bool IsOppositeStrafeDirection(EWukongMovementDirection A, EWukongMovementDirection B) const;
 	void CollectNormalAttackCandidates(float TargetDistance, bool bIgnoreRepeat, TArray<EWukongNormalAttackType>& OutCandidates) const;
@@ -353,6 +362,8 @@ protected:
 	float GetAttackCandidateMaxRange(EWukongPlannedAttackType AttackType) const;
 	bool IsTargetTooFarForPlannedAttack() const;
 	bool IsTargetTooCloseForPlannedAttack() const;
+	bool CanTriggerCloseRangeBackDash() const;
+	void StartCloseRangeBackDashCooldown();
 	void UpdateFacingTowardsTargetWithoutTurn(float DeltaTime, float InterpSpeed);
 	void BeginNoAttackCandidateApproach();
 	void ClearNoAttackCandidateApproach();
@@ -377,7 +388,8 @@ protected:
 	void RefreshNoAttackFallbackMovementType();
 	bool TryQueueReactiveAction(EWukongReactiveActionType ReactiveActionType);
 	bool TryQueueReactiveBackwardEvade();
-	bool TryAccumulateReactiveBackwardEvadePressure();
+	bool TryReactToHitDirection(ECharacterHitReactDirection HitDirection);
+	bool TryAccumulateReactiveBackwardEvadePressure(ECharacterHitReactDirection HitDirection);
 	bool TryActivateReactiveAction(EWukongReactiveActionType ReactiveActionType);
 	bool TryConsumeReactiveAction();
 	bool TryPlanReactiveBackwardEvade();
@@ -470,13 +482,22 @@ protected:
 	float StrafeMoveInputStrength = 0.4f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement")
+	float BackStrafeMoveInputStrength = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement")
 	float StrafeMoveSpeedScale = 0.6f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement")
 	float StrafeAnimInputStrength = 0.4f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement")
-	float StrafeMinDistanceToTarget = 200.f;
+	float StrafeMinDistanceToTarget = 150.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float CloseRangeBackDashChance = 0.2f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement")
+	float CloseRangeBackDashCooldown = 8.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float YawMismatchRepositionChance = 0.7f;
@@ -492,6 +513,36 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Debug")
 	bool bDebugCodeDrivenAttackMove = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bUseAttackPatternTestFilter = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableComboA = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableComboB = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableJumpAttack = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableChargeAttack = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableDodgeAttack = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableAmbush = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableNinjaA = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableNinjaB = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableExecution = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement")
 	float EvadeFallbackDuration = 0.6f;
@@ -547,6 +598,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
 	float CombatSubStateElapsedTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
+	float CloseRangeBackDashCooldownRemainTime = 0.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
 	float CurrentRepositionDirection = 0.f;

@@ -590,7 +590,7 @@ void AJunPlayer::HandleGameplayEventNotify(FGameplayTag EventTag)
 	}
 }
 
-void AJunPlayer::BeginAttackTraceWindow(EHitReactType HitReactType)
+void AJunPlayer::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
 {
 	if (!EquippedWeapon)
 	{
@@ -598,6 +598,7 @@ void AJunPlayer::BeginAttackTraceWindow(EHitReactType HitReactType)
 	}
 
 	EquippedWeapon->SetAttackHitReactType(HitReactType);
+	EquippedWeapon->SetAttackDefenseKnockbackData(DefenseKnockbackData);
 	EquippedWeapon->StartAttackTrace();
 }
 
@@ -823,7 +824,13 @@ void AJunPlayer::StartDodgeInternal(bool bIgnoreDodgeBlockAndReleaseGate)
 	AddGameplayTag(JunGameplayTags::State_Block_Move);
 	DodgeElapsedTime = 0.f;
 	bDodgeInputReleasedSinceLastDodge = false;
-	if (DodgeMontageToPlay == LockOnDodgeBackMontage)
+	if (DodgeMontageToPlay == BackDashMontage)
+	{
+		DodgeInternalCooldownRemainTime = BackDashInternalCooldownDuration;
+		DodgeFinishRemainTime = BackDashFinishTime;
+		DodgeInvincibleRemainTime = BackDashInvincibleDuration;
+	}
+	else if (DodgeMontageToPlay == LockOnDodgeBackMontage)
 	{
 		DodgeInternalCooldownRemainTime = BackwardDodgeInternalCooldownDuration;
 		DodgeFinishRemainTime = BackwardDodgeFinishTime;
@@ -1258,6 +1265,8 @@ bool AJunPlayer::CanBufferParrySuccessCancel(EJunBufferedParrySuccessCancelActio
 	{
 	case EJunBufferedParrySuccessCancelAction::BasicAttack:
 		return ParrySuccessElapsedTime >= ParrySuccessBasicAttackCancelOpenTime;
+	case EJunBufferedParrySuccessCancelAction::HeavyAttack:
+		return ParrySuccessElapsedTime >= ParrySuccessHeavyAttackCancelOpenTime;
 	case EJunBufferedParrySuccessCancelAction::Jump:
 		return ParrySuccessElapsedTime >= ParrySuccessJumpCancelOpenTime;
 	case EJunBufferedParrySuccessCancelAction::Dodge:
@@ -1430,7 +1439,12 @@ void AJunPlayer::BufferParrySuccessCancelAction(EJunBufferedParrySuccessCancelAc
 	TryExecuteBufferedParrySuccessCancelAction();
 }
 
-void AJunPlayer::ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* DamageCauser, const FVector& SwingDirection)
+void AJunPlayer::ReceiveHit(
+	EHitReactType HitType,
+	float DamageAmount,
+	AActor* DamageCauser,
+	const FVector& SwingDirection,
+	const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
 {
 	if (Is_Dead())
 	{
@@ -1439,6 +1453,7 @@ void AJunPlayer::ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* D
 
 	LastIncomingSwingDirection = SwingDirection;
 	LastIncomingKnockbackDirection = DetermineKnockbackDirectionFromDamageCauser(DamageCauser);
+	LastIncomingDefenseKnockbackData = DefenseKnockbackData;
 
 	const EJunPlayerHitResolveResult ResolveResult = ResolveIncomingHitResult(HitType);
 	AJunCharacter* AttackerCharacter = Cast<AJunCharacter>(DamageCauser);
@@ -1524,6 +1539,10 @@ void AJunPlayer::UpdateDodgeState(float DeltaTime)
 	}
 
 	DodgeElapsedTime += DodgeTimelineDeltaTime;
+	if (DodgeElapsedTime >= GetDodgeMoveCancelOpenTimeForMontage(CurrentDodgeMontage))
+	{
+		RemoveGameplayTag(JunGameplayTags::State_Block_Move);
+	}
 
 	if (DodgeFinishRemainTime <= 0.f)
 	{
@@ -2659,6 +2678,10 @@ void AJunPlayer::ExecuteBufferedParrySuccessCancelAction()
 		CancelParrySuccessForCancelTransition(ParrySuccessBasicAttackCancelBlendOutTime);
 		BasicAttack();
 		break;
+	case EJunBufferedParrySuccessCancelAction::HeavyAttack:
+		CancelParrySuccessForCancelTransition(ParrySuccessHeavyAttackCancelBlendOutTime);
+		StartHeavyAttackTap();
+		break;
 	case EJunBufferedParrySuccessCancelAction::Jump:
 		CancelParrySuccessForCancelTransition(ParrySuccessJumpCancelBlendOutTime);
 		Jump();
@@ -3160,11 +3183,6 @@ void AJunPlayer::AlignActorToDesiredMoveDirectionForDodge()
 
 UAnimMontage* AJunPlayer::GetDodgeMontageToPlay() const
 {
-	if (!bLockOnActive)
-	{
-		return DodgeMontage;
-	}
-
 	FVector2D DodgeInput(
 		FMath::Clamp(DesiredMoveForward, -1.f, 1.f),
 		FMath::Clamp(DesiredMoveRight, -1.f, 1.f)
@@ -3180,7 +3198,12 @@ UAnimMontage* AJunPlayer::GetDodgeMontageToPlay() const
 
 	if (DodgeInput.IsNearlyZero())
 	{
-		return DodgeMontage;
+		return BackDashMontage ? BackDashMontage.Get() : DodgeMontage.Get();
+	}
+
+	if (!bLockOnActive)
+	{
+		return DodgeMontage.Get();
 	}
 
 	const float ForwardAbs = FMath::Abs(DodgeInput.X);
@@ -3205,6 +3228,11 @@ float AJunPlayer::GetDodgePlayRateForMontage(const UAnimMontage* Montage) const
 	if (!Montage)
 	{
 		return 1.f;
+	}
+
+	if (Montage == BackDashMontage)
+	{
+		return FMath::Max(BackDashPlayRate, KINDA_SMALL_NUMBER);
 	}
 
 	if (Montage == LockOnDodgeBackMontage)
@@ -3232,6 +3260,11 @@ float AJunPlayer::GetDodgeRecoveryCancelOpenTimeForMontage(const UAnimMontage* M
 		return ForwardDodgeRecoveryCancelOpenTime;
 	}
 
+	if (Montage == BackDashMontage)
+	{
+		return BackDashRecoveryCancelOpenTime;
+	}
+
 	if (Montage == LockOnDodgeBackMontage)
 	{
 		return BackwardDodgeRecoveryCancelOpenTime;
@@ -3243,6 +3276,31 @@ float AJunPlayer::GetDodgeRecoveryCancelOpenTimeForMontage(const UAnimMontage* M
 	}
 
 	return ForwardDodgeRecoveryCancelOpenTime;
+}
+
+float AJunPlayer::GetDodgeMoveCancelOpenTimeForMontage(const UAnimMontage* Montage) const
+{
+	if (!Montage)
+	{
+		return ForwardDodgeMoveCancelOpenTime;
+	}
+
+	if (Montage == BackDashMontage)
+	{
+		return BackDashMoveCancelOpenTime;
+	}
+
+	if (Montage == LockOnDodgeBackMontage)
+	{
+		return BackwardDodgeMoveCancelOpenTime;
+	}
+
+	if (Montage == LockOnDodgeLeftMontage || Montage == LockOnDodgeRightMontage)
+	{
+		return SideDodgeMoveCancelOpenTime;
+	}
+
+	return ForwardDodgeMoveCancelOpenTime;
 }
 
 float AJunPlayer::GetCurrentDodgeTimelineRate() const
@@ -3661,11 +3719,11 @@ void AJunPlayer::StartParrySuccess()
 	AddGameplayTag(JunGameplayTags::State_Block_Dodge);
 	ApplyCommonKnockback(
 		LastIncomingKnockbackDirection,
-		ParrySuccessKnockbackStrength,
-		ParrySuccessKnockbackBrakingDeceleration,
-		ParrySuccessKnockbackGroundFriction,
-		ParrySuccessKnockbackBrakingFrictionFactor,
-		ParrySuccessKnockbackOverrideDuration
+		LastIncomingDefenseKnockbackData.ParrySuccess.Strength,
+		LastIncomingDefenseKnockbackData.ParrySuccess.BrakingDeceleration,
+		LastIncomingDefenseKnockbackData.ParrySuccess.GroundFriction,
+		LastIncomingDefenseKnockbackData.ParrySuccess.BrakingFrictionFactor,
+		LastIncomingDefenseKnockbackData.ParrySuccess.OverrideDuration
 	);
 
 	UAnimMontage* ParrySuccessMontage = GetParrySuccessMontage(LastIncomingSwingDirection);
@@ -3693,11 +3751,11 @@ void AJunPlayer::StartGuardBlock()
 	AddGameplayTag(JunGameplayTags::State_Block_Dodge);
 	ApplyCommonKnockback(
 		LastIncomingKnockbackDirection,
-		GuardBlockKnockbackStrength,
-		GuardBlockKnockbackBrakingDeceleration,
-		GuardBlockKnockbackGroundFriction,
-		GuardBlockKnockbackBrakingFrictionFactor,
-		GuardBlockKnockbackOverrideDuration
+		LastIncomingDefenseKnockbackData.GuardBlock.Strength,
+		LastIncomingDefenseKnockbackData.GuardBlock.BrakingDeceleration,
+		LastIncomingDefenseKnockbackData.GuardBlock.GroundFriction,
+		LastIncomingDefenseKnockbackData.GuardBlock.BrakingFrictionFactor,
+		LastIncomingDefenseKnockbackData.GuardBlock.OverrideDuration
 	);
 
 	if (GuardBlockMontage)

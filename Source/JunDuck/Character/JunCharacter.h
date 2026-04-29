@@ -53,6 +53,39 @@ enum class ECharacterKnockbackDirection : uint8
 	Right
 };
 
+USTRUCT(BlueprintType)
+struct FJunDefenseKnockbackData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DefenseKnockback")
+	float Strength = 250.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DefenseKnockback")
+	float BrakingDeceleration = 80.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DefenseKnockback")
+	float GroundFriction = 0.3f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DefenseKnockback")
+	float BrakingFrictionFactor = 0.1f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DefenseKnockback")
+	float OverrideDuration = 0.15f;
+};
+
+USTRUCT(BlueprintType)
+struct FJunAttackDefenseKnockbackData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DefenseKnockback")
+	FJunDefenseKnockbackData GuardBlock;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DefenseKnockback")
+	FJunDefenseKnockbackData ParrySuccess = { 500.f, 100.f, 0.35f, 0.12f, 0.12f };
+};
+
 UCLASS()
 class JUNDUCK_API AJunCharacter : public ACharacter, public IHighLightInterface
 {
@@ -79,11 +112,15 @@ public:
 	virtual void HandleGameplayEventNotify(FGameplayTag EventTag);
 
 public:
-	virtual void BeginAttackTraceWindow(EHitReactType HitReactType = EHitReactType::LightHit);
+	virtual void BeginAttackTraceWindow(
+		EHitReactType HitReactType = EHitReactType::LightHit,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData());
 
 	virtual void EndAttackTraceWindow();
 
-	virtual void BeginKickAttackTraceWindow(EHitReactType HitReactType = EHitReactType::LightHit);
+	virtual void BeginKickAttackTraceWindow(
+		EHitReactType HitReactType = EHitReactType::LightHit,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData());
 
 	virtual void EndKickAttackTraceWindow();
 

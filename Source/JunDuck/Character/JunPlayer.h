@@ -63,6 +63,7 @@ enum class EJunBufferedParrySuccessCancelAction : uint8
 {
 	None,
 	BasicAttack,
+	HeavyAttack,
 	Jump,
 	Dodge,
 	Move
@@ -109,7 +110,9 @@ public: // Engine / Character Overrides
 	virtual void Jump() override;
 	virtual void Landed(const FHitResult& Hit) override;
 	virtual void HandleGameplayEventNotify(FGameplayTag EventTag) override;
-	virtual void BeginAttackTraceWindow(EHitReactType HitReactType = EHitReactType::LightHit) override;
+	virtual void BeginAttackTraceWindow(
+		EHitReactType HitReactType = EHitReactType::LightHit,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData()) override;
 	virtual void EndAttackTraceWindow() override;
 
 public: // External Gameplay API
@@ -120,7 +123,12 @@ public: // External Gameplay API
 	void OnDodgeInputReleased();
 	void OnDefenseStarted();
 	void OnDefenseReleased();
-	void ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* DamageCauser, const FVector& SwingDirection);
+	void ReceiveHit(
+		EHitReactType HitType,
+		float DamageAmount,
+		AActor* DamageCauser,
+		const FVector& SwingDirection,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData());
 	void AddCameraLookInput(const FVector2D& Input);
 	void ToggleLockOn();
 	bool TryCancelJumpAttackEndIntoMove();
@@ -265,6 +273,7 @@ protected: // Dodge
 	class UAnimMontage* GetDodgeMontageToPlay() const;
 	float GetDodgePlayRateForMontage(const UAnimMontage* Montage) const;
 	float GetDodgeRecoveryCancelOpenTimeForMontage(const UAnimMontage* Montage) const;
+	float GetDodgeMoveCancelOpenTimeForMontage(const UAnimMontage* Montage) const;
 	float GetCurrentDodgeTimelineRate() const;
 
 	UFUNCTION()
@@ -554,6 +563,9 @@ protected: // Runtime Combat / Defense State
 	float BackwardDodgePlayRate = 1.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
+	float BackDashPlayRate = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float LeftDodgePlayRate = 1.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
@@ -566,6 +578,9 @@ protected: // Runtime Combat / Defense State
 	float BackwardDodgeFinishTime = 1.43f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
+	float BackDashFinishTime = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float SideDodgeFinishTime = 0.8f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
@@ -575,6 +590,9 @@ protected: // Runtime Combat / Defense State
 	float BackwardDodgeInternalCooldownDuration = 1.375f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
+	float BackDashInternalCooldownDuration = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float SideDodgeInternalCooldownDuration = 0.75f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
@@ -582,6 +600,9 @@ protected: // Runtime Combat / Defense State
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float BackwardDodgeInvincibleDuration = 0.66f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
+	float BackDashInvincibleDuration = 0.45f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float SideDodgeInvincibleDuration = 0.48f;
@@ -597,6 +618,21 @@ protected: // Runtime Combat / Defense State
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float BackwardDodgeRecoveryCancelOpenTime = 1.1f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
+	float BackDashRecoveryCancelOpenTime = 0.4f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
+	float BackDashMoveCancelOpenTime = 0.45f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
+	float ForwardDodgeMoveCancelOpenTime = 0.7f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
+	float BackwardDodgeMoveCancelOpenTime = 1.1f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
+	float SideDodgeMoveCancelOpenTime = 0.45f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float SideDodgeRecoveryCancelOpenTime = 0.65f;
@@ -720,6 +756,9 @@ protected: // Runtime Combat / Defense State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	ECharacterKnockbackDirection LastIncomingKnockbackDirection = ECharacterKnockbackDirection::Backward;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
+	FJunAttackDefenseKnockbackData LastIncomingDefenseKnockbackData;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	EJunBufferedParrySuccessCancelAction BufferedParrySuccessCancelAction = EJunBufferedParrySuccessCancelAction::None;
@@ -908,6 +947,9 @@ protected: // Attack / Defense Tuning
 	float ParrySuccessBasicAttackCancelOpenTime = 0.4f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	float ParrySuccessHeavyAttackCancelOpenTime = 0.4f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float ParrySuccessJumpCancelOpenTime = 0.4f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
@@ -918,6 +960,9 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float ParrySuccessBasicAttackCancelBlendOutTime = 0.15f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	float ParrySuccessHeavyAttackCancelBlendOutTime = 0.15f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float ParrySuccessJumpCancelBlendOutTime = 0.15f;
@@ -1217,6 +1262,9 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	TObjectPtr<class UAnimMontage> DodgeMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
+	TObjectPtr<class UAnimMontage> BackDashMontage;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "DodgeAttack")
 	TObjectPtr<class UAnimMontage> DodgeAttackMontage;

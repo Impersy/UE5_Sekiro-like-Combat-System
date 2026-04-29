@@ -14,6 +14,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "KickTrace")
 	EHitReactType HitReactType = EHitReactType::LightHit;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "KickTrace")
+	FJunAttackDefenseKnockbackData DefenseKnockbackData;
+
 	virtual FString GetNotifyName_Implementation() const override;
 
 	virtual void NotifyBegin(

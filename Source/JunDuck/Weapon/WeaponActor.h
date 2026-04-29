@@ -43,6 +43,9 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void SetAttackHitReactType(EHitReactType NewHitReactType);
 
+	UFUNCTION(BlueprintCallable)
+	void SetAttackDefenseKnockbackData(const FJunAttackDefenseKnockbackData& NewDefenseKnockbackData);
+
 protected:
 	void UpdateAttackTrace();
 	void DrawAttackTraceDebug(const FVector& TraceStart, const FVector& TraceEnd, bool bSweepDebug, const FVector& PrevStart = FVector::ZeroVector, const FVector& PrevEnd = FVector::ZeroVector) const;
@@ -50,6 +53,9 @@ protected:
 	void ApplyDamageToHitCharacter(AActor* HitActor, const FVector& SwingDirection);
 
 protected:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
+	TObjectPtr<USceneComponent> WeaponRoot;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite)
 	TObjectPtr<UStaticMeshComponent> WeaponMesh;
 
@@ -77,6 +83,8 @@ protected:
 	bool bTraceActive = false;
 
 	EHitReactType AttackHitReactType = EHitReactType::LightHit;
+
+	FJunAttackDefenseKnockbackData AttackDefenseKnockbackData;
 
 	FVector PrevTraceStart = FVector::ZeroVector;
 	FVector PrevTraceEnd = FVector::ZeroVector;

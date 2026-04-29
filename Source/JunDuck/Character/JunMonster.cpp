@@ -386,7 +386,7 @@ void AJunMonster::SetDesiredMoveAxes(float NewForward, float NewRight)
 	DesiredMoveRight = FMath::Clamp(NewRight, -1.f, 1.f);
 }
 
-void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType)
+void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
 {
 	if (!EquippedWeapon)
 	{
@@ -394,6 +394,7 @@ void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType)
 	}
 
 	EquippedWeapon->SetAttackHitReactType(HitReactType);
+	EquippedWeapon->SetAttackDefenseKnockbackData(DefenseKnockbackData);
 	EquippedWeapon->StartAttackTrace();
 }
 
@@ -407,17 +408,19 @@ void AJunMonster::EndAttackTraceWindow()
 	EquippedWeapon->EndAttackTrace();
 }
 
-void AJunMonster::BeginKickAttackTraceWindow(EHitReactType HitReactType)
+void AJunMonster::BeginKickAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
 {
 	if (EquippedKickWeapon)
 	{
 		EquippedKickWeapon->SetAttackHitReactType(HitReactType);
+		EquippedKickWeapon->SetAttackDefenseKnockbackData(DefenseKnockbackData);
 		EquippedKickWeapon->StartAttackTrace();
 	}
 
 	if (EquippedKickWeaponRight)
 	{
 		EquippedKickWeaponRight->SetAttackHitReactType(HitReactType);
+		EquippedKickWeaponRight->SetAttackDefenseKnockbackData(DefenseKnockbackData);
 		EquippedKickWeaponRight->StartAttackTrace();
 	}
 }

@@ -362,12 +362,23 @@ void AJunPlayerController::Input_HeavyAttackStarted(const FInputActionValue& Inp
 		return;
 	}
 
+	if (JunPlayer->IsInParrySuccess())
+	{
+		JunPlayer->BufferParrySuccessCancelAction(EJunBufferedParrySuccessCancelAction::HeavyAttack);
+		return;
+	}
+
 	JunPlayer->OnHeavyAttackStarted();
 }
 
 void AJunPlayerController::Input_HeavyAttackReleased(const FInputActionValue& InputValue)
 {
 	if (!JunPlayer)
+	{
+		return;
+	}
+
+	if (JunPlayer->IsInParrySuccess())
 	{
 		return;
 	}

@@ -11,9 +11,12 @@ AWeaponActor::AWeaponActor()
  	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
 
-	// 컴포넌트 추가
+	// Keep the mesh as a child so each weapon BP can freely tune relative rotation.
+	WeaponRoot = CreateDefaultSubobject<USceneComponent>(TEXT("WeaponRoot"));
+	RootComponent = WeaponRoot;
+
 	WeaponMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("WeaponMesh"));
-	RootComponent = WeaponMesh;
+	WeaponMesh->SetupAttachment(WeaponRoot);
 
 	// 무기 메쉬는 충돌 X
 	WeaponMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -90,6 +93,11 @@ void AWeaponActor::SetTraceSampleCount(const int32 NewTraceSampleCount)
 void AWeaponActor::SetAttackHitReactType(const EHitReactType NewHitReactType)
 {
 	AttackHitReactType = NewHitReactType;
+}
+
+void AWeaponActor::SetAttackDefenseKnockbackData(const FJunAttackDefenseKnockbackData& NewDefenseKnockbackData)
+{
+	AttackDefenseKnockbackData = NewDefenseKnockbackData;
 }
 
 void AWeaponActor::UpdateAttackTrace()
@@ -265,7 +273,7 @@ void AWeaponActor::ApplyDamageToHitCharacter(AActor* HitActor, const FVector& Sw
 		}
 		else if (AJunPlayer* HitPlayer = Cast<AJunPlayer>(VictimCharacter))
 		{
-			HitPlayer->ReceiveHit(AttackHitReactType, BasicDamage, AttackerCharacter, SwingDirection);
+			HitPlayer->ReceiveHit(AttackHitReactType, BasicDamage, AttackerCharacter, SwingDirection, AttackDefenseKnockbackData);
 		}
 		else
 		{

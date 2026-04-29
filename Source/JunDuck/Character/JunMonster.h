@@ -119,9 +119,13 @@ public:
 	float GetDesiredMaxWalkSpeed() const;
 	void SetDesiredMoveAxes(float NewForward, float NewRight);
 
-	virtual void BeginAttackTraceWindow(EHitReactType HitReactType = EHitReactType::LightHit) override;
+	virtual void BeginAttackTraceWindow(
+		EHitReactType HitReactType = EHitReactType::LightHit,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData()) override;
 	virtual void EndAttackTraceWindow() override;
-	virtual void BeginKickAttackTraceWindow(EHitReactType HitReactType = EHitReactType::LightHit) override;
+	virtual void BeginKickAttackTraceWindow(
+		EHitReactType HitReactType = EHitReactType::LightHit,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData()) override;
 	virtual void EndKickAttackTraceWindow() override;
 	void BeginAttackFacingWindow(float InterpSpeed);
 	void EndAttackFacingWindow();
