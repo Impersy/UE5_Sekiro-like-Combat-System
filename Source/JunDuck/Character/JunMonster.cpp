@@ -161,29 +161,6 @@ void AJunMonster::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	if (GEngine)
-	{
-		FString DebugText = FString::Printf(
-			TEXT("Monster State: %s\nHp: %d / %d"),
-			GetMonsterStateDebugText(CurrentState),
-			Hp,
-			MaxHp
-		);
-		const FString ExtraDebugText = GetMonsterDebugExtraText();
-		if (!ExtraDebugText.IsEmpty())
-		{
-			DebugText += TEXT("\n");
-			DebugText += ExtraDebugText;
-		}
-
-		GEngine->AddOnScreenDebugMessage(
-			static_cast<uint64>(reinterpret_cast<UPTRINT>(this)),
-			0.f,
-			FColor::Yellow,
-			DebugText
-		);
-	}
-
 	if (bDebugFreezeMovement)
 	{
 		StopAIMovement();

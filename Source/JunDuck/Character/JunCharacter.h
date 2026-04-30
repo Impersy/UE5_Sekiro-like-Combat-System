@@ -137,6 +137,12 @@ public:
 	bool IsSameTeam(const AJunCharacter* Other) const;
 	bool IsEnemyTo(const AJunCharacter* Other) const;
 
+	UFUNCTION(BlueprintPure, Category = "Character|Health")
+	int32 GetHp() const { return Hp; }
+
+	UFUNCTION(BlueprintPure, Category = "Character|Health")
+	int32 GetMaxHp() const { return MaxHp; }
+
 protected:
 	UFUNCTION(BlueprintCallable)
 	void AddGameplayTag(FGameplayTag Tag);

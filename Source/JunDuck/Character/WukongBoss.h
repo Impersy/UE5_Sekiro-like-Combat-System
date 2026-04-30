@@ -475,6 +475,9 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Approach")
 	float NoAttackCandidateApproachDelay = 5.f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Approach")
+	bool bEnableExpressiveNonAttackActions = false;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement")
 	float StrafeMinDuration = 2.f;
 
@@ -561,6 +564,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement")
 	float EvadeFacingInterpSpeed = 12.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|ReactiveAction")
+	float ReactiveEvadeBlendInTime = 0.2f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|ReactiveAction")
 	FWukongReactiveActionTuningData ReactiveBackwardEvade;

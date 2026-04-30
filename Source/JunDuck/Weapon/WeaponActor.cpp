@@ -172,16 +172,6 @@ void AWeaponActor::UpdateAttackTrace()
 			CurrentFrameHitActors.Add(HitActor);
 			HitActors.Add(HitActor);
 
-			if (GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(
-					-1,
-					0.5f,
-					FColor::Red,
-					FString::Printf(TEXT("Hit: %s"), *HitActor->GetName())
-				);
-			}
-
 			ApplyDamageToHitCharacter(HitActor, SwingDirection);
 		}
 	}

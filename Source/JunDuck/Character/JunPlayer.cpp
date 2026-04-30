@@ -852,11 +852,6 @@ void AJunPlayer::StartDodgeInternal(bool bIgnoreDodgeBlockAndReleaseGate)
 	if (DodgeInvincibleRemainTime > 0.f)
 	{
 		AddGameplayTag(JunGameplayTags::State_Condition_Invincible);
-
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, DodgeInvincibleRemainTime, FColor::Yellow, TEXT("Invincible"));
-		}
 	}
 
 	if (EquippedWeapon)
@@ -1122,6 +1117,11 @@ bool AJunPlayer::GetPlayerIsFalling()
 bool AJunPlayer::IsLockOn()
 {
 	return bLockOnActive;
+}
+
+FVector AJunPlayer::GetLockOnMarkerWorldPoint()
+{
+	return GetRawLockOnBonePoint();
 }
 
 bool AJunPlayer::IsGuardOn()
@@ -2312,6 +2312,37 @@ void AJunPlayer::StartJumpAttack()
 
 	CancelLockOnTurn();
 	TargetActor = LockOnTarget ? LockOnTarget.Get() : FindBestAttackTarget();
+
+	const FVector HorizontalVelocity = FVector(GetVelocity().X, GetVelocity().Y, 0.f);
+	const bool bHasMoveInput = !FMath::IsNearlyZero(DesiredMoveForward) ||
+		!FMath::IsNearlyZero(DesiredMoveRight) ||
+		!FMath::IsNearlyZero(PendingMoveForward) ||
+		!FMath::IsNearlyZero(PendingMoveRight);
+	const bool bShouldApplyStationaryJumpAttackImpulse =
+		!bHasMoveInput &&
+		HorizontalVelocity.SizeSquared() <= FMath::Square(JumpAttackStationaryImpulseMaxHorizontalSpeed);
+
+	if (bShouldApplyStationaryJumpAttackImpulse && JumpAttackStartForwardImpulseStrength > 0.f)
+	{
+		FVector ForwardImpulseDirection = FVector::ZeroVector;
+		if (TargetActor)
+		{
+			ForwardImpulseDirection = TargetActor->GetActorLocation() - GetActorLocation();
+			ForwardImpulseDirection.Z = 0.f;
+		}
+
+		if (ForwardImpulseDirection.IsNearlyZero())
+		{
+			ForwardImpulseDirection = GetActorForwardVector();
+			ForwardImpulseDirection.Z = 0.f;
+		}
+
+		if (!ForwardImpulseDirection.IsNearlyZero())
+		{
+			ForwardImpulseDirection.Normalize();
+			GetCharacterMovement()->AddImpulse(ForwardImpulseDirection * JumpAttackStartForwardImpulseStrength, true);
+		}
+	}
 
 	AddGameplayTag(JunGameplayTags::State_Action_Attack);
 	AddGameplayTag(JunGameplayTags::State_Block_Jump);
@@ -3709,10 +3740,6 @@ void AJunPlayer::StartParrySuccess()
 	ChainParryWindowRemainTime = ChainParryWindowDuration;
 	ParrySuccessElapsedTime = 0.f;
 	BufferedParrySuccessCancelAction = EJunBufferedParrySuccessCancelAction::None;
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 0.6f, FColor::Cyan, TEXT("ParrySuccess"));
-	}
 	AddGameplayTag(JunGameplayTags::State_Block_Move);
 	AddGameplayTag(JunGameplayTags::State_Block_Jump);
 	AddGameplayTag(JunGameplayTags::State_Block_Attack);
@@ -4050,10 +4077,6 @@ void AJunPlayer::StartDefenseSequence()
 	CurrentDefensePlayRate = FMath::Max(GuardStartPlayRate, KINDA_SMALL_NUMBER);
 	bParryWindowOpen = true;
 	ParryWindowRemainTime = DefaultParryWindowDuration;
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, DefaultParryWindowDuration, FColor::Green, TEXT("ParryEnable"));
-	}
 	BufferedDefenseTransitionCancelAction = EJunBufferedDefenseCancelAction::None;
 	bHoldRequestedForCurrentDeflect = bDefenseButtonHeld;
 	bDeflectResolveReceived = false;
@@ -4139,10 +4162,6 @@ void AJunPlayer::ResolveCurrentDeflectAttempt()
 
 	if (bShouldEnterGuardLoop)
 	{
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan, TEXT("Guard"));
-		}
 		EnterGuardLoop();
 		return;
 	}
@@ -4632,11 +4651,11 @@ void AJunPlayer::UpdateLockOnCamera(float DeltaTime)
 		: GetActorLocation();
 	CameraBasePoint.Z += 50.f;
 
-	const FVector TargetBonePoint = GetFilteredLockOnTargetPoint();
-	const FVector ToTarget = TargetBonePoint - CameraBasePoint;
-	const FVector DebugSpherePoint = GetRawLockOnBonePoint() - (ToTarget.GetSafeNormal() * 20.f);
+	const FVector TargetPoint = GetFilteredLockOnTargetPoint();
+	const FVector ToTarget = TargetPoint - CameraBasePoint;
+	const FVector DebugSpherePoint = GetLockOnDebugSpherePoint();
 
-	DrawDebugSphere(GetWorld(), DebugSpherePoint, 6.f, 12, FColor::Red, false, 0.f);
+	//DrawDebugSphere(GetWorld(), DebugSpherePoint, 6.f, 12, FColor::Red, false, 0.f);
 
 	if (ToTarget.IsNearlyZero())
 	{
@@ -4728,6 +4747,28 @@ FVector AJunPlayer::GetRawLockOnBonePoint() const
 	}
 
 	return LockOnTarget->GetActorLocation() + FVector(0.f, 0.f, 40.f);
+}
+
+FVector AJunPlayer::GetLockOnDebugSpherePoint()
+{
+	if (!LockOnTarget)
+	{
+		return FVector::ZeroVector;
+	}
+
+	FVector CameraBasePoint = CameraAnchor
+		? CameraAnchor->GetComponentLocation()
+		: GetActorLocation();
+	CameraBasePoint.Z += 50.f;
+
+	const FVector TargetPoint = GetFilteredLockOnTargetPoint();
+	const FVector ToTarget = TargetPoint - CameraBasePoint;
+	if (ToTarget.IsNearlyZero())
+	{
+		return GetRawLockOnBonePoint();
+	}
+
+	return GetRawLockOnBonePoint() - (ToTarget.GetSafeNormal() * 20.f);
 }
 
 FVector AJunPlayer::GetRawLockOnCapsulePoint() const

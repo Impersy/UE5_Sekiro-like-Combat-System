@@ -23,7 +23,8 @@ public class JunDuck : ModuleRules
 			"GameplayTags",
 			"Niagara",
 			"NavigationSystem",
-			"AIModule"
+			"AIModule",
+			"UMG"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });

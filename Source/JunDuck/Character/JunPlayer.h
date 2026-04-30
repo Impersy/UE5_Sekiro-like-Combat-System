@@ -153,6 +153,8 @@ public: // External Gameplay API
 public: // Query / State API
 	bool GetPlayerIsFalling();
 	bool IsLockOn();
+	class AJunCharacter* GetLockOnTarget() const { return LockOnTarget.Get(); }
+	FVector GetLockOnMarkerWorldPoint();
 	bool IsGuardOn();
 	bool IsGuardPoseActive();
 	bool IsBasicAttacking() const;
@@ -381,6 +383,7 @@ protected: // Camera
 	void UpdateLockOnCamera(float DeltaTime);
 	void UpdateLockOnCharacterRotation(float DeltaTime);
 	FVector GetRawLockOnBonePoint() const;
+	FVector GetLockOnDebugSpherePoint();
 	FVector GetRawLockOnCapsulePoint() const;
 	FVector GetFilteredLockOnTargetPoint();
 
@@ -877,7 +880,7 @@ protected: // Camera Tuning
 	float LockOnBreakDistance = 150000.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
-	float LockOnPitchOffset = -20.f;
+	float LockOnPitchOffset = -30.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float LockOnTargetZIgnoreThreshold = 10.f;
@@ -1130,10 +1133,16 @@ protected: // Attack / Defense Tuning
 	float JumpAttackMinStartTime = 0.12f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack")
-	float JumpAttackMinStartVerticalVelocity = -300.f;
+	float JumpAttackMinStartVerticalVelocity = 200.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack")
-	float JumpAttackMinGroundDistance = 300.f;
+	float JumpAttackMinGroundDistance = 600.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack", meta = (ClampMin = "0"))
+	float JumpAttackStartForwardImpulseStrength = 200.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack", meta = (ClampMin = "0"))
+	float JumpAttackStationaryImpulseMaxHorizontalSpeed = 120.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack")
 	FName JumpAttackStartSectionName = TEXT("Start");

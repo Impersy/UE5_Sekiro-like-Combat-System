@@ -26,9 +26,12 @@ protected:
 	virtual void SetupInputComponent() override;
 	virtual void PlayerTick(float DeltaTime) override;
 
-
-
 private:
+	void InitializeCombatWidgets();
+	void UpdateCombatWidgets();
+	class AJunMonster* FindActiveCombatBoss() const;
+	void UpdateLockOnMarkerWidget(class AJunCharacter* CurrentLockOnTarget);
+
 	void Input_Move(const FInputActionValue& InputValue);
 	void Input_MoveReleased(const FInputActionValue& InputValue);
 	void Input_Turn(const FInputActionValue& InputValue);
@@ -47,4 +50,16 @@ private:
 
 protected:
 	TObjectPtr<class AJunPlayer> JunPlayer;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI")
+	TSubclassOf<class UJunCombatHUDWidget> CombatHUDWidgetClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI")
+	TSubclassOf<class UJunLockOnMarkerWidget> LockOnMarkerWidgetClass;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI")
+	TObjectPtr<class UJunCombatHUDWidget> CombatHUDWidget;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI")
+	TObjectPtr<class UJunLockOnMarkerWidget> LockOnMarkerWidget;
 };

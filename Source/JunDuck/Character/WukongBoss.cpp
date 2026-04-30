@@ -629,7 +629,24 @@ void AWukongBoss::EnterEvadeState()
 
 	if (UAnimMontage* NonAttackMontage = bUsingReactiveEvade ? GetReactiveActionMontage() : GetPlannedNonAttackMontage())
 	{
-		const float PlayedMontageLength = PlayAnimMontage(NonAttackMontage);
+		float PlayedMontageLength = 0.f;
+		if (bUsingReactiveEvade && ReactiveEvadeBlendInTime > 0.f)
+		{
+			if (UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+			{
+				const FMontageBlendSettings BlendInSettings(ReactiveEvadeBlendInTime);
+				PlayedMontageLength = AnimInstance->Montage_PlayWithBlendSettings(NonAttackMontage, BlendInSettings);
+			}
+			else
+			{
+				PlayedMontageLength = PlayAnimMontage(NonAttackMontage);
+			}
+		}
+		else
+		{
+			PlayedMontageLength = PlayAnimMontage(NonAttackMontage);
+		}
+
 		if (PlayedMontageLength > 0.f)
 		{
 			ApplyTimedMontageSuperArmor(PlayedMontageLength, 1.f);
@@ -2016,33 +2033,7 @@ void AWukongBoss::OnHitReactEnded(EHitReactType EndedHitReact)
 
 FString AWukongBoss::GetMonsterDebugExtraText() const
 {
-	const FString StateText = IsInHitReact()
-		? TEXT("Wukong State: HitReact")
-		: FString::Printf(
-			TEXT("Wukong State: %s"),
-			GetWukongCombatStateDebugText(CurrentCombatSubState)
-		);
-
-	if (bDebugCodeDrivenAttackMove)
-	{
-		return FString::Printf(
-			TEXT("%s\nCodeMove: %s %s\nDist %.0f / Travel %.0f / Stop %.0f / Max %.0f"),
-			*StateText,
-			GetWukongNormalAttackDebugText(CodeDrivenAttackMoveType),
-			GetWukongCodeMoveStopReasonDebugText(LastCodeDrivenAttackMoveStopReason),
-			LastCodeDrivenAttackMoveTargetDistance,
-			LastCodeDrivenAttackMoveTravelDistance,
-			LastCodeDrivenAttackMoveStopDistance,
-			LastCodeDrivenAttackMoveMaxDistance
-		);
-	}
-
-	if (IsInHitReact())
-	{
-		return TEXT("Wukong State: HitReact");
-	}
-
-	return StateText;
+	return FString();
 }
 
 void AWukongBoss::ResetPlannedCombatPlan()
@@ -2680,7 +2671,7 @@ void AWukongBoss::RefreshNoAttackFallbackMovementType()
 		IsExpressiveNonAttackType(LastCompletedNonAttackType) &&
 		LastCompletedNonAttackType != EWukongPlannedNonAttackType::Hold;
 
-	if (!bLastWasExpressiveNonAttack)
+	if (bEnableExpressiveNonAttackActions && !bLastWasExpressiveNonAttack)
 	{
 		auto TryAddExpressiveCandidate = [this, &NonAttackCandidates](EWukongPlannedNonAttackType CandidateType)
 		{

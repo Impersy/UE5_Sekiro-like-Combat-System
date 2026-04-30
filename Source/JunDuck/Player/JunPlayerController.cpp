@@ -8,7 +8,13 @@
 #include "System/JunAssetManager.h"
 #include "Data/JunInputData.h"
 #include "JunGameplayTags.h"
+#include "Blueprint/UserWidget.h"
+#include "Character/JunCharacter.h"
+#include "Character/JunMonster.h"
 #include "Character/JunPlayer.h"
+#include "EngineUtils.h"
+#include "UI/JunCombatHUDWidget.h"
+#include "UI/JunLockOnMarkerWidget.h"
 
 AJunPlayerController::AJunPlayerController(const FObjectInitializer& objectInitializer)
 	: Super(objectInitializer)
@@ -29,6 +35,7 @@ void AJunPlayerController::BeginPlay()
 	}
 
 	JunPlayer = Cast<AJunPlayer>(GetPawn());
+	InitializeCombatWidgets();
 
 }
 
@@ -88,7 +95,104 @@ void AJunPlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
 
+	UpdateCombatWidgets();
+}
 
+void AJunPlayerController::InitializeCombatWidgets()
+{
+	if (CombatHUDWidgetClass && !CombatHUDWidget)
+	{
+		CombatHUDWidget = CreateWidget<UJunCombatHUDWidget>(this, CombatHUDWidgetClass);
+		if (CombatHUDWidget)
+		{
+			CombatHUDWidget->AddToViewport(0);
+			CombatHUDWidget->SetBossHealthVisible(false);
+		}
+	}
+
+	if (LockOnMarkerWidgetClass && !LockOnMarkerWidget)
+	{
+		LockOnMarkerWidget = CreateWidget<UJunLockOnMarkerWidget>(this, LockOnMarkerWidgetClass);
+		if (LockOnMarkerWidget)
+		{
+			LockOnMarkerWidget->AddToViewport(1);
+			LockOnMarkerWidget->SetLockOnMarkerVisible(false);
+		}
+	}
+}
+
+void AJunPlayerController::UpdateCombatWidgets()
+{
+	if (!JunPlayer)
+	{
+		JunPlayer = Cast<AJunPlayer>(GetPawn());
+	}
+
+	if (!JunPlayer)
+	{
+		return;
+	}
+
+	AJunCharacter* CurrentLockOnTarget = JunPlayer->IsLockOn() ? JunPlayer->GetLockOnTarget() : nullptr;
+	AJunMonster* ActiveCombatBoss = FindActiveCombatBoss();
+
+	if (CombatHUDWidget)
+	{
+		CombatHUDWidget->SetPlayerHealth(JunPlayer->GetHp(), JunPlayer->GetMaxHp());
+		CombatHUDWidget->SetBossHealthVisible(ActiveCombatBoss != nullptr);
+
+		if (ActiveCombatBoss)
+		{
+			CombatHUDWidget->SetBossHealth(ActiveCombatBoss->GetHp(), ActiveCombatBoss->GetMaxHp());
+		}
+	}
+
+	UpdateLockOnMarkerWidget(CurrentLockOnTarget);
+}
+
+AJunMonster* AJunPlayerController::FindActiveCombatBoss() const
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	for (TActorIterator<AJunMonster> It(World); It; ++It)
+	{
+		AJunMonster* Monster = *It;
+		if (Monster && !Monster->Is_Dead() && Monster->GetCurrentState() == EMonsterState::Combat)
+		{
+			return Monster;
+		}
+	}
+
+	return nullptr;
+}
+
+void AJunPlayerController::UpdateLockOnMarkerWidget(AJunCharacter* CurrentLockOnTarget)
+{
+	if (!LockOnMarkerWidget)
+	{
+		return;
+	}
+
+	if (!CurrentLockOnTarget)
+	{
+		LockOnMarkerWidget->SetLockOnMarkerVisible(false);
+		return;
+	}
+
+	FVector2D ScreenPosition = FVector2D::ZeroVector;
+	const bool bProjected = ProjectWorldLocationToScreen(JunPlayer->GetLockOnMarkerWorldPoint(), ScreenPosition, true);
+	if (!bProjected)
+	{
+		LockOnMarkerWidget->SetLockOnMarkerVisible(false);
+		return;
+	}
+
+	LockOnMarkerWidget->SetLockOnMarkerVisible(true);
+	LockOnMarkerWidget->SetPositionInViewport(ScreenPosition, true);
 }
 
 void AJunPlayerController::Input_Move(const FInputActionValue& InputValue)
