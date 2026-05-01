@@ -59,7 +59,7 @@ void AJunCharacter::HandleGameplayEventNotify(FGameplayTag EventTag)
 	// 상속 클래스에서 구현
 }
 
-void AJunCharacter::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
+void AJunCharacter::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
 {
 }
 
@@ -67,7 +67,7 @@ void AJunCharacter::EndAttackTraceWindow()
 {
 }
 
-void AJunCharacter::BeginKickAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
+void AJunCharacter::BeginKickAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
 {
 }
 

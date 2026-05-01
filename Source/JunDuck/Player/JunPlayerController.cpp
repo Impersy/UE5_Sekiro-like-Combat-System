@@ -179,6 +179,7 @@ void AJunPlayerController::UpdateLockOnMarkerWidget(AJunCharacter* CurrentLockOn
 
 	if (!CurrentLockOnTarget)
 	{
+		LockOnMarkerWidget->SetExecutionReadyMarkerVisible(false);
 		LockOnMarkerWidget->SetLockOnMarkerVisible(false);
 		return;
 	}
@@ -187,12 +188,16 @@ void AJunPlayerController::UpdateLockOnMarkerWidget(AJunCharacter* CurrentLockOn
 	const bool bProjected = ProjectWorldLocationToScreen(JunPlayer->GetLockOnMarkerWorldPoint(), ScreenPosition, true);
 	if (!bProjected)
 	{
+		LockOnMarkerWidget->SetExecutionReadyMarkerVisible(false);
 		LockOnMarkerWidget->SetLockOnMarkerVisible(false);
 		return;
 	}
 
 	LockOnMarkerWidget->SetLockOnMarkerVisible(true);
 	LockOnMarkerWidget->SetPositionInViewport(ScreenPosition, true);
+
+	const AJunMonster* LockOnMonster = Cast<AJunMonster>(CurrentLockOnTarget);
+	LockOnMarkerWidget->SetExecutionReadyMarkerVisible(LockOnMonster && LockOnMonster->CanBeExecutedBy(JunPlayer));
 }
 
 void AJunPlayerController::Input_Move(const FInputActionValue& InputValue)
@@ -417,6 +422,11 @@ void AJunPlayerController::Input_BasicAttack(const FInputActionValue& InputValue
 		{
 			JunPlayer->TryCancelDodgeIntoBasicAttack();
 		}
+		return;
+	}
+
+	if (JunPlayer->TryStartExecution())
+	{
 		return;
 	}
 

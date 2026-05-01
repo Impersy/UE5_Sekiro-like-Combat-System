@@ -12,6 +12,7 @@
 UENUM(BlueprintType)
 enum class EMonsterState : uint8
 {
+	CutsceneWait,
 	Idle,
 	Patrol,
 	Chase,
@@ -103,6 +104,17 @@ public:
 	void HandlePatrolMoveCompleted(bool bSuccess);
 	void ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* DamageCauser);
 	void ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* DamageCauser, const FVector& SwingDirection);
+	virtual void OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker) override;
+	void NotifyAttackParriedBy(class AJunPlayer* Parrier);
+	bool IsExecutionReady() const;
+	bool CanBeExecutedBy(const class AJunPlayer* Player) const;
+	bool TryBeginExecutionBy(class AJunPlayer* Player);
+	void TriggerPendingExecutionMontage();
+	void CancelPendingExecution();
+	void RestoreExecutionCapsuleCollisionIgnore();
+	bool ShouldIgnoreExecutorCapsuleCollisionDuringExecution() const { return bIgnoreExecutorCapsuleCollisionDuringExecution; }
+	bool HasExecutionResultApplied() const;
+	void HandleEquipWeaponNotify();
 
 	// Animation or external gameplay code queries these states.
 	bool HasCombatTarget();
@@ -113,6 +125,10 @@ public:
 	bool ShouldUseRunLocomotion() const;
 	EMonsterState GetCurrentState() const;
 	EMonsterMoveState GetMoveState() const;
+	int32 GetCurrentLifeCount() const;
+	int32 GetMaxLifeCount() const;
+	float GetCurrentPosture() const;
+	float GetMaxPosture() const;
 	FVector2D GetCombatMoveInput() const;
 	float GetDesiredMoveForward() const;
 	float GetDesiredMoveRight() const;
@@ -121,10 +137,12 @@ public:
 
 	virtual void BeginAttackTraceWindow(
 		EHitReactType HitReactType = EHitReactType::LightHit,
+		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData()) override;
 	virtual void EndAttackTraceWindow() override;
 	virtual void BeginKickAttackTraceWindow(
 		EHitReactType HitReactType = EHitReactType::LightHit,
+		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData()) override;
 	virtual void EndKickAttackTraceWindow() override;
 	void BeginAttackFacingWindow(float InterpSpeed);
@@ -138,6 +156,7 @@ protected:
 	// Top-level state machine.
 	// Enter*() configures the state once, Update*() advances it every Tick.
 	void SetMonsterState(EMonsterState NewState);
+	void EnterCutsceneWaitState();
 	void EnterIdleState();
 	void EnterPatrolState();
 	void EnterChaseState();
@@ -147,6 +166,7 @@ protected:
 	void EnterDeadState();
 
 	void Update_State(float DeltaTime);
+	void UpdateCutsceneWait(float DeltaTime);
 	void UpdateIdle(float DeltaTime);
 	void UpdatePatrol(float DeltaTime);
 	void UpdateChase(float DeltaTime);
@@ -198,6 +218,9 @@ protected:
 protected:
 	// Weapon lifecycle helper.
 	void SpawnAndAttachWeapon();
+	void AttachWeaponToSocket(FName SocketName);
+	void AttachWeaponToHandSocket();
+	void AttachWeaponToSheathedSocket();
 
 protected:
 	// Hit react lifecycle.
@@ -218,6 +241,21 @@ protected:
 	bool CanUpdateBehavior() const;
 
 protected:
+	void AddPosture(float Amount);
+	void StartExecutionReady();
+	void EndExecutionReady();
+	void FinishExecutionRecovery();
+	void UpdateExecutionFacing(float DeltaTime);
+	void ResetExecutionRuntimeState();
+	float GetExecutionMontageDuration(const UAnimMontage* Montage, float FallbackDuration) const;
+
+	UFUNCTION()
+	void OnExecutionMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+	UFUNCTION()
+	void OnCutsceneWaitMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+protected:
 	// AI tuning / top-level state runtime
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI")
 	FMonsterAIData AIData;
@@ -233,6 +271,26 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI")
 	float BattleStartMoveBlendDuration = 0.4f;
+
+protected:
+	// Boss intro / staging state. The montage should loop Idle -> Idle, then branch Idle -> Equip.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cutscene")
+	bool bStartWithCutsceneWait = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Cutscene")
+	TObjectPtr<class UAnimMontage> CutsceneWaitMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cutscene")
+	FName CutsceneWaitIdleSectionName = TEXT("Idle");
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cutscene")
+	FName CutsceneWaitEquipSectionName = TEXT("Equip");
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cutscene", meta = (ClampMin = "0"))
+	float CutsceneTriggerRange = 1300.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Cutscene")
+	bool bCutsceneTriggered = false;
 
 protected:
 	// Runtime references cached after spawn / detection.
@@ -351,6 +409,64 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
 	float BattleStartMoveBlendRemainTime = 0.f;
 
+protected:
+	// Execution / posture system shared by normal monsters and bosses.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "1"))
+	int32 MaxLifeCount = 1;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	int32 CurrentLifeCount = 1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "1"))
+	float MaxPosture = 100.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	float CurrentPosture = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0"))
+	float PostureGainPerDamage = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0"))
+	float ParriedPostureGain = 35.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0.1"))
+	float ExecutionReadyDuration = 2.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0"))
+	float ExecutionInteractRange = 180.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution")
+	bool bIgnoreExecutorCapsuleCollisionDuringExecution = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution")
+	TObjectPtr<class UAnimMontage> ReadyExecutedMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution")
+	TObjectPtr<class UAnimMontage> ExecutedMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution")
+	TObjectPtr<class UAnimMontage> ExecutedDeathMontage = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	bool bExecutionReady = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	bool bBeingExecuted = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	bool bExecutionResultApplied = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	float ExecutionReadyRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	TObjectPtr<class AJunPlayer> CurrentExecutionInstigator = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	TObjectPtr<class UAnimMontage> CurrentExecutionMontage = nullptr;
+
+	FTimerHandle ExecutionRecoveryTimerHandle;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
 	TObjectPtr<class UAnimMontage> CurrentCombatTurnMontage = nullptr;
 
@@ -420,6 +536,9 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
 	FName WeaponSocketName = TEXT("WeaponSocket_R");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	FName SheathedWeaponSocketName = TEXT("WeaponSocket_Scabbard");
 
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
 	FName ScabbardSocketName = TEXT("ScabSocket");

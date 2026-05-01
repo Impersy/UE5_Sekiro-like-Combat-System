@@ -8,7 +8,8 @@ UENUM(BlueprintType)
 enum class EJunCameraMode : uint8
 {
 	Free,
-	LockOn
+	LockOn,
+	Execution
 };
 
 UENUM(BlueprintType)
@@ -112,6 +113,7 @@ public: // Engine / Character Overrides
 	virtual void HandleGameplayEventNotify(FGameplayTag EventTag) override;
 	virtual void BeginAttackTraceWindow(
 		EHitReactType HitReactType = EHitReactType::LightHit,
+		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData()) override;
 	virtual void EndAttackTraceWindow() override;
 
@@ -149,6 +151,7 @@ public: // External Gameplay API
 	void EndDodgeAttackWindow();
 	void BeginDodgeChainWindow();
 	void EndDodgeChainWindow();
+	bool TryStartExecution();
 
 public: // Query / State API
 	bool GetPlayerIsFalling();
@@ -179,6 +182,7 @@ public: // Query / State API
 	bool ShouldDeferGuardMoveInput() const;
 	float GetDesiredMaxWalkSpeed() const;
 	bool ShouldUseRunningAnim() const;
+	bool IsExecuting() const;
 
 	void ToggleWalkingState();
 	void SetDesiredMoveAxes(float NewForward, float NewRight);
@@ -281,6 +285,16 @@ protected: // Dodge
 	UFUNCTION()
 	void OnDodgeAttackMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
+protected: // Execution
+	bool CanStartExecution(const class AJunMonster* Monster) const;
+	void StartExecution(class AJunMonster* Monster);
+	void TriggerExecutionTargetMontage();
+	void FinishExecution();
+	void SetExecutionCapsuleCollisionIgnore(class AJunMonster* Monster, bool bIgnore);
+
+	UFUNCTION()
+	void OnExecutionMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
 protected: // Hit
 	EJunPlayerHitResolveResult ResolveIncomingHitResult(EHitReactType IncomingHitType) const;
 	bool CanBeInterruptedBy(EHitReactType IncomingHitType) const;
@@ -381,6 +395,10 @@ protected: // Camera
 	bool IsLockOnTargetValid() const;
 
 	void UpdateLockOnCamera(float DeltaTime);
+	void StartExecutionCamera(class AJunMonster* Monster);
+	void EndExecutionCamera();
+	void AdvanceExecutionCameraStage();
+	void UpdateExecutionCamera(float DeltaTime);
 	void UpdateLockOnCharacterRotation(float DeltaTime);
 	FVector GetRawLockOnBonePoint() const;
 	FVector GetLockOnDebugSpherePoint();
@@ -449,6 +467,15 @@ protected: // Runtime Camera State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
 	bool bLockOnTurnInProgress = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|Execution")
+	EJunCameraMode CameraModeBeforeExecution = EJunCameraMode::Free;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|Execution")
+	TObjectPtr<class AJunMonster> ExecutionCameraTarget = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|Execution")
+	bool bExecutionCameraSecondStage = false;
 
 protected: // Runtime Combat / Defense State
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BasicAttack")
@@ -558,6 +585,12 @@ protected: // Runtime Combat / Defense State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "DodgeAttack")
 	float DodgeAttackElapsedTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	bool bIsExecuting = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	TObjectPtr<class AJunMonster> CurrentExecutionTarget = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float ForwardDodgePlayRate = 1.2f;
@@ -840,6 +873,12 @@ protected: // Camera Tuning
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
 	float CameraSocketOffsetInterpSpeed = 8.f;
 
+	UPROPERTY(EditDefaultsOnly, Category = "Camera")
+	float DefaultSpringArmLength = 300.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Camera")
+	float SpringArmLengthInterpSpeed = 8.f;
+
 	UPROPERTY(EditDefaultsOnly, Category = "Camera|Free")
 	FVector FreeCameraSocketOffset = FVector(0.f, 45.f, 0.f);
 
@@ -870,6 +909,27 @@ protected: // Camera Tuning
 	UPROPERTY(EditDefaultsOnly, Category = "Camera|LockOn")
 	FVector LockOnCameraSocketOffset = FVector(0.f, 45.f, 0.f);
 
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Execution")
+	FVector ExecutionCameraSocketOffset = FVector(0.f, 30.f, 0.f);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
+	float ExecutionCameraArmLength = 280.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
+	float ExecutionCameraApplyArmLength = 100.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
+	float ExecutionCameraRotationInterpSpeed = 9.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
+	float ExecutionCameraArmLengthInterpSpeed = 6.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
+	float ExecutionCameraArmLengthRestoreInterpSpeed = 5.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
+	float ExecutionCameraPitchOffset = -10.f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
     float LockOnRotationInterpSpeed = 7.5f;
 
@@ -877,10 +937,16 @@ protected: // Camera Tuning
 	float LockOnCharacterRotationInterpSpeed = 10.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
+	float LockOnAcquireDistance = 2000.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float LockOnBreakDistance = 150000.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
-	float LockOnPitchOffset = -30.f;
+	float LockOnPitchOffset = -15.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
+	float LockOnClosePitchOffset = -40.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float LockOnTargetZIgnoreThreshold = 10.f;
@@ -1277,6 +1343,9 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "DodgeAttack")
 	TObjectPtr<class UAnimMontage> DodgeAttackMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution")
+	TObjectPtr<class UAnimMontage> ExecutionMontage;
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|LockOn")
 	TObjectPtr<class UAnimMontage> LockOnDodgeRightMontage;

@@ -25,7 +25,7 @@ void UAnimNotifyState_KickTrace::NotifyBegin(
 		return;
 	}
 
-	Character->BeginKickAttackTraceWindow(HitReactType, DefenseKnockbackData);
+	Character->BeginKickAttackTraceWindow(HitReactType, DamageData, DefenseKnockbackData);
 }
 
 void UAnimNotifyState_KickTrace::NotifyEnd(

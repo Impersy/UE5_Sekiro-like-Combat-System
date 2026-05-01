@@ -95,6 +95,11 @@ void AWeaponActor::SetAttackHitReactType(const EHitReactType NewHitReactType)
 	AttackHitReactType = NewHitReactType;
 }
 
+void AWeaponActor::SetAttackDamageData(const FJunAttackDamageData& NewDamageData)
+{
+	AttackDamageData = NewDamageData;
+}
+
 void AWeaponActor::SetAttackDefenseKnockbackData(const FJunAttackDefenseKnockbackData& NewDefenseKnockbackData)
 {
 	AttackDefenseKnockbackData = NewDefenseKnockbackData;
@@ -253,22 +258,21 @@ void AWeaponActor::ApplyDamageToHitCharacter(AActor* HitActor, const FVector& Sw
 		}
 
 		
-		// 아니면 데미지 적용
-		// 나중엔 기본뎀이 아닌 최종 뎀을 여기서 계산해서 넘기자.
+		const float FinalDamage = AttackDamageData.GetFinalDamage();
 		AJunMonster* HitMonster = Cast<AJunMonster>(VictimCharacter);
 
 		if (HitMonster)
 		{
-			HitMonster->ReceiveHit(AttackHitReactType, BasicDamage, AttackerCharacter, SwingDirection);
+			HitMonster->ReceiveHit(AttackHitReactType, FinalDamage, AttackerCharacter, SwingDirection);
 		}
 		else if (AJunPlayer* HitPlayer = Cast<AJunPlayer>(VictimCharacter))
 		{
-			HitPlayer->ReceiveHit(AttackHitReactType, BasicDamage, AttackerCharacter, SwingDirection, AttackDefenseKnockbackData);
+			HitPlayer->ReceiveHit(AttackHitReactType, FinalDamage, AttackerCharacter, SwingDirection, AttackDefenseKnockbackData);
 		}
 		else
 		{
 			// 일단 플레이어 등 다른 캐릭터는 기존 방식 유지
-			VictimCharacter->OnDamaged(BasicDamage, AttackerCharacter);
+			VictimCharacter->OnDamaged(FMath::RoundToInt(FinalDamage), AttackerCharacter);
 		}
 	}
 }

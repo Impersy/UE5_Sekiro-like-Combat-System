@@ -1,6 +1,7 @@
 #include "Character/JunMonster.h"
 #include "AI/JunAIController.h"
 #include "Animation/AnimMontage.h"
+#include "Character/JunPlayer.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/Engine.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -93,6 +94,8 @@ namespace
 	{
 		switch (State)
 		{
+		case EMonsterState::CutsceneWait:
+			return TEXT("CutsceneWait");
 		case EMonsterState::Idle:
 			return TEXT("Idle");
 		case EMonsterState::Patrol:
@@ -140,6 +143,15 @@ void AJunMonster::BeginPlay()
 {
 	Super::BeginPlay();
 
+	CurrentLifeCount = FMath::Max(1, MaxLifeCount);
+	CurrentPosture = 0.f;
+	bExecutionReady = false;
+	bBeingExecuted = false;
+	bExecutionResultApplied = false;
+	ExecutionReadyRemainTime = 0.f;
+	CurrentExecutionInstigator = nullptr;
+	CurrentExecutionMontage = nullptr;
+
 	// 팀 설정
 	SetTeamTag(JunGameplayTags::Team_Enemy);
 
@@ -147,7 +159,11 @@ void AJunMonster::BeginPlay()
 
 	HomeLocation = GetActorLocation();
 
-	if (bStartWithPatrol)
+	if (bStartWithCutsceneWait)
+	{
+		SetMonsterState(EMonsterState::CutsceneWait);
+	}
+	else if (bStartWithPatrol)
 	{
 		SetMonsterState(EMonsterState::Patrol);
 	}
@@ -172,6 +188,21 @@ void AJunMonster::Tick(float DeltaTime)
 
 	GetCharacterMovement()->MaxWalkSpeed = GetDesiredMaxWalkSpeed();
 	bIsRunning = ShouldUseRunLocomotion();
+
+	if (bExecutionReady && !bBeingExecuted)
+	{
+		ExecutionReadyRemainTime = FMath::Max(0.f, ExecutionReadyRemainTime - DeltaTime);
+		if (ExecutionReadyRemainTime <= 0.f)
+		{
+			EndExecutionReady();
+		}
+	}
+
+	if (CurrentState != EMonsterState::Dead && bBeingExecuted && bAttackFacingWindowActive)
+	{
+		UpdateExecutionFacing(DeltaTime);
+	}
+
 	UpdateAttack(DeltaTime);
 
 	// 몬스터는 "상위 상태 업데이트"와 "피격 리액션 타이머"를 매 프레임 병렬로 관리한다.
@@ -227,7 +258,7 @@ void AJunMonster::ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* 
 
 void AJunMonster::ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* DamageCauser, const FVector& SwingDirection)
 {
-	if (CurrentState == EMonsterState::Dead)
+	if (CurrentState == EMonsterState::Dead || bBeingExecuted)
 	{
 		return;
 	}
@@ -237,6 +268,11 @@ void AJunMonster::ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* 
 
 	// 데미지 적용 (기존 시스템 활용)
 	OnDamaged(FMath::RoundToInt(DamageAmount), AttackerCharacter);
+
+	if (bExecutionReady || bBeingExecuted)
+	{
+		return;
+	}
 
 	// 사망 체크
 	if (Is_Dead())
@@ -275,6 +311,187 @@ void AJunMonster::ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* 
 	// 먼저 공격자 위치로 F/L/R/B를 나누고,
 	// 정면 계열일 때만 스윙 방향으로 F/FL/FR를 세분화한다.
 	StartHitReact(HitType, DetermineHitReactDirection(DamageCauser, SwingDirection));
+}
+
+void AJunMonster::OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker)
+{
+	if (CurrentState == EMonsterState::Dead || bExecutionReady || bBeingExecuted || Damage <= 0)
+	{
+		return;
+	}
+
+	const int32 PreviousHp = Hp;
+	Hp = FMath::Clamp(Hp - Damage, 0, MaxHp);
+	const int32 AppliedDamage = FMath::Max(0, PreviousHp - Hp);
+
+	if (AppliedDamage > 0)
+	{
+		AddPosture(static_cast<float>(AppliedDamage) * PostureGainPerDamage);
+	}
+
+	if (Hp <= 0)
+	{
+		Hp = 0;
+		StartExecutionReady();
+	}
+}
+
+void AJunMonster::NotifyAttackParriedBy(AJunPlayer* Parrier)
+{
+	if (!Parrier || CurrentState == EMonsterState::Dead || bBeingExecuted)
+	{
+		return;
+	}
+
+	AddPosture(ParriedPostureGain);
+}
+
+bool AJunMonster::IsExecutionReady() const
+{
+	return bExecutionReady && !bBeingExecuted && CurrentState != EMonsterState::Dead;
+}
+
+bool AJunMonster::CanBeExecutedBy(const AJunPlayer* Player) const
+{
+	if (!Player || !IsExecutionReady())
+	{
+		return false;
+	}
+
+	const float Range = FMath::Max(ExecutionInteractRange, 0.f);
+	return FVector::DistSquared2D(GetActorLocation(), Player->GetActorLocation()) <= FMath::Square(Range);
+}
+
+bool AJunMonster::TryBeginExecutionBy(AJunPlayer* Player)
+{
+	if (!CanBeExecutedBy(Player))
+	{
+		return false;
+	}
+
+	bExecutionReady = false;
+	bBeingExecuted = true;
+	bExecutionResultApplied = false;
+	CurrentExecutionInstigator = Player;
+	CurrentExecutionMontage = nullptr;
+	ExecutionReadyRemainTime = 0.f;
+	GetWorldTimerManager().ClearTimer(ExecutionRecoveryTimerHandle);
+
+	StopAIMovement();
+	StopAllAttackTraces();
+	CancelCombatTurn();
+	ResetCombatTurnState();
+	if (bIsAttacking)
+	{
+		FinishAttack();
+	}
+	EndHitReact();
+	SetDesiredMoveAxes(0.f, 0.f);
+	CombatMoveInput = FVector2D::ZeroVector;
+	GetCharacterMovement()->StopMovementImmediately();
+	AddGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	AddGameplayTag(JunGameplayTags::State_Block_Move);
+
+	return true;
+}
+
+void AJunMonster::TriggerPendingExecutionMontage()
+{
+	if (!bBeingExecuted || bExecutionResultApplied || CurrentState == EMonsterState::Dead)
+	{
+		return;
+	}
+
+	bExecutionResultApplied = true;
+	CurrentLifeCount = FMath::Max(0, CurrentLifeCount - 1);
+	CurrentPosture = 0.f;
+
+	const bool bFinalExecution = CurrentLifeCount <= 0;
+	UAnimMontage* MontageToPlay = bFinalExecution ? ExecutedDeathMontage.Get() : ExecutedMontage.Get();
+
+	if (MontageToPlay)
+	{
+		if (UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+		{
+			MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnExecutionMontageEnded);
+			if (!bFinalExecution)
+			{
+				MonsterAnimInstance->OnMontageEnded.AddDynamic(this, &AJunMonster::OnExecutionMontageEnded);
+				CurrentExecutionMontage = MontageToPlay;
+			}
+		}
+
+		PlayAnimMontage(MontageToPlay);
+	}
+
+	if (bFinalExecution)
+	{
+		Hp = 0;
+		EndAttackFacingWindow();
+		AddGameplayTag(JunGameplayTags::State_Condition_Dead);
+		SetMonsterState(EMonsterState::Dead);
+		return;
+	}
+
+	Hp = MaxHp;
+
+	if (!MontageToPlay)
+	{
+		FinishExecutionRecovery();
+	}
+}
+
+void AJunMonster::CancelPendingExecution()
+{
+	if (!bBeingExecuted || bExecutionResultApplied || CurrentState == EMonsterState::Dead)
+	{
+		return;
+	}
+
+	RestoreExecutionCapsuleCollisionIgnore();
+	bBeingExecuted = false;
+	ExecutionReadyRemainTime = 0.f;
+	CurrentPosture = 0.f;
+	CurrentExecutionInstigator = nullptr;
+	CurrentExecutionMontage = nullptr;
+	EndAttackFacingWindow();
+
+	if (Hp <= 0 && CurrentLifeCount > 0)
+	{
+		Hp = 1;
+	}
+
+	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
+}
+
+void AJunMonster::RestoreExecutionCapsuleCollisionIgnore()
+{
+	AJunPlayer* ExecutionInstigator = CurrentExecutionInstigator.Get();
+	if (!ExecutionInstigator)
+	{
+		return;
+	}
+
+	if (UCapsuleComponent* MonsterCapsule = GetCapsuleComponent())
+	{
+		MonsterCapsule->IgnoreActorWhenMoving(ExecutionInstigator, false);
+	}
+
+	if (UCapsuleComponent* PlayerCapsule = ExecutionInstigator->GetCapsuleComponent())
+	{
+		PlayerCapsule->IgnoreActorWhenMoving(this, false);
+	}
+}
+
+bool AJunMonster::HasExecutionResultApplied() const
+{
+	return bExecutionResultApplied;
+}
+
+void AJunMonster::HandleEquipWeaponNotify()
+{
+	AttachWeaponToHandSocket();
 }
 
 bool AJunMonster::HasCombatTarget()
@@ -328,6 +545,26 @@ EMonsterMoveState AJunMonster::GetMoveState() const
 	return EMonsterMoveState::Walk;
 }
 
+int32 AJunMonster::GetCurrentLifeCount() const
+{
+	return CurrentLifeCount;
+}
+
+int32 AJunMonster::GetMaxLifeCount() const
+{
+	return MaxLifeCount;
+}
+
+float AJunMonster::GetCurrentPosture() const
+{
+	return CurrentPosture;
+}
+
+float AJunMonster::GetMaxPosture() const
+{
+	return MaxPosture;
+}
+
 FVector2D AJunMonster::GetCombatMoveInput() const
 {
 	return CombatMoveInput;
@@ -363,7 +600,7 @@ void AJunMonster::SetDesiredMoveAxes(float NewForward, float NewRight)
 	DesiredMoveRight = FMath::Clamp(NewRight, -1.f, 1.f);
 }
 
-void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
+void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
 {
 	if (!EquippedWeapon)
 	{
@@ -371,6 +608,7 @@ void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunA
 	}
 
 	EquippedWeapon->SetAttackHitReactType(HitReactType);
+	EquippedWeapon->SetAttackDamageData(DamageData);
 	EquippedWeapon->SetAttackDefenseKnockbackData(DefenseKnockbackData);
 	EquippedWeapon->StartAttackTrace();
 }
@@ -385,11 +623,12 @@ void AJunMonster::EndAttackTraceWindow()
 	EquippedWeapon->EndAttackTrace();
 }
 
-void AJunMonster::BeginKickAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
+void AJunMonster::BeginKickAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
 {
 	if (EquippedKickWeapon)
 	{
 		EquippedKickWeapon->SetAttackHitReactType(HitReactType);
+		EquippedKickWeapon->SetAttackDamageData(DamageData);
 		EquippedKickWeapon->SetAttackDefenseKnockbackData(DefenseKnockbackData);
 		EquippedKickWeapon->StartAttackTrace();
 	}
@@ -397,6 +636,7 @@ void AJunMonster::BeginKickAttackTraceWindow(EHitReactType HitReactType, const F
 	if (EquippedKickWeaponRight)
 	{
 		EquippedKickWeaponRight->SetAttackHitReactType(HitReactType);
+		EquippedKickWeaponRight->SetAttackDamageData(DamageData);
 		EquippedKickWeaponRight->SetAttackDefenseKnockbackData(DefenseKnockbackData);
 		EquippedKickWeaponRight->StartAttackTrace();
 	}
@@ -432,6 +672,9 @@ void AJunMonster::SetMonsterState(EMonsterState NewState)
 
 	switch (CurrentState)
 	{
+	case EMonsterState::CutsceneWait:
+		EnterCutsceneWaitState();
+		break;
 	case EMonsterState::Idle:
 		EnterIdleState();
 		break;
@@ -456,6 +699,29 @@ void AJunMonster::SetMonsterState(EMonsterState NewState)
 	default:
 		break;
 	}
+}
+
+void AJunMonster::EnterCutsceneWaitState()
+{
+	bIsHasTarget = false;
+	bRunLocomotionRequested = false;
+	CombatMoveInput = FVector2D::ZeroVector;
+	bCutsceneTriggered = false;
+	AttachWeaponToSheathedSocket();
+	GetCharacterMovement()->bOrientRotationToMovement = true;
+	StopAIMovement();
+	SetDesiredMoveAxes(0.f, 0.f);
+
+	UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+	if (!MonsterAnimInstance || !CutsceneWaitMontage)
+	{
+		return;
+	}
+
+	MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnCutsceneWaitMontageEnded);
+	MonsterAnimInstance->OnMontageEnded.AddDynamic(this, &AJunMonster::OnCutsceneWaitMontageEnded);
+	PlayAnimMontage(CutsceneWaitMontage);
+	MonsterAnimInstance->Montage_JumpToSection(CutsceneWaitIdleSectionName, CutsceneWaitMontage);
 }
 
 void AJunMonster::EnterIdleState()
@@ -578,6 +844,9 @@ void AJunMonster::Update_State(float DeltaTime)
 
 	switch (CurrentState)
 	{
+	case EMonsterState::CutsceneWait:
+		UpdateCutsceneWait(DeltaTime);
+		break;
 	case EMonsterState::Idle:
 		UpdateIdle(DeltaTime);
 		break;
@@ -600,6 +869,46 @@ void AJunMonster::Update_State(float DeltaTime)
 	default:
 		break;
 	}
+}
+
+void AJunMonster::UpdateCutsceneWait(float DeltaTime)
+{
+	if (bCutsceneTriggered)
+	{
+		return;
+	}
+
+	AActor* PlayerActor = UGameplayStatics::GetPlayerPawn(this, 0);
+	AJunCharacter* TargetCharacter = Cast<AJunCharacter>(PlayerActor);
+	if (!TargetCharacter || TargetCharacter->Is_Dead() || !IsEnemyTo(TargetCharacter))
+	{
+		return;
+	}
+
+	const float DistSq = FVector::DistSquared2D(GetActorLocation(), TargetCharacter->GetActorLocation());
+	if (DistSq > FMath::Square(CutsceneTriggerRange))
+	{
+		return;
+	}
+
+	bCutsceneTriggered = true;
+	CurrentTarget = TargetCharacter;
+	bIsHasTarget = true;
+	StopAIMovement();
+	SetDesiredMoveAxes(0.f, 0.f);
+
+	UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+	if (MonsterAnimInstance && CutsceneWaitMontage && MonsterAnimInstance->Montage_IsPlaying(CutsceneWaitMontage))
+	{
+		MonsterAnimInstance->Montage_SetNextSection(
+			CutsceneWaitIdleSectionName,
+			CutsceneWaitEquipSectionName,
+			CutsceneWaitMontage);
+		return;
+	}
+
+	AttachWeaponToHandSocket();
+	SetMonsterState(EMonsterState::BattleStart);
 }
 
 void AJunMonster::UpdateIdle(float DeltaTime)
@@ -1581,11 +1890,8 @@ void AJunMonster::SpawnAndAttachWeapon()
 		}
 		else
 		{
-			EquippedWeapon->AttachToComponent(
-				GetMesh(),
-				FAttachmentTransformRules::SnapToTargetNotIncludingScale,
-				WeaponSocketName
-			);
+			const FName InitialWeaponSocketName = bStartWithCutsceneWait ? SheathedWeaponSocketName : WeaponSocketName;
+			AttachWeaponToSocket(InitialWeaponSocketName);
 		}
 	}
 
@@ -1663,6 +1969,30 @@ void AJunMonster::SpawnAndAttachWeapon()
 			);
 		}
 	}
+}
+
+void AJunMonster::AttachWeaponToSocket(FName SocketName)
+{
+	if (!EquippedWeapon || !GetMesh() || SocketName.IsNone())
+	{
+		return;
+	}
+
+	EquippedWeapon->AttachToComponent(
+		GetMesh(),
+		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+		SocketName
+	);
+}
+
+void AJunMonster::AttachWeaponToHandSocket()
+{
+	AttachWeaponToSocket(WeaponSocketName);
+}
+
+void AJunMonster::AttachWeaponToSheathedSocket()
+{
+	AttachWeaponToSocket(SheathedWeaponSocketName);
 }
 
 // Hit react
@@ -1936,10 +2266,217 @@ bool AJunMonster::CanUpdateBehavior() const
 		return false;
 	}
 
+	if (bExecutionReady || bBeingExecuted)
+	{
+		return false;
+	}
+
 	if (HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
 	{
 		return false;
 	}
 
 	return true;
+}
+
+void AJunMonster::AddPosture(float Amount)
+{
+	if (CurrentState == EMonsterState::Dead || bExecutionReady || bBeingExecuted || Amount <= 0.f)
+	{
+		return;
+	}
+
+	CurrentPosture = FMath::Clamp(CurrentPosture + Amount, 0.f, MaxPosture);
+	if (CurrentPosture >= MaxPosture)
+	{
+		StartExecutionReady();
+	}
+}
+
+void AJunMonster::StartExecutionReady()
+{
+	if (CurrentState == EMonsterState::Dead || bExecutionReady || bBeingExecuted)
+	{
+		return;
+	}
+
+	bExecutionReady = true;
+	ExecutionReadyRemainTime = ExecutionReadyDuration;
+	CurrentPosture = MaxPosture;
+
+	StopAIMovement();
+	StopAllAttackTraces();
+	CancelCombatTurn();
+	ResetCombatTurnState();
+	if (bIsAttacking)
+	{
+		FinishAttack();
+	}
+	EndHitReact();
+	SetDesiredMoveAxes(0.f, 0.f);
+	CombatMoveInput = FVector2D::ZeroVector;
+	GetCharacterMovement()->StopMovementImmediately();
+	AddGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	AddGameplayTag(JunGameplayTags::State_Block_Move);
+
+	if (ReadyExecutedMontage)
+	{
+		PlayAnimMontage(ReadyExecutedMontage);
+	}
+}
+
+void AJunMonster::EndExecutionReady()
+{
+	if (!bExecutionReady || bBeingExecuted)
+	{
+		return;
+	}
+
+	bExecutionReady = false;
+	ExecutionReadyRemainTime = 0.f;
+	CurrentPosture = 0.f;
+
+	// HP 0으로 처형 대기가 끝나면 몬스터가 즉시 Dead 태그를 얻지 않도록 최소 생존 HP를 보장한다.
+	if (Hp <= 0 && CurrentLifeCount > 0)
+	{
+		Hp = 1;
+	}
+
+	if (ReadyExecutedMontage)
+	{
+		if (UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+		{
+			MonsterAnimInstance->Montage_Stop(0.15f, ReadyExecutedMontage);
+		}
+	}
+
+	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
+}
+
+void AJunMonster::FinishExecutionRecovery()
+{
+	if (!bBeingExecuted || CurrentState == EMonsterState::Dead)
+	{
+		return;
+	}
+
+	RestoreExecutionCapsuleCollisionIgnore();
+	bBeingExecuted = false;
+	bExecutionResultApplied = false;
+	CurrentExecutionInstigator = nullptr;
+	CurrentExecutionMontage = nullptr;
+	EndAttackFacingWindow();
+	if (UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+	{
+		MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnExecutionMontageEnded);
+	}
+	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
+
+	if (CurrentTarget)
+	{
+		SetMonsterState(EMonsterState::Combat);
+	}
+	else
+	{
+		SetMonsterState(EMonsterState::Idle);
+	}
+}
+
+void AJunMonster::OnExecutionMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	if (Montage != CurrentExecutionMontage)
+	{
+		return;
+	}
+
+	if (UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+	{
+		MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnExecutionMontageEnded);
+	}
+
+	CurrentExecutionMontage = nullptr;
+	EndAttackFacingWindow();
+
+	if (!bBeingExecuted || CurrentState == EMonsterState::Dead)
+	{
+		return;
+	}
+
+	FinishExecutionRecovery();
+}
+
+void AJunMonster::OnCutsceneWaitMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	if (Montage != CutsceneWaitMontage)
+	{
+		return;
+	}
+
+	if (UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+	{
+		MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnCutsceneWaitMontageEnded);
+	}
+
+	if (CurrentState != EMonsterState::CutsceneWait)
+	{
+		return;
+	}
+
+	if (CurrentTarget)
+	{
+		SetMonsterState(EMonsterState::BattleStart);
+	}
+	else
+	{
+		SetMonsterState(EMonsterState::Idle);
+	}
+}
+
+void AJunMonster::UpdateExecutionFacing(float DeltaTime)
+{
+	if (!CurrentExecutionInstigator)
+	{
+		EndAttackFacingWindow();
+		return;
+	}
+
+	FVector ToExecutor = CurrentExecutionInstigator->GetActorLocation() - GetActorLocation();
+	ToExecutor.Z = 0.f;
+	if (ToExecutor.IsNearlyZero())
+	{
+		return;
+	}
+
+	const FRotator CurrentRotation = GetActorRotation();
+	const FRotator TargetRotation = ToExecutor.Rotation();
+	const float FacingInterpSpeed = AttackFacingWindowInterpSpeed > 0.f
+		? AttackFacingWindowInterpSpeed
+		: AttackFacingInterpSpeed;
+
+	SetActorRotation(FMath::RInterpTo(CurrentRotation, TargetRotation, DeltaTime, FacingInterpSpeed));
+}
+
+void AJunMonster::ResetExecutionRuntimeState()
+{
+	RestoreExecutionCapsuleCollisionIgnore();
+	bExecutionReady = false;
+	bBeingExecuted = false;
+	bExecutionResultApplied = false;
+	ExecutionReadyRemainTime = 0.f;
+	CurrentExecutionInstigator = nullptr;
+	CurrentExecutionMontage = nullptr;
+	CurrentPosture = 0.f;
+	EndAttackFacingWindow();
+	if (UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+	{
+		MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnExecutionMontageEnded);
+	}
+	GetWorldTimerManager().ClearTimer(ExecutionRecoveryTimerHandle);
+}
+
+float AJunMonster::GetExecutionMontageDuration(const UAnimMontage* Montage, float FallbackDuration) const
+{
+	return Montage ? FMath::Max(Montage->GetPlayLength(), 0.01f) : FallbackDuration;
 }

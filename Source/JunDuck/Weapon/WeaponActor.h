@@ -44,6 +44,9 @@ public:
 	void SetAttackHitReactType(EHitReactType NewHitReactType);
 
 	UFUNCTION(BlueprintCallable)
+	void SetAttackDamageData(const FJunAttackDamageData& NewDamageData);
+
+	UFUNCTION(BlueprintCallable)
 	void SetAttackDefenseKnockbackData(const FJunAttackDefenseKnockbackData& NewDefenseKnockbackData);
 
 protected:
@@ -84,6 +87,8 @@ protected:
 
 	EHitReactType AttackHitReactType = EHitReactType::LightHit;
 
+	FJunAttackDamageData AttackDamageData;
+
 	FJunAttackDefenseKnockbackData AttackDefenseKnockbackData;
 
 	FVector PrevTraceStart = FVector::ZeroVector;
@@ -91,7 +96,4 @@ protected:
 
 	TSet<AActor*> HitActors;
 
-protected:
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	int32 BasicDamage = 1;
 };

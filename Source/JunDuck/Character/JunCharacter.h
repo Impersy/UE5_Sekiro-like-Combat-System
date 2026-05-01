@@ -86,6 +86,32 @@ struct FJunAttackDefenseKnockbackData
 	FJunDefenseKnockbackData ParrySuccess = { 500.f, 100.f, 0.35f, 0.12f, 0.12f };
 };
 
+USTRUCT(BlueprintType)
+struct FJunAttackDamageData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Damage")
+	float BaseDamage = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Damage")
+	float DamageMultiplier = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Damage")
+	float PoiseDamage = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Damage")
+	float GuardStaminaDamage = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Damage")
+	float ParryStaminaDamage = 0.f;
+
+	float GetFinalDamage() const
+	{
+		return FMath::Max(0.f, BaseDamage * DamageMultiplier);
+	}
+};
+
 UCLASS()
 class JUNDUCK_API AJunCharacter : public ACharacter, public IHighLightInterface
 {
@@ -114,12 +140,14 @@ public:
 public:
 	virtual void BeginAttackTraceWindow(
 		EHitReactType HitReactType = EHitReactType::LightHit,
+		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData());
 
 	virtual void EndAttackTraceWindow();
 
 	virtual void BeginKickAttackTraceWindow(
 		EHitReactType HitReactType = EHitReactType::LightHit,
+		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData());
 
 	virtual void EndKickAttackTraceWindow();
@@ -158,7 +186,7 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly)
 	bool bHighLighted = false;
-
+ 
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	int32 Hp = 200;

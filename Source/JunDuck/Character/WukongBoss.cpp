@@ -174,6 +174,10 @@ namespace
 
 AWukongBoss::AWukongBoss()
 {
+	MaxLifeCount = 3;
+	bStartWithCutsceneWait = true;
+	bStartWithPatrol = false;
+
 	WalkMoveSpeed = 200.f;
 	RunMoveSpeed = 700.f;
 

@@ -1,6 +1,7 @@
 #include "Character/JunPlayer.h"
 #include "Camera/JunSpringArmComponent.h"
 #include "Camera/CameraComponent.h"
+#include "Character/JunMonster.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -43,7 +44,7 @@ void AJunPlayer::SetupCameraComponents()
 	SpringArm = CreateDefaultSubobject<UJunSpringArmComponent>(TEXT("SpringArm"));
 	SpringArm->SetupAttachment(CameraAnchor);
 	SpringArm->SetRelativeLocationAndRotation(FVector(0.f, 0.f, 60.f), FRotator(-20.0f, 0, 0));
-	SpringArm->TargetArmLength = 300.f;
+	SpringArm->TargetArmLength = DefaultSpringArmLength;
 	SpringArm->bUsePawnControlRotation = true;
 
 	SpringArm->bInheritPitch = true;
@@ -430,6 +431,11 @@ bool AJunPlayer::IsDodgeAttacking() const
 	return bIsDodgeAttacking;
 }
 
+bool AJunPlayer::IsExecuting() const
+{
+	return bIsExecuting;
+}
+
 bool AJunPlayer::IsLockOnTurnPlaying() const
 {
 	return bLockOnTurnInProgress && CurrentLockOnTurnMontage != nullptr;
@@ -588,9 +594,18 @@ void AJunPlayer::HandleGameplayEventNotify(FGameplayTag EventTag)
 	{
 		// GuardEnd base release is now code-driven.
 	}
+	else if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Execution_Apply))
+	{
+		AdvanceExecutionCameraStage();
+		TriggerExecutionTargetMontage();
+	}
+	else if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Execution_CameraRestore))
+	{
+		EndExecutionCamera();
+	}
 }
 
-void AJunPlayer::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
+void AJunPlayer::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
 {
 	if (!EquippedWeapon)
 	{
@@ -598,6 +613,7 @@ void AJunPlayer::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAt
 	}
 
 	EquippedWeapon->SetAttackHitReactType(HitReactType);
+	EquippedWeapon->SetAttackDamageData(DamageData);
 	EquippedWeapon->SetAttackDefenseKnockbackData(DefenseKnockbackData);
 	EquippedWeapon->StartAttackTrace();
 }
@@ -1446,7 +1462,7 @@ void AJunPlayer::ReceiveHit(
 	const FVector& SwingDirection,
 	const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
 {
-	if (Is_Dead())
+	if (Is_Dead() || bIsExecuting)
 	{
 		return;
 	}
@@ -1463,6 +1479,10 @@ void AJunPlayer::ReceiveHit(
 	case EJunPlayerHitResolveResult::Ignored:
 		return;
 	case EJunPlayerHitResolveResult::ParrySuccess:
+		if (AJunMonster* AttackingMonster = Cast<AJunMonster>(DamageCauser))
+		{
+			AttackingMonster->NotifyAttackParriedBy(this);
+		}
 		StartParrySuccess();
 		return;
 	case EJunPlayerHitResolveResult::GuardBlock:
@@ -2909,6 +2929,148 @@ void AJunPlayer::CancelDodgeAttackForRecoveryTransition(float BlendOutTime)
 	}
 
 	FinishDodgeAttack();
+}
+
+bool AJunPlayer::TryStartExecution()
+{
+	if (bIsExecuting)
+	{
+		return false;
+	}
+
+	AJunMonster* ExecutionTarget = Cast<AJunMonster>(LockOnTarget.Get());
+	if (!CanStartExecution(ExecutionTarget))
+	{
+		ExecutionTarget = Cast<AJunMonster>(FindBestAttackTarget());
+	}
+
+	if (!CanStartExecution(ExecutionTarget))
+	{
+		return false;
+	}
+
+	StartExecution(ExecutionTarget);
+	return true;
+}
+
+bool AJunPlayer::CanStartExecution(const AJunMonster* Monster) const
+{
+	return Monster
+		&& ExecutionMontage
+		&& AnimInstance
+		&& Monster->CanBeExecutedBy(this);
+}
+
+void AJunPlayer::StartExecution(AJunMonster* Monster)
+{
+	if (!CanStartExecution(Monster))
+	{
+		return;
+	}
+
+	if (!Monster->TryBeginExecutionBy(this))
+	{
+		return;
+	}
+
+	InterruptActionsForHitReaction();
+	FinishPlayerHitState();
+
+	bIsExecuting = true;
+	CurrentExecutionTarget = Monster;
+	TargetActor = Monster;
+	SetExecutionCapsuleCollisionIgnore(Monster, true);
+	StartExecutionCamera(Monster);
+
+	const FVector ToTarget = Monster->GetActorLocation() - GetActorLocation();
+	if (!ToTarget.IsNearlyZero())
+	{
+		SetActorRotation(ToTarget.ToOrientationRotator());
+	}
+
+	AddGameplayTag(JunGameplayTags::State_Action_Attack);
+	AddGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	AddGameplayTag(JunGameplayTags::State_Block_Move);
+	AddGameplayTag(JunGameplayTags::State_Block_Jump);
+	AddGameplayTag(JunGameplayTags::State_Block_Attack);
+	AddGameplayTag(JunGameplayTags::State_Block_Dodge);
+
+	AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnExecutionMontageEnded);
+	AnimInstance->OnMontageEnded.AddDynamic(this, &AJunPlayer::OnExecutionMontageEnded);
+	PlayAnimMontage(ExecutionMontage);
+}
+
+void AJunPlayer::TriggerExecutionTargetMontage()
+{
+	if (!bIsExecuting || !CurrentExecutionTarget)
+	{
+		return;
+	}
+
+	CurrentExecutionTarget->TriggerPendingExecutionMontage();
+}
+
+void AJunPlayer::FinishExecution()
+{
+	if (!bIsExecuting)
+	{
+		return;
+	}
+
+	if (AnimInstance)
+	{
+		AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnExecutionMontageEnded);
+	}
+
+	bIsExecuting = false;
+	EndAttackFacingWindow();
+	EndExecutionCamera();
+	if (CurrentExecutionTarget && !CurrentExecutionTarget->HasExecutionResultApplied())
+	{
+		CurrentExecutionTarget->CancelPendingExecution();
+	}
+	SetExecutionCapsuleCollisionIgnore(CurrentExecutionTarget.Get(), false);
+	CurrentExecutionTarget = nullptr;
+
+	RemoveGameplayTag(JunGameplayTags::State_Action_Attack);
+	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Jump);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Attack);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Dodge);
+}
+
+void AJunPlayer::OnExecutionMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	if (Montage != ExecutionMontage)
+	{
+		return;
+	}
+
+	FinishExecution();
+}
+
+void AJunPlayer::SetExecutionCapsuleCollisionIgnore(AJunMonster* Monster, bool bIgnore)
+{
+	if (!Monster)
+	{
+		return;
+	}
+
+	if (bIgnore && !Monster->ShouldIgnoreExecutorCapsuleCollisionDuringExecution())
+	{
+		return;
+	}
+
+	if (UCapsuleComponent* PlayerCapsule = GetCapsuleComponent())
+	{
+		PlayerCapsule->IgnoreActorWhenMoving(Monster, bIgnore);
+	}
+
+	if (UCapsuleComponent* MonsterCapsule = Monster->GetCapsuleComponent())
+	{
+		MonsterCapsule->IgnoreActorWhenMoving(this, bIgnore);
+	}
 }
 
 void AJunPlayer::FinishDefenseForCancel()
@@ -4387,7 +4549,7 @@ FVector AJunPlayer::GetJumpLaunchDirection(const FVector2D& MoveInput) const
 AJunCharacter* AJunPlayer::FindBestAttackTarget()
 {
 	const FVector Start = GetActorLocation();
-	const float Radius = 500.f;
+	const float Radius = LockOnAcquireDistance;
 
 	TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
 	ObjectTypes.Add(UEngineTypes::ConvertToObjectType(ECC_Pawn));
@@ -4500,7 +4662,9 @@ void AJunPlayer::UpdateAttackFacing(float DeltaTime)
 
 void AJunPlayer::BeginAttackFacingWindow(float FacingInterpSpeed)
 {
-	TargetActor = LockOnTarget ? LockOnTarget.Get() : FindBestAttackTarget();
+	TargetActor = bIsExecuting && CurrentExecutionTarget
+		? CurrentExecutionTarget.Get()
+		: (LockOnTarget ? LockOnTarget.Get() : FindBestAttackTarget());
 
 	if (!TargetActor)
 	{
@@ -4523,6 +4687,9 @@ void AJunPlayer::UpdateJunCamera(float DeltaTime)
 {
 	switch (CameraMode)
 	{
+	case EJunCameraMode::Execution:
+		UpdateExecutionCamera(DeltaTime);
+		break;
 	case EJunCameraMode::LockOn:
 		UpdateLockOnCamera(DeltaTime);
 		break;
@@ -4532,7 +4699,15 @@ void AJunPlayer::UpdateJunCamera(float DeltaTime)
 		break;
 	}
 
-	FVector TargetSocketOffset = bLockOnActive ? LockOnCameraSocketOffset : FreeCameraSocketOffset;
+	FVector TargetSocketOffset = FreeCameraSocketOffset;
+	if (CameraMode == EJunCameraMode::Execution)
+	{
+		TargetSocketOffset = ExecutionCameraSocketOffset;
+	}
+	else if (bLockOnActive)
+	{
+		TargetSocketOffset = LockOnCameraSocketOffset;
+	}
 
 	if (!bLockOnActive && HasGameplayTag(JunGameplayTags::State_Action_Dodge))
 	{
@@ -4547,6 +4722,16 @@ void AJunPlayer::UpdateJunCamera(float DeltaTime)
 	);
 
 	SpringArm->SocketOffset = NewSocketOffset;
+
+	if (CameraMode != EJunCameraMode::Execution)
+	{
+		SpringArm->TargetArmLength = FMath::FInterpTo(
+			SpringArm->TargetArmLength,
+			DefaultSpringArmLength,
+			DeltaTime,
+			ExecutionCameraArmLengthRestoreInterpSpeed
+		);
+	}
 }
 
 void AJunPlayer::UpdateFreeCamera(float DeltaTime)
@@ -4673,7 +4858,18 @@ void AJunPlayer::UpdateLockOnCamera(float DeltaTime)
 		FMath::Atan2(DeltaZ, FMath::Max(Distance2D, 1.f))
 	);
 
-	DesiredRot.Pitch = LockOnPitchOffset + TargetPitchDeg;
+	const float LockOnDistanceAlpha = FMath::Clamp(
+		Distance2D / FMath::Max(LockOnAcquireDistance, 1.f),
+		0.f,
+		1.f
+	);
+	const float DynamicLockOnPitchOffset = FMath::Lerp(
+		LockOnClosePitchOffset,
+		LockOnPitchOffset,
+		LockOnDistanceAlpha
+	);
+
+	DesiredRot.Pitch = DynamicLockOnPitchOffset + TargetPitchDeg;
 
 	const FRotator CurrentRot = Controller->GetControlRotation();
 
@@ -4695,6 +4891,96 @@ void AJunPlayer::UpdateLockOnCamera(float DeltaTime)
 	TargetCameraYaw = NewRot.Yaw;
 	TargetCameraPitch = NewRot.Pitch;
 	PendingCameraLookInput = FVector2D::ZeroVector;
+}
+
+void AJunPlayer::StartExecutionCamera(AJunMonster* Monster)
+{
+	if (!Monster)
+	{
+		return;
+	}
+
+	CameraModeBeforeExecution = CameraMode;
+	ExecutionCameraTarget = Monster;
+	bExecutionCameraSecondStage = false;
+	CameraMode = EJunCameraMode::Execution;
+	CancelLockOnTurn(0.05f);
+	PendingCameraLookInput = FVector2D::ZeroVector;
+}
+
+void AJunPlayer::EndExecutionCamera()
+{
+	if (CameraMode != EJunCameraMode::Execution)
+	{
+		ExecutionCameraTarget = nullptr;
+		bExecutionCameraSecondStage = false;
+		return;
+	}
+
+	CameraMode = bLockOnActive && LockOnTarget ? EJunCameraMode::LockOn : EJunCameraMode::Free;
+	ExecutionCameraTarget = nullptr;
+	bExecutionCameraSecondStage = false;
+}
+
+void AJunPlayer::AdvanceExecutionCameraStage()
+{
+	if (CameraMode == EJunCameraMode::Execution)
+	{
+		bExecutionCameraSecondStage = true;
+	}
+}
+
+void AJunPlayer::UpdateExecutionCamera(float DeltaTime)
+{
+	if (!Controller || !ExecutionCameraTarget)
+	{
+		EndExecutionCamera();
+		return;
+	}
+
+	FVector CameraBasePoint = CameraAnchor
+		? CameraAnchor->GetComponentLocation()
+		: GetActorLocation();
+	CameraBasePoint.Z += 50.f;
+
+	const FVector TargetPoint = ExecutionCameraTarget->GetLockOnTargetPoint();
+	const FVector ToTarget = TargetPoint - CameraBasePoint;
+	if (ToTarget.IsNearlyZero())
+	{
+		PendingCameraLookInput = FVector2D::ZeroVector;
+		return;
+	}
+
+	FRotator DesiredRot = ToTarget.Rotation();
+	DesiredRot.Roll = 0.f;
+	DesiredRot.Pitch = ExecutionCameraPitchOffset;
+	DesiredRot.Pitch = FMath::Clamp(DesiredRot.Pitch, MinCameraPitch, MaxCameraPitch);
+
+	const FRotator NewRot = FMath::RInterpTo(
+		Controller->GetControlRotation(),
+		DesiredRot,
+		DeltaTime,
+		ExecutionCameraRotationInterpSpeed
+	);
+
+	Controller->SetControlRotation(NewRot);
+	TargetCameraYaw = NewRot.Yaw;
+	TargetCameraPitch = NewRot.Pitch;
+	PendingCameraLookInput = FVector2D::ZeroVector;
+
+	if (SpringArm)
+	{
+		const float TargetArmLength = bExecutionCameraSecondStage
+			? ExecutionCameraApplyArmLength
+			: ExecutionCameraArmLength;
+
+		SpringArm->TargetArmLength = FMath::FInterpTo(
+			SpringArm->TargetArmLength,
+			TargetArmLength,
+			DeltaTime,
+			ExecutionCameraArmLengthInterpSpeed
+		);
+	}
 }
 
 void AJunPlayer::UpdateLockOnCharacterRotation(float DeltaTime)
