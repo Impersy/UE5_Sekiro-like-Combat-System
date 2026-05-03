@@ -104,6 +104,12 @@ public:
 	void HandlePatrolMoveCompleted(bool bSuccess);
 	void ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* DamageCauser);
 	void ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* DamageCauser, const FVector& SwingDirection);
+	void ReceiveHit(
+		EHitReactType HitType,
+		float DamageAmount,
+		AActor* DamageCauser,
+		const FVector& SwingDirection,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData);
 	virtual void OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker) override;
 	void NotifyAttackParriedBy(class AJunPlayer* Parrier);
 	bool IsExecutionReady() const;
@@ -234,11 +240,21 @@ protected:
 	bool IsInHitReact() const;
 	bool CanBeInterruptedBy(EHitReactType IncomingHitReact) const;
 	virtual bool ShouldStartHitReact(EHitReactType IncomingHitReact) const;
+	virtual bool TryHandleIncomingHitBeforeDamage(
+		EHitReactType HitType,
+		float DamageAmount,
+		AActor* DamageCauser,
+		const FVector& SwingDirection,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData);
 	virtual float GetHitReactDuration(EHitReactType HitType) const;
 	virtual float GetHitReactControlLockDuration(EHitReactType HitType) const;
 	ECharacterHitReactDirection DetermineHitReactDirection(const AActor* DamageCauser, const FVector& SwingDirection) const;
 	UAnimMontage* GetHitReactMontage(EHitReactType HitType, ECharacterHitReactDirection HitDirection) const;
 	bool CanUpdateBehavior() const;
+	ECharacterKnockbackDirection DetermineKnockbackDirectionFromDamageCauser(const AActor* DamageCauser) const;
+	void ApplyHitReactKnockback(AActor* DamageCauser, const FJunDefenseKnockbackData& KnockbackData, UAnimMontage* HitReactMontage);
+	void UpdateHitReactKnockbackBraking(float DeltaTime);
+	void RestoreDefaultMonsterMovementBrakingSettings();
 
 protected:
 	void AddPosture(float Amount);
@@ -391,6 +407,21 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat")
 	float CombatTurnMaxGroundSpeed = 10.f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Turn", meta = (ClampMin = "0.01"))
+	float CombatTurnPlayRate = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Debug")
+	bool bDebugCombatTurnYaw = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Debug")
+	float LastCombatTurnStartYaw = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Debug")
+	float LastCombatTurnPostPlayYaw = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Debug")
+	float LastCombatTurnEndYaw = 0.f;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
 	FVector2D CombatMoveInput = FVector2D::ZeroVector;
 
@@ -422,6 +453,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
 	float CurrentPosture = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution")
+	bool bDisablePostureGain = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0"))
 	float PostureGainPerDamage = 1.f;
@@ -568,6 +602,30 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
 	float CurrentHitReactControlLockRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float HitReactKnockbackBrakingOverrideRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	bool bHitReactKnockbackBrakingOverrideActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float HitReactKnockbackBrakingDecelerationOverride = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float HitReactKnockbackGroundFrictionOverride = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float HitReactKnockbackBrakingFrictionFactorOverride = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float DefaultMonsterBrakingDecelerationWalking = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float DefaultMonsterGroundFriction = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float DefaultMonsterBrakingFrictionFactor = 0.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact")
 	float LightHitDuration = 0.2f;

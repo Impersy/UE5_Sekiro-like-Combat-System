@@ -319,6 +319,7 @@ protected: // Hit
 	void InterruptActionsForHitReaction();
 	void UpdatePlayerHitState(float DeltaTime);
 	void ReleaseHitReactControlLock();
+	bool TryCancelHitReactIntoMove();
 	void FinishPlayerHitState();
 
 protected: // Defense
@@ -943,7 +944,7 @@ protected: // Camera Tuning
 	float LockOnBreakDistance = 150000.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
-	float LockOnPitchOffset = -15.f;
+	float LockOnPitchOffset = -5.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float LockOnClosePitchOffset = -40.f;
@@ -1047,6 +1048,9 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float HitReactDuration = 0.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	float HitReactMoveCancelBlendOutTime = 0.25f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float LightHitReactDuration = 0.6f;

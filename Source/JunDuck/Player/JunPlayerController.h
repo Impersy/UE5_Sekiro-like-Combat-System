@@ -62,4 +62,13 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI")
 	TObjectPtr<class UJunLockOnMarkerWidget> LockOnMarkerWidget;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|LockOn")
+	float LockOnMarkerShowDelay = 0.15f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI|LockOn")
+	TObjectPtr<class AJunCharacter> PreviousLockOnMarkerTarget;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI|LockOn")
+	float LockOnMarkerShowDelayRemainTime = 0.f;
 };

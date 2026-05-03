@@ -32,6 +32,8 @@ namespace
 			return TEXT("Idle");
 		case EWukongCombatState::Attack:
 			return TEXT("Attack");
+		case EWukongCombatState::ParrySuccess:
+			return TEXT("ParrySuccess");
 		case EWukongCombatState::Recovery:
 			return TEXT("Recovery");
 		case EWukongCombatState::Reposition:
@@ -188,8 +190,6 @@ AWukongBoss::AWukongBoss()
 	JumpAttack.MaxRange = 700.f;
 	JumpAttack.CandidateMaxRange = 900.f;
 	JumpAttack.bFaceTargetDuringAttack = true;
-	JumpAttack.FacingDuration = (0.7f / 1.4f);
-	JumpAttack.FacingInterpSpeed = 24.f;
 	JumpAttack.PlayRate = 1.4f;
 	JumpAttack.MoveStartTimeAtPlayRateOne = 0.14f;
 	JumpAttack.MoveSpeed = 1200.f;
@@ -205,8 +205,14 @@ AWukongBoss::AWukongBoss()
 	ChargeAttack.MaxRange = 700.f;
 	ChargeAttack.CandidateMaxRange = 900.f;
 	ChargeAttack.bFaceTargetDuringAttack = true;
-	ChargeAttack.FacingDuration = 0.8f;
-	ChargeAttack.FacingInterpSpeed = 20.f;
+	ChargeAttack.bUseAnimNotifyTiming = true;
+	ChargeAttack.MoveStartTimeAtPlayRateOne = 0.28f;
+	ChargeAttack.MoveSpeed = 1350.f;
+	ChargeAttack.MoveStandOffDistance = 120.f;
+	ChargeAttack.GroundMotionOverrideDuration = 0.45f;
+	ChargeAttack.AirTrackInterpSpeed = 10.f;
+	ChargeAttack.CodeMoveStopDistance = 120.f;
+	ChargeAttack.CodeMoveMaxDistance = 600.f;
 	ChargeAttack.bTryTurnAfterAttack = true;
 	ChargeAttack.PostAttackTurnStartAngle = 45.f;
 
@@ -214,17 +220,19 @@ AWukongBoss::AWukongBoss()
 	DodgeAttack.MaxRange = 700.f;
 	DodgeAttack.CandidateMaxRange = 900.f;
 	DodgeAttack.bFaceTargetDuringAttack = true;
-	DodgeAttack.FacingDuration = 1.4f;
-	DodgeAttack.FacingInterpSpeed = 16.f;
 	DodgeAttack.PlayRate = 1.3f;
 	DodgeAttack.bTryTurnAfterAttack = true;
 	DodgeAttack.PostAttackTurnStartAngle = 45.f;
 	DodgeAttack.SelectionWeight = 1;
 
-	AmbushAttack.FacingDuration = 0.5f;
-	ExecutionAttack.FacingDuration = 1.5f;
-	NinjaAAttack.FacingDuration = 1.7f;
-	NinjaBAttack.FacingDuration = 1.4f;
+	NinjaBAttack.bUseAnimNotifyTiming = true;
+	NinjaBAttack.MoveStartTimeAtPlayRateOne = 0.35f;
+	NinjaBAttack.MoveSpeed = 1150.f;
+	NinjaBAttack.MoveStandOffDistance = 120.f;
+	NinjaBAttack.GroundMotionOverrideDuration = 0.5f;
+	NinjaBAttack.AirTrackInterpSpeed = 8.f;
+	NinjaBAttack.CodeMoveStopDistance = 120.f;
+	NinjaBAttack.CodeMoveMaxDistance = 500.f;
 }
 
 void AWukongBoss::EnterCombatState()
@@ -290,6 +298,9 @@ void AWukongBoss::UpdateCombat(float DeltaTime)
 		break;
 	case EWukongCombatState::Attack:
 		UpdateAttackState(DeltaTime);
+		break;
+	case EWukongCombatState::ParrySuccess:
+		UpdateParrySuccessState(DeltaTime);
 		break;
 	case EWukongCombatState::Recovery:
 		UpdateRecoveryState(DeltaTime);
@@ -379,6 +390,9 @@ void AWukongBoss::SetWukongCombatState(EWukongCombatState NewState)
 		break;
 	case EWukongCombatState::Attack:
 		EnterAttackState();
+		break;
+	case EWukongCombatState::ParrySuccess:
+		EnterParrySuccessState();
 		break;
 	case EWukongCombatState::Recovery:
 		EnterRecoveryState();
@@ -487,12 +501,11 @@ void AWukongBoss::EnterAttackState()
 
 	if (!bUseNormalAttackAnimNotifyTiming &&
 		CurrentAttackActionType == EWukongActionType::NormalAttack &&
-		CurrentAttackNormalAttackType == EWukongNormalAttackType::JumpAttack)
+		CurrentNormalAttackData &&
+		CurrentNormalAttackData->MoveSpeed > 0.f)
 	{
-		const float JumpMoveStartTime = CurrentNormalAttackData
-			? CurrentNormalAttackData->MoveStartTimeAtPlayRateOne
-			: 0.f;
-		QueueCodeDrivenAttackMove(EWukongNormalAttackType::JumpAttack, JumpMoveStartTime / CurrentNormalAttackPlayRate);
+		const float MoveStartTime = CurrentNormalAttackData->MoveStartTimeAtPlayRateOne;
+		QueueCodeDrivenAttackMove(CurrentAttackNormalAttackType, MoveStartTime / CurrentNormalAttackPlayRate);
 	}
 
 	const float AttackMontageDuration = AttackSelection.Montage
@@ -530,6 +543,21 @@ void AWukongBoss::EnterRecoveryState()
 
 	ResetCurrentAttackRuntimeState();
 	bAttackInterruptedByHitReact = false;
+}
+
+void AWukongBoss::EnterParrySuccessState()
+{
+	ResetReactiveEvadePressure();
+	ClearTimedMontageSuperArmor();
+	ResetActiveReactiveActionState();
+	ResetPendingAttackMotionState();
+	RestoreAttackGroundMotionOverride();
+	CombatMoveInput = FVector2D::ZeroVector;
+	SetDesiredMoveAxes(0.f, 0.f);
+	StopAIMovement();
+	GetCharacterMovement()->StopMovementImmediately();
+	GetCharacterMovement()->bOrientRotationToMovement = false;
+	bRunLocomotionRequested = false;
 }
 
 void AWukongBoss::EnterRepositionState()
@@ -621,16 +649,6 @@ void AWukongBoss::EnterEvadeState()
 	ClearTimedMontageSuperArmor();
 	const bool bUsingReactiveEvade = ActiveReactiveActionData.Type != EWukongReactiveActionType::None;
 
-	if (CurrentTarget)
-	{
-		FVector ToTarget = CurrentTarget->GetActorLocation() - GetActorLocation();
-		ToTarget.Z = 0.f;
-		if (!ToTarget.IsNearlyZero())
-		{
-			SetActorRotation(ToTarget.Rotation());
-		}
-	}
-
 	if (UAnimMontage* NonAttackMontage = bUsingReactiveEvade ? GetReactiveActionMontage() : GetPlannedNonAttackMontage())
 	{
 		float PlayedMontageLength = 0.f;
@@ -711,9 +729,8 @@ void AWukongBoss::UpdateApproachState(float DeltaTime)
 			return;
 		}
 
-		if (GetTargetYawAbsDelta() >= MoveTurnStartAngle && CanStartWukongTurn())
+		if (TryStartOrWaitForWukongTurn(MoveTurnStartAngle))
 		{
-			SetWukongCombatState(EWukongCombatState::Turn);
 			return;
 		}
 
@@ -743,9 +760,8 @@ void AWukongBoss::UpdateApproachState(float DeltaTime)
 		return;
 	}
 
-	if (GetTargetYawAbsDelta() >= MoveTurnStartAngle && CanStartWukongTurn())
+	if (TryStartOrWaitForWukongTurn(MoveTurnStartAngle))
 	{
-		SetWukongCombatState(EWukongCombatState::Turn);
 		return;
 	}
 
@@ -826,6 +842,26 @@ void AWukongBoss::UpdateHitState(float DeltaTime)
 	}
 }
 
+void AWukongBoss::UpdateParrySuccessState(float DeltaTime)
+{
+	StopAIMovement();
+	SetDesiredMoveAxes(0.f, 0.f);
+
+	if (CombatSubStateElapsedTime <= ParrySuccessFacingDuration)
+	{
+		UpdateFacingTowardsTargetWithoutTurn(DeltaTime, ParrySuccessFacingInterpSpeed);
+	}
+
+	if (!CurrentParrySuccessMontage && ParrySuccessFallbackRemainTime > 0.f)
+	{
+		ParrySuccessFallbackRemainTime = FMath::Max(0.f, ParrySuccessFallbackRemainTime - DeltaTime);
+		if (ParrySuccessFallbackRemainTime <= 0.f)
+		{
+			FinishParrySuccessState();
+		}
+	}
+}
+
 void AWukongBoss::UpdateRecoveryState(float DeltaTime)
 {
 	if (CombatSubStateElapsedTime < RecoveryDuration)
@@ -842,9 +878,8 @@ void AWukongBoss::UpdateRepositionState(float DeltaTime)
 	const float ResolvedStrafeAnimInputStrength = FMath::Clamp(StrafeAnimInputStrength, 0.f, 0.4f);
 	const float ResolvedStrafeMoveInputStrength = StrafeMoveInputStrength * StrafeMoveSpeedScale;
 
-	if (GetTargetYawAbsDelta() >= MoveTurnStartAngle && CanStartWukongTurn())
+	if (TryStartOrWaitForWukongTurn(MoveTurnStartAngle))
 	{
-		SetWukongCombatState(EWukongCombatState::Turn);
 		return;
 	}
 
@@ -860,7 +895,7 @@ void AWukongBoss::UpdateRepositionState(float DeltaTime)
 		UpdateFacingTowardsTargetWithoutTurn(DeltaTime, CombatFacingInterpSpeed);
 		if (CurrentTarget && GetTargetDistance2D() < StrafeMinDistanceToTarget)
 		{
-			if (DashBackwardMontage && CanTriggerCloseRangeBackDash())
+			if (DashBackwardMontage && CanTriggerCloseRangeBackDash() && CanStartMobilityMontageSafely())
 			{
 				StartCloseRangeBackDashCooldown();
 				PlannedNonAttackType = EWukongPlannedNonAttackType::Dash;
@@ -1059,6 +1094,27 @@ bool AWukongBoss::CanStartWukongTurn() const
 	}
 
 	return GetTargetYawAbsDelta() >= TurnStartAngle;
+}
+
+bool AWukongBoss::TryStartOrWaitForWukongTurn(float YawThreshold)
+{
+	if (GetTargetYawAbsDelta() < YawThreshold)
+	{
+		return false;
+	}
+
+	if (CanStartWukongTurn())
+	{
+		SetWukongCombatState(EWukongCombatState::Turn);
+		return true;
+	}
+
+	// 큰 각도에서는 코드 Facing으로 억지 정렬하지 않고, 이동 관성이 빠질 때까지 Turn 대기한다.
+	StopAIMovement();
+	CombatMoveInput = FVector2D::ZeroVector;
+	SetDesiredMoveAxes(0.f, 0.f);
+	bRunLocomotionRequested = false;
+	return true;
 }
 
 bool AWukongBoss::HasValidPlannedAttack() const
@@ -1785,6 +1841,17 @@ bool AWukongBoss::HasQueuedReactiveAction() const
 
 bool AWukongBoss::TryEnterReactiveStateFromIdle()
 {
+	if (!HasQueuedReactiveAction())
+	{
+		return false;
+	}
+
+	if (!CanStartMobilityMontageSafely())
+	{
+		SetDesiredMoveAxes(0.f, 0.f);
+		return true;
+	}
+
 	return TryConsumeReactiveAction();
 }
 
@@ -1870,6 +1937,12 @@ bool AWukongBoss::TryEnterPlannedNonAttackStateFromIdle()
 		return true;
 	}
 
+	if (IsMobilityNonAttackType(PlannedNonAttackType) && !CanStartMobilityMontageSafely())
+	{
+		SetDesiredMoveAxes(0.f, 0.f);
+		return true;
+	}
+
 	if (GetTargetYawAbsDelta() >= MoveTurnStartAngle && CanStartWukongTurn())
 	{
 		SetWukongCombatState(EWukongCombatState::Turn);
@@ -1880,7 +1953,7 @@ bool AWukongBoss::TryEnterPlannedNonAttackStateFromIdle()
 	{
 		if (CurrentTarget && GetTargetDistance2D() < StrafeMinDistanceToTarget)
 		{
-			if (DashBackwardMontage && CanTriggerCloseRangeBackDash())
+			if (DashBackwardMontage && CanTriggerCloseRangeBackDash() && CanStartMobilityMontageSafely())
 			{
 				StartCloseRangeBackDashCooldown();
 				PlannedNonAttackType = EWukongPlannedNonAttackType::Dash;
@@ -1900,6 +1973,117 @@ bool AWukongBoss::TryEnterPlannedNonAttackStateFromIdle()
 		? EWukongCombatState::Evade
 		: EWukongCombatState::NonAttackAction);
 	return true;
+}
+
+bool AWukongBoss::CanStartMobilityMontageSafely() const
+{
+	UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+	return !AnimInstance || AnimInstance->GetCurrentActiveMontage() == nullptr;
+}
+
+bool AWukongBoss::CanParryIncomingHit(EHitReactType HitType, AActor* DamageCauser) const
+{
+	if (CurrentState != EMonsterState::Combat ||
+		HitType != EHitReactType::LightHit ||
+		!DamageCauser ||
+		IsInHitReact() ||
+		bBeingExecuted ||
+		bExecutionReady ||
+		!CanBeInterruptedBy(HitType) ||
+		!ShouldStartHitReact(HitType))
+	{
+		return false;
+	}
+
+	return true;
+}
+
+UAnimMontage* AWukongBoss::GetParrySuccessMontage(const FVector& SwingDirection) const
+{
+	const FVector SafeSwingDirection = SwingDirection.GetSafeNormal();
+	if (SafeSwingDirection.IsNearlyZero())
+	{
+		return ParrySuccessRUpMontage ? ParrySuccessRUpMontage : ParrySuccessLUpMontage;
+	}
+
+	const FVector LocalSwingDirection = GetActorTransform().InverseTransformVectorNoScale(SafeSwingDirection);
+	const bool bUseLeft = LocalSwingDirection.Y < 0.f;
+	const bool bUseUp = LocalSwingDirection.Z >= 0.f;
+
+	if (bUseLeft)
+	{
+		return bUseUp ? ParrySuccessLUpMontage : ParrySuccessLDownMontage;
+	}
+
+	return bUseUp ? ParrySuccessRUpMontage : ParrySuccessRDownMontage;
+}
+
+void AWukongBoss::StartParrySuccessAgainstIncomingHit(
+	AActor* DamageCauser,
+	const FVector& SwingDirection,
+	const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
+{
+	CurrentParrySuccessMontage = GetParrySuccessMontage(SwingDirection);
+
+	if (CurrentCombatSubState == EWukongCombatState::ParrySuccess)
+	{
+		CombatSubStateElapsedTime = 0.f;
+		EnterParrySuccessState();
+	}
+	else
+	{
+		SetWukongCombatState(EWukongCombatState::ParrySuccess);
+	}
+
+	ApplyHitReactKnockback(DamageCauser, DefenseKnockbackData.ParrySuccess, CurrentParrySuccessMontage);
+
+	if (CurrentParrySuccessMontage)
+	{
+		if (UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+		{
+			AnimInstance->OnMontageEnded.RemoveDynamic(this, &AWukongBoss::OnParrySuccessMontageEnded);
+			AnimInstance->OnMontageEnded.AddDynamic(this, &AWukongBoss::OnParrySuccessMontageEnded);
+		}
+
+		const float PlayedDuration = PlayAnimMontage(CurrentParrySuccessMontage);
+		ParrySuccessFallbackRemainTime = PlayedDuration > 0.f ? 0.f : ParrySuccessFallbackDuration;
+	}
+	else
+	{
+		ParrySuccessFallbackRemainTime = ParrySuccessFallbackDuration;
+	}
+}
+
+void AWukongBoss::OnParrySuccessMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	if (!CurrentParrySuccessMontage || Montage != CurrentParrySuccessMontage)
+	{
+		return;
+	}
+
+	if (bInterrupted)
+	{
+		return;
+	}
+
+	FinishParrySuccessState();
+}
+
+void AWukongBoss::FinishParrySuccessState()
+{
+	if (UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+	{
+		AnimInstance->OnMontageEnded.RemoveDynamic(this, &AWukongBoss::OnParrySuccessMontageEnded);
+	}
+
+	CurrentParrySuccessMontage = nullptr;
+	ParrySuccessFallbackRemainTime = 0.f;
+
+	if (CurrentState == EMonsterState::Combat &&
+		CurrentCombatSubState == EWukongCombatState::ParrySuccess)
+	{
+		SetWukongCombatState(EWukongCombatState::Idle);
+	}
 }
 
 void AWukongBoss::UpdateFacingTowardsTargetWithoutTurn(float DeltaTime, float InterpSpeed)
@@ -1955,6 +2139,27 @@ FVector AWukongBoss::GetLockOnTargetPoint() const
 	FVector LockOnPoint = DefaultTargetPoint;
 	LockOnPoint.Z = MeshComp->GetBoneLocation(LockOnBoneName).Z;
 	return LockOnPoint;
+}
+
+bool AWukongBoss::TryHandleIncomingHitBeforeDamage(
+	EHitReactType HitType,
+	float DamageAmount,
+	AActor* DamageCauser,
+	const FVector& SwingDirection,
+	const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
+{
+	if (!CanParryIncomingHit(HitType, DamageCauser))
+	{
+		return false;
+	}
+
+	if (FMath::FRand() > HitParryChance)
+	{
+		return false;
+	}
+
+	StartParrySuccessAgainstIncomingHit(DamageCauser, SwingDirection, DefenseKnockbackData);
+	return true;
 }
 
 float AWukongBoss::GetHitReactDuration(EHitReactType HitType) const

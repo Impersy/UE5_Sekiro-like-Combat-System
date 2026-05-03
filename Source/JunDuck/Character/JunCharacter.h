@@ -79,6 +79,9 @@ struct FJunAttackDefenseKnockbackData
 {
 	GENERATED_BODY()
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HitReactKnockback")
+	FJunDefenseKnockbackData HitReact = { 180.f, 120.f, 0.45f, 0.2f, 0.18f };
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DefenseKnockback")
 	FJunDefenseKnockbackData GuardBlock;
 

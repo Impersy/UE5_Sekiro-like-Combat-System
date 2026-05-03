@@ -28,6 +28,11 @@ namespace
 			|| HitType == EHitReactType::LargeHit_Long;
 	}
 
+	bool DoesMontageUseRootMotion(const UAnimMontage* Montage)
+	{
+		return Montage && Montage->HasRootMotion();
+	}
+
 	ECharacterHitReactDirection ResolveHitReactDirectionFromSwing(const AActor& CharacterActor, const FVector& SwingDirection)
 	{
 		const FVector SafeSwingDirection = SwingDirection.GetSafeNormal();
@@ -158,6 +163,12 @@ void AJunMonster::BeginPlay()
 	SpawnAndAttachWeapon();
 
 	HomeLocation = GetActorLocation();
+	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	{
+		DefaultMonsterBrakingDecelerationWalking = MovementComponent->BrakingDecelerationWalking;
+		DefaultMonsterGroundFriction = MovementComponent->GroundFriction;
+		DefaultMonsterBrakingFrictionFactor = MovementComponent->BrakingFrictionFactor;
+	}
 
 	if (bStartWithCutsceneWait)
 	{
@@ -188,6 +199,7 @@ void AJunMonster::Tick(float DeltaTime)
 
 	GetCharacterMovement()->MaxWalkSpeed = GetDesiredMaxWalkSpeed();
 	bIsRunning = ShouldUseRunLocomotion();
+	UpdateHitReactKnockbackBraking(DeltaTime);
 
 	if (bExecutionReady && !bBeingExecuted)
 	{
@@ -258,7 +270,22 @@ void AJunMonster::ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* 
 
 void AJunMonster::ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* DamageCauser, const FVector& SwingDirection)
 {
+	ReceiveHit(HitType, DamageAmount, DamageCauser, SwingDirection, FJunAttackDefenseKnockbackData());
+}
+
+void AJunMonster::ReceiveHit(
+	EHitReactType HitType,
+	float DamageAmount,
+	AActor* DamageCauser,
+	const FVector& SwingDirection,
+	const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
+{
 	if (CurrentState == EMonsterState::Dead || bBeingExecuted)
+	{
+		return;
+	}
+
+	if (TryHandleIncomingHitBeforeDamage(HitType, DamageAmount, DamageCauser, SwingDirection, DefenseKnockbackData))
 	{
 		return;
 	}
@@ -310,7 +337,20 @@ void AJunMonster::ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* 
 
 	// 먼저 공격자 위치로 F/L/R/B를 나누고,
 	// 정면 계열일 때만 스윙 방향으로 F/FL/FR를 세분화한다.
-	StartHitReact(HitType, DetermineHitReactDirection(DamageCauser, SwingDirection));
+	const ECharacterHitReactDirection HitDirection = DetermineHitReactDirection(DamageCauser, SwingDirection);
+	UAnimMontage* HitReactMontage = GetHitReactMontage(HitType, HitDirection);
+	StartHitReact(HitType, HitDirection);
+	ApplyHitReactKnockback(DamageCauser, DefenseKnockbackData.HitReact, HitReactMontage);
+}
+
+bool AJunMonster::TryHandleIncomingHitBeforeDamage(
+	EHitReactType HitType,
+	float DamageAmount,
+	AActor* DamageCauser,
+	const FVector& SwingDirection,
+	const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
+{
+	return false;
 }
 
 void AJunMonster::OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker)
@@ -405,6 +445,7 @@ void AJunMonster::TriggerPendingExecutionMontage()
 	bExecutionResultApplied = true;
 	CurrentLifeCount = FMath::Max(0, CurrentLifeCount - 1);
 	CurrentPosture = 0.f;
+	Hp = 0;
 
 	const bool bFinalExecution = CurrentLifeCount <= 0;
 	UAnimMontage* MontageToPlay = bFinalExecution ? ExecutedDeathMontage.Get() : ExecutedMontage.Get();
@@ -426,14 +467,11 @@ void AJunMonster::TriggerPendingExecutionMontage()
 
 	if (bFinalExecution)
 	{
-		Hp = 0;
 		EndAttackFacingWindow();
 		AddGameplayTag(JunGameplayTags::State_Condition_Dead);
 		SetMonsterState(EMonsterState::Dead);
 		return;
 	}
-
-	Hp = MaxHp;
 
 	if (!MontageToPlay)
 	{
@@ -1031,6 +1069,11 @@ void AJunMonster::UpdateBattleStart(float DeltaTime)
 	UpdateBattleStartMovementBlend(DeltaTime);
 	TryStartCombatTurn();
 
+	if (IsCombatTurnPlaying())
+	{
+		return;
+	}
+
 	if (StateTime >= BattleStartDuration)
 	{
 		SetMonsterState(EMonsterState::Combat);
@@ -1143,22 +1186,38 @@ bool AJunMonster::TryStartTurnTowardsTargetThenState(EMonsterState NextState)
 		return false;
 	}
 
+	StopAIMovement();
+	CombatMoveInput = FVector2D::ZeroVector;
+	SetDesiredMoveAxes(0.f, 0.f);
+	EndAttackFacingWindow();
+	AttackFacingRemainTime = 0.f;
+
 	MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnCombatTurnMontageEnded);
 	MonsterAnimInstance->OnMontageEnded.AddDynamic(this, &AJunMonster::OnCombatTurnMontageEnded);
 
-	if (MonsterAnimInstance->Montage_Play(TurnMontage) <= 0.f)
+	LastCombatTurnStartYaw = GetActorRotation().Yaw;
+	if (MonsterAnimInstance->Montage_Play(TurnMontage, CombatTurnPlayRate) <= 0.f)
 	{
 		MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnCombatTurnMontageEnded);
 		return false;
 	}
+	LastCombatTurnPostPlayYaw = GetActorRotation().Yaw;
+	if (bDebugCombatTurnYaw)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[MonsterTurn][StartToState] Play=%s YawDelta=%.2f Before=%.2f AfterPlay=%.2f AfterPlayDelta=%.2f Velocity=%.2f State=%s"),
+			*GetNameSafe(TurnMontage),
+			YawDelta,
+			LastCombatTurnStartYaw,
+			LastCombatTurnPostPlayYaw,
+			FMath::FindDeltaAngleDegrees(LastCombatTurnStartYaw, LastCombatTurnPostPlayYaw),
+			GetVelocity().Size2D(),
+			GetMonsterStateDebugText(CurrentState));
+	}
 
-	StopAIMovement();
-	CombatMoveInput = FVector2D::ZeroVector;
-	SetDesiredMoveAxes(0.f, 0.f);
 	CurrentCombatTurnMontage = TurnMontage;
+	bCombatTurnInProgress = true;
 	PendingStateAfterCombatTurn = NextState;
 	bHasPendingStateAfterCombatTurn = true;
-	bCombatTurnInProgress = true;
 	return true;
 }
 
@@ -1174,7 +1233,15 @@ bool AJunMonster::CanStartGenericTurnTowardsTarget() const
 		return false;
 	}
 
-	return true;
+	if (const UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+	{
+		if (MonsterAnimInstance->GetCurrentActiveMontage() != nullptr)
+		{
+			return false;
+		}
+	}
+
+	return GetVelocity().Size2D() <= CombatTurnMaxGroundSpeed;
 }
 
 bool AJunMonster::CanStartCombatTurn() const
@@ -1193,6 +1260,14 @@ bool AJunMonster::CanStartCombatTurn() const
 	if (bIsAttacking || IsInHitReact() || CurrentState == EMonsterState::Dead)
 	{
 		return false;
+	}
+
+	if (const UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+	{
+		if (MonsterAnimInstance->GetCurrentActiveMontage() != nullptr)
+		{
+			return false;
+		}
 	}
 
 	return GetVelocity().Size2D() <= CombatTurnMaxGroundSpeed;
@@ -1223,18 +1298,34 @@ bool AJunMonster::TryStartCombatTurnWithThreshold(float MinimumTurnAngle)
 		return false;
 	}
 
+	StopAIMovement();
+	CombatMoveInput = FVector2D::ZeroVector;
+	SetDesiredMoveAxes(0.f, 0.f);
+	EndAttackFacingWindow();
+	AttackFacingRemainTime = 0.f;
+
 	MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnCombatTurnMontageEnded);
 	MonsterAnimInstance->OnMontageEnded.AddDynamic(this, &AJunMonster::OnCombatTurnMontageEnded);
 
-	if (MonsterAnimInstance->Montage_Play(TurnMontage) <= 0.f)
+	LastCombatTurnStartYaw = GetActorRotation().Yaw;
+	if (MonsterAnimInstance->Montage_Play(TurnMontage, CombatTurnPlayRate) <= 0.f)
 	{
 		MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnCombatTurnMontageEnded);
 		return false;
 	}
+	LastCombatTurnPostPlayYaw = GetActorRotation().Yaw;
+	if (bDebugCombatTurnYaw)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[MonsterTurn][Start] Play=%s YawDelta=%.2f Before=%.2f AfterPlay=%.2f AfterPlayDelta=%.2f Velocity=%.2f State=%s"),
+			*GetNameSafe(TurnMontage),
+			YawDelta,
+			LastCombatTurnStartYaw,
+			LastCombatTurnPostPlayYaw,
+			FMath::FindDeltaAngleDegrees(LastCombatTurnStartYaw, LastCombatTurnPostPlayYaw),
+			GetVelocity().Size2D(),
+			GetMonsterStateDebugText(CurrentState));
+	}
 
-	StopAIMovement();
-	CombatMoveInput = FVector2D::ZeroVector;
-	SetDesiredMoveAxes(0.f, 0.f);
 	CurrentCombatTurnMontage = TurnMontage;
 	bCombatTurnInProgress = true;
 	return true;
@@ -1317,6 +1408,8 @@ void AJunMonster::UpdateCombatFacing(float DeltaTime)
 
 	if (IsCombatTurnPlaying())
 	{
+		EndAttackFacingWindow();
+		AttackFacingRemainTime = 0.f;
 		return;
 	}
 
@@ -1787,11 +1880,6 @@ void AJunMonster::FinishAttack()
 	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
 	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
 
-	if (CurrentAttackSelection.bTryTurnAfterAttack)
-	{
-		TryStartPostAttackTurn();
-	}
-
 	ResetCurrentAttackRuntimeState();
 }
 
@@ -1837,7 +1925,29 @@ void AJunMonster::OnCombatTurnMontageEnded(UAnimMontage* Montage, bool bInterrup
 {
 	if (Montage != CurrentCombatTurnMontage)
 	{
+		if (bDebugCombatTurnYaw)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[MonsterTurn][EndIgnored] Ended=%s Current=%s Interrupted=%s Yaw=%.2f"),
+				*GetNameSafe(Montage),
+				*GetNameSafe(CurrentCombatTurnMontage),
+				bInterrupted ? TEXT("true") : TEXT("false"),
+				GetActorRotation().Yaw);
+		}
 		return;
+	}
+
+	LastCombatTurnEndYaw = GetActorRotation().Yaw;
+	if (bDebugCombatTurnYaw)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[MonsterTurn][End] Montage=%s Interrupted=%s Start=%.2f AfterPlay=%.2f End=%.2f TotalDelta=%.2f Velocity=%.2f State=%s"),
+			*GetNameSafe(Montage),
+			bInterrupted ? TEXT("true") : TEXT("false"),
+			LastCombatTurnStartYaw,
+			LastCombatTurnPostPlayYaw,
+			LastCombatTurnEndYaw,
+			FMath::FindDeltaAngleDegrees(LastCombatTurnStartYaw, LastCombatTurnEndYaw),
+			GetVelocity().Size2D(),
+			GetMonsterStateDebugText(CurrentState));
 	}
 
 	if (UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
@@ -2082,6 +2192,124 @@ void AJunMonster::ReleaseHitReactControlLock()
 	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
 }
 
+ECharacterKnockbackDirection AJunMonster::DetermineKnockbackDirectionFromDamageCauser(const AActor* DamageCauser) const
+{
+	if (!DamageCauser)
+	{
+		return ECharacterKnockbackDirection::Backward;
+	}
+
+	const FVector ToAttackerWorld = DamageCauser->GetActorLocation() - GetActorLocation();
+	FVector ToAttackerLocal = GetActorTransform().InverseTransformVectorNoScale(ToAttackerWorld);
+	ToAttackerLocal.Z = 0.f;
+
+	if (ToAttackerLocal.IsNearlyZero())
+	{
+		return ECharacterKnockbackDirection::Backward;
+	}
+
+	if (FMath::Abs(ToAttackerLocal.Y) > FMath::Abs(ToAttackerLocal.X))
+	{
+		return ToAttackerLocal.Y > 0.f
+			? ECharacterKnockbackDirection::Left
+			: ECharacterKnockbackDirection::Right;
+	}
+
+	return ToAttackerLocal.X > 0.f
+		? ECharacterKnockbackDirection::Backward
+		: ECharacterKnockbackDirection::Forward;
+}
+
+void AJunMonster::ApplyHitReactKnockback(AActor* DamageCauser, const FJunDefenseKnockbackData& KnockbackData, UAnimMontage* HitReactMontage)
+{
+	if (KnockbackData.Strength <= 0.f || DoesMontageUseRootMotion(HitReactMontage))
+	{
+		return;
+	}
+
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent)
+	{
+		return;
+	}
+
+	FVector KnockbackDirection = FVector::ZeroVector;
+	switch (DetermineKnockbackDirectionFromDamageCauser(DamageCauser))
+	{
+	case ECharacterKnockbackDirection::Forward:
+		KnockbackDirection = GetActorForwardVector();
+		break;
+	case ECharacterKnockbackDirection::Backward:
+		KnockbackDirection = -GetActorForwardVector();
+		break;
+	case ECharacterKnockbackDirection::Left:
+		KnockbackDirection = -GetActorRightVector();
+		break;
+	case ECharacterKnockbackDirection::Right:
+		KnockbackDirection = GetActorRightVector();
+		break;
+	default:
+		KnockbackDirection = -GetActorForwardVector();
+		break;
+	}
+
+	KnockbackDirection.Z = 0.f;
+	KnockbackDirection = KnockbackDirection.GetSafeNormal();
+	if (KnockbackDirection.IsNearlyZero())
+	{
+		return;
+	}
+
+	HitReactKnockbackBrakingDecelerationOverride = KnockbackData.BrakingDeceleration;
+	HitReactKnockbackGroundFrictionOverride = KnockbackData.GroundFriction;
+	HitReactKnockbackBrakingFrictionFactorOverride = KnockbackData.BrakingFrictionFactor;
+	HitReactKnockbackBrakingOverrideRemainTime = KnockbackData.OverrideDuration;
+	bHitReactKnockbackBrakingOverrideActive = true;
+
+	MovementComponent->AddImpulse(KnockbackDirection * KnockbackData.Strength, true);
+}
+
+void AJunMonster::UpdateHitReactKnockbackBraking(float DeltaTime)
+{
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent)
+	{
+		return;
+	}
+
+	if (HitReactKnockbackBrakingOverrideRemainTime > 0.f)
+	{
+		HitReactKnockbackBrakingOverrideRemainTime = FMath::Max(0.f, HitReactKnockbackBrakingOverrideRemainTime - DeltaTime);
+		MovementComponent->BrakingDecelerationWalking = HitReactKnockbackBrakingDecelerationOverride;
+		MovementComponent->GroundFriction = HitReactKnockbackGroundFrictionOverride;
+		MovementComponent->BrakingFrictionFactor = HitReactKnockbackBrakingFrictionFactorOverride;
+
+		if (HitReactKnockbackBrakingOverrideRemainTime <= 0.f)
+		{
+			RestoreDefaultMonsterMovementBrakingSettings();
+			bHitReactKnockbackBrakingOverrideActive = false;
+		}
+
+		return;
+	}
+
+	if (bHitReactKnockbackBrakingOverrideActive)
+	{
+		RestoreDefaultMonsterMovementBrakingSettings();
+		bHitReactKnockbackBrakingOverrideActive = false;
+	}
+}
+
+void AJunMonster::RestoreDefaultMonsterMovementBrakingSettings()
+{
+	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	{
+		MovementComponent->BrakingDecelerationWalking = DefaultMonsterBrakingDecelerationWalking;
+		MovementComponent->GroundFriction = DefaultMonsterGroundFriction;
+		MovementComponent->BrakingFrictionFactor = DefaultMonsterBrakingFrictionFactor;
+	}
+}
+
 void AJunMonster::OnHitReactStarted(EHitReactType NewHitReact, ECharacterHitReactDirection NewHitDirection)
 {
 }
@@ -2281,6 +2509,11 @@ bool AJunMonster::CanUpdateBehavior() const
 
 void AJunMonster::AddPosture(float Amount)
 {
+	if (bDisablePostureGain)
+	{
+		return;
+	}
+
 	if (CurrentState == EMonsterState::Dead || bExecutionReady || bBeingExecuted || Amount <= 0.f)
 	{
 		return;
@@ -2362,6 +2595,7 @@ void AJunMonster::FinishExecutionRecovery()
 	}
 
 	RestoreExecutionCapsuleCollisionIgnore();
+	Hp = MaxHp;
 	bBeingExecuted = false;
 	bExecutionResultApplied = false;
 	CurrentExecutionInstigator = nullptr;

@@ -1,4 +1,5 @@
 #include "Character/JunPlayer.h"
+#include "Animation/AnimMontage.h"
 #include "Camera/JunSpringArmComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Character/JunMonster.h"
@@ -14,6 +15,14 @@
 #include "DrawDebugHelpers.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "UObject/UnrealType.h"
+
+namespace
+{
+	bool DoesMontageUseRootMotion(const UAnimMontage* Montage)
+	{
+		return Montage && Montage->HasRootMotion();
+	}
+}
 
 AJunPlayer::AJunPlayer()
 {
@@ -1410,6 +1419,20 @@ void AJunPlayer::SetDesiredMoveAxes(float NewForward, float NewRight)
 
 	if (bDeferGuardMoveInput)
 	{
+		return;
+	}
+
+	if (bHasMoveInput && TryCancelHitReactIntoMove())
+	{
+		DesiredMoveForward = PendingMoveForward;
+		DesiredMoveRight = PendingMoveRight;
+		return;
+	}
+
+	if (HasGameplayTag(JunGameplayTags::State_Block_Move))
+	{
+		DesiredMoveForward = 0.f;
+		DesiredMoveRight = 0.f;
 		return;
 	}
 
@@ -3965,6 +3988,21 @@ void AJunPlayer::StartHitReact(EHitReactType HitType, ECharacterHitReactDirectio
 	CurrentHitState = EJunPlayerHitState::HitReact;
 	CurrentHitReactType = HitType;
 	CurrentHitReactDirection = HitDirection;
+	DesiredMoveForward = 0.f;
+	DesiredMoveRight = 0.f;
+	PendingMoveForward = 0.f;
+	PendingMoveRight = 0.f;
+	bFreeRunSlideActive = false;
+	FreeRunSlideSpeed = 0.f;
+
+	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	{
+		FVector NewVelocity = MovementComponent->Velocity;
+		NewVelocity.X = 0.f;
+		NewVelocity.Y = 0.f;
+		MovementComponent->Velocity = NewVelocity;
+	}
+	ConsumeMovementInputVector();
 
 	UAnimMontage* HitReactMontage = GetHitReactMontage(HitType, HitDirection);
 	if (HitType == EHitReactType::LightHit)
@@ -4007,6 +4045,18 @@ void AJunPlayer::StartHitReact(EHitReactType HitType, ECharacterHitReactDirectio
 	{
 		PlayerHitStateRemainTime = HitReactMontage ? HitReactMontage->GetPlayLength() : HitReactDuration;
 		PlayerHitControlLockRemainTime = HitReactDuration;
+	}
+
+	if (!DoesMontageUseRootMotion(HitReactMontage))
+	{
+		ApplyCommonKnockback(
+			LastIncomingKnockbackDirection,
+			LastIncomingDefenseKnockbackData.HitReact.Strength,
+			LastIncomingDefenseKnockbackData.HitReact.BrakingDeceleration,
+			LastIncomingDefenseKnockbackData.HitReact.GroundFriction,
+			LastIncomingDefenseKnockbackData.HitReact.BrakingFrictionFactor,
+			LastIncomingDefenseKnockbackData.HitReact.OverrideDuration
+		);
 	}
 
 	AddGameplayTag(JunGameplayTags::State_Condition_HitReact);
@@ -4193,10 +4243,66 @@ void AJunPlayer::UpdatePlayerHitState(float DeltaTime)
 void AJunPlayer::ReleaseHitReactControlLock()
 {
 	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Jump);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Attack);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Dodge);
+
+	if (CurrentHitState == EJunPlayerHitState::HitReact)
+	{
+		if (TryCancelHitReactIntoMove())
+		{
+			return;
+		}
+
+		return;
+	}
+
+	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
+}
+
+bool AJunPlayer::TryCancelHitReactIntoMove()
+{
+	if (CurrentHitState != EJunPlayerHitState::HitReact ||
+		HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
+	{
+		return false;
+	}
+
+	const bool bHasMoveInput =
+		!FMath::IsNearlyZero(PendingMoveForward) ||
+		!FMath::IsNearlyZero(PendingMoveRight);
+	if (!bHasMoveInput)
+	{
+		return false;
+	}
+
+	if (AnimInstance)
+	{
+		if (UAnimMontage* HitReactMontage = GetHitReactMontage(CurrentHitReactType, CurrentHitReactDirection))
+		{
+			AnimInstance->Montage_Stop(HitReactMoveCancelBlendOutTime, HitReactMontage);
+		}
+	}
+
+	CurrentHitState = EJunPlayerHitState::None;
+	PlayerHitStateRemainTime = 0.f;
+	PlayerHitControlLockRemainTime = 0.f;
+	ChainParryWindowRemainTime = 0.f;
+	CurrentHitReactType = EHitReactType::None;
+	CurrentHitReactDirection = ECharacterHitReactDirection::Front_F;
+
+	if (GetCharacterMovement())
+	{
+		RestoreDefaultMovementBrakingSettings();
+	}
+
+	RemoveGameplayTag(JunGameplayTags::State_Condition_HitReact);
 	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
 	RemoveGameplayTag(JunGameplayTags::State_Block_Jump);
 	RemoveGameplayTag(JunGameplayTags::State_Block_Attack);
 	RemoveGameplayTag(JunGameplayTags::State_Block_Dodge);
+
+	return true;
 }
 
 void AJunPlayer::FinishPlayerHitState()
@@ -4880,7 +4986,7 @@ void AJunPlayer::UpdateLockOnCamera(float DeltaTime)
 
 	DesiredRot.Pitch = FMath::Clamp(DesiredRot.Pitch, MinCameraPitch, MaxCameraPitch);
 
-	const FRotator NewRot = FMath::RInterpTo(
+	FRotator NewRot = FMath::RInterpTo(
 		CurrentRot,
 		DesiredRot,
 		DeltaTime,

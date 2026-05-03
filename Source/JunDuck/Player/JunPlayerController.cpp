@@ -144,6 +144,11 @@ void AJunPlayerController::UpdateCombatWidgets()
 		if (ActiveCombatBoss)
 		{
 			CombatHUDWidget->SetBossHealth(ActiveCombatBoss->GetHp(), ActiveCombatBoss->GetMaxHp());
+			CombatHUDWidget->SetBossLifeState(ActiveCombatBoss->GetCurrentLifeCount(), ActiveCombatBoss->GetMaxLifeCount());
+		}
+		else
+		{
+			CombatHUDWidget->SetBossLifeState(0, 0);
 		}
 	}
 
@@ -161,7 +166,7 @@ AJunMonster* AJunPlayerController::FindActiveCombatBoss() const
 	for (TActorIterator<AJunMonster> It(World); It; ++It)
 	{
 		AJunMonster* Monster = *It;
-		if (Monster && !Monster->Is_Dead() && Monster->GetCurrentState() == EMonsterState::Combat)
+		if (Monster && (Monster->GetCurrentState() == EMonsterState::Combat || Monster->Is_Dead()))
 		{
 			return Monster;
 		}
@@ -177,12 +182,23 @@ void AJunPlayerController::UpdateLockOnMarkerWidget(AJunCharacter* CurrentLockOn
 		return;
 	}
 
+	const bool bTargetChanged = CurrentLockOnTarget != PreviousLockOnMarkerTarget;
+	if (bTargetChanged)
+	{
+		PreviousLockOnMarkerTarget = CurrentLockOnTarget;
+		LockOnMarkerShowDelayRemainTime = CurrentLockOnTarget
+			? FMath::Max(0.f, LockOnMarkerShowDelay)
+			: 0.f;
+	}
+
 	if (!CurrentLockOnTarget)
 	{
 		LockOnMarkerWidget->SetExecutionReadyMarkerVisible(false);
 		LockOnMarkerWidget->SetLockOnMarkerVisible(false);
 		return;
 	}
+
+	LockOnMarkerShowDelayRemainTime = FMath::Max(0.f, LockOnMarkerShowDelayRemainTime - GetWorld()->GetDeltaSeconds());
 
 	FVector2D ScreenPosition = FVector2D::ZeroVector;
 	const bool bProjected = ProjectWorldLocationToScreen(JunPlayer->GetLockOnMarkerWorldPoint(), ScreenPosition, true);
@@ -193,11 +209,13 @@ void AJunPlayerController::UpdateLockOnMarkerWidget(AJunCharacter* CurrentLockOn
 		return;
 	}
 
-	LockOnMarkerWidget->SetLockOnMarkerVisible(true);
 	LockOnMarkerWidget->SetPositionInViewport(ScreenPosition, true);
 
+	const bool bShowLockOnMarker = LockOnMarkerShowDelayRemainTime <= 0.f;
+	LockOnMarkerWidget->SetLockOnMarkerVisible(bShowLockOnMarker);
+
 	const AJunMonster* LockOnMonster = Cast<AJunMonster>(CurrentLockOnTarget);
-	LockOnMarkerWidget->SetExecutionReadyMarkerVisible(LockOnMonster && LockOnMonster->CanBeExecutedBy(JunPlayer));
+	LockOnMarkerWidget->SetExecutionReadyMarkerVisible(bShowLockOnMarker && LockOnMonster && LockOnMonster->CanBeExecutedBy(JunPlayer));
 }
 
 void AJunPlayerController::Input_Move(const FInputActionValue& InputValue)

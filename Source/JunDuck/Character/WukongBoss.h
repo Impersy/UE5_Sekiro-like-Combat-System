@@ -11,6 +11,7 @@ enum class EWukongCombatState : uint8
 	Idle,
 	Hit,
 	Attack,
+	ParrySuccess,
 	Recovery,
 	Reposition,
 	NonAttackAction,
@@ -122,7 +123,7 @@ struct FWukongNormalAttackData
 	bool bFaceTargetDuringAttack = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|NormalAttack")
-	float FacingDuration = 0.6f;
+	float FacingDuration = 0.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|NormalAttack")
 	float FacingInterpSpeed = 14.f;
@@ -302,12 +303,19 @@ protected:
 	virtual void OnHitReactStarted(EHitReactType NewHitReact, ECharacterHitReactDirection NewHitDirection) override;
 	virtual bool ShouldStartHitReact(EHitReactType IncomingHitReact) const override;
 	virtual void OnHitReactEnded(EHitReactType EndedHitReact) override;
+	virtual bool TryHandleIncomingHitBeforeDamage(
+		EHitReactType HitType,
+		float DamageAmount,
+		AActor* DamageCauser,
+		const FVector& SwingDirection,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData) override;
 
 	void SetWukongCombatState(EWukongCombatState NewState);
 	void EnterApproachState();
 	void EnterIdleState();
 	void EnterHitState();
 	void EnterAttackState();
+	void EnterParrySuccessState();
 	void EnterRecoveryState();
 	void EnterRepositionState();
 	void EnterNonAttackActionState();
@@ -318,6 +326,7 @@ protected:
 	void UpdateIdleState(float DeltaTime);
 	void UpdateHitState(float DeltaTime);
 	void UpdateAttackState(float DeltaTime);
+	void UpdateParrySuccessState(float DeltaTime);
 	void UpdateRecoveryState(float DeltaTime);
 	void UpdateRepositionState(float DeltaTime);
 	void UpdateNonAttackActionState(float DeltaTime);
@@ -325,6 +334,7 @@ protected:
 	void UpdateTurnState(float DeltaTime);
 
 	bool CanStartWukongTurn() const;
+	bool TryStartOrWaitForWukongTurn(float YawThreshold);
 	bool HasAnyAttackCandidateForCurrentDistance() const;
 	bool HasValidPlannedAttack() const;
 	bool HasValidPlannedMovement() const;
@@ -382,6 +392,18 @@ protected:
 	bool TryEnterPlannedAttackStateFromIdle();
 	bool TryEnterPlannedNonAttackStateFromIdle();
 	bool HasQueuedReactiveAction() const;
+	bool CanStartMobilityMontageSafely() const;
+	bool CanParryIncomingHit(EHitReactType HitType, AActor* DamageCauser) const;
+	UAnimMontage* GetParrySuccessMontage(const FVector& SwingDirection) const;
+	void StartParrySuccessAgainstIncomingHit(
+		AActor* DamageCauser,
+		const FVector& SwingDirection,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData);
+
+	UFUNCTION()
+	void OnParrySuccessMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+	void FinishParrySuccessState();
 	void RefreshPlannedCombatPlan();
 	void RefreshPlannedAttackType();
 	void RefreshPlannedNonAttackType();
@@ -465,6 +487,36 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Dodge")
 	TObjectPtr<class UAnimMontage> DodgeRightMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
+	TObjectPtr<class UAnimMontage> ParrySuccessLUpMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
+	TObjectPtr<class UAnimMontage> ParrySuccessLDownMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
+	TObjectPtr<class UAnimMontage> ParrySuccessRUpMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
+	TObjectPtr<class UAnimMontage> ParrySuccessRDownMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float HitParryChance = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
+	float ParrySuccessFacingDuration = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	float ParrySuccessFacingInterpSpeed = 18.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
+	float ParrySuccessFallbackDuration = 0.45f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	TObjectPtr<class UAnimMontage> CurrentParrySuccessMontage = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	float ParrySuccessFallbackRemainTime = 0.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Recovery")
 	float RecoveryDuration = 0.4f;
@@ -572,13 +624,13 @@ protected:
 	FWukongReactiveActionTuningData ReactiveBackwardEvade;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|HitReact")
-	float WukongLightHitDuration = 0.1f;
+	float WukongLightHitDuration = 0.3f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|HitReact")
-	float WukongLargeHitDuration = 0.2f;
+	float WukongLargeHitDuration = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|HitReact")
-	float WukongLargeHitLongDuration = 0.8f;
+	float WukongLargeHitLongDuration = 0.9f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|HitReact")
 	float WukongHeavyHitControlLockDuration = 0.55f;
