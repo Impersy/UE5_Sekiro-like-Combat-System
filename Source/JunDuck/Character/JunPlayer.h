@@ -83,7 +83,8 @@ UENUM(BlueprintType)
 enum class EJunPlayerHitResolveResult : uint8
 {
 	Ignored,
-	ParrySuccess,
+	PerfectParrySuccess,
+	NormalParrySuccess,
 	GuardBlock,
 	HitReact
 };
@@ -301,7 +302,7 @@ protected: // Hit
 	ECharacterHitReactDirection DetermineHitReactDirection(const AActor* DamageCauser, const FVector& SwingDirection) const;
 	ECharacterKnockbackDirection DetermineKnockbackDirectionFromDamageCauser(const AActor* DamageCauser) const;
 	UAnimMontage* GetHitReactMontage(EHitReactType HitType, ECharacterHitReactDirection HitDirection) const;
-	UAnimMontage* GetParrySuccessMontage(const FVector& SwingDirection) const;
+	UAnimMontage* GetParrySuccessMontage(const FVector& SwingDirection);
 	void StartParrySuccess();
 	void CancelParrySuccessForCancelTransition(float BlendOutTime);
 	void ExecuteBufferedParrySuccessCancelAction();
@@ -389,6 +390,8 @@ protected: // Target / Facing
 protected: // Camera
 	void UpdateJunCamera(float DeltaTime);
 	void UpdateFreeCamera(float DeltaTime);
+	void UpdateCameraFOV(float DeltaTime);
+	float GetPitchAdjustedSpringArmLength() const;
 	FVector GetCameraForwardOnPlane() const;
 
 	void StartLockOn(AJunCharacter* NewTarget);
@@ -801,6 +804,12 @@ protected: // Runtime Combat / Defense State
 	EJunBufferedParrySuccessCancelAction BufferedParrySuccessCancelAction = EJunBufferedParrySuccessCancelAction::None;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
+	int32 ParrySuccessSequenceIndex = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
+	bool bNextParrySuccessUsesLeftMontage = true;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	float KnockbackBrakingOverrideRemainTime = 0.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
@@ -875,13 +884,37 @@ protected: // Camera Tuning
 	float CameraSocketOffsetInterpSpeed = 8.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
-	float DefaultSpringArmLength = 300.f;
+	float DefaultSpringArmLength = 500.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera")
+	float PitchArmShortenStartPitch = 0.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera")
+	float PitchArmShortenEndPitch = 30.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera")
+	float PitchShortenedSpringArmLength = 200.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera")
+	float PitchArmShortenInterpSpeed = 30.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera")
+	float FreeCameraFOV = 75.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera")
+	float LockOnCameraFOV = 75.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera")
+	float ExecutionCameraFOV = 75.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera")
+	float CameraFOVInterpSpeed = 6.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
 	float SpringArmLengthInterpSpeed = 8.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Camera|Free")
-	FVector FreeCameraSocketOffset = FVector(0.f, 45.f, 0.f);
+	FVector FreeCameraSocketOffset = FVector(0.f, 25.f, 0.f);
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Free")
 	float FreeCameraYawSpeed = 70.f;
@@ -908,16 +941,16 @@ protected: // Camera Tuning
 	FVector DodgeCameraSocketOffset = FVector(0.f, 0.f, 0.f);
 
 	UPROPERTY(EditDefaultsOnly, Category = "Camera|LockOn")
-	FVector LockOnCameraSocketOffset = FVector(0.f, 45.f, 0.f);
+	FVector LockOnCameraSocketOffset = FVector(0.f, 25.f, 0.f);
 
 	UPROPERTY(EditDefaultsOnly, Category = "Camera|Execution")
-	FVector ExecutionCameraSocketOffset = FVector(0.f, 30.f, 0.f);
+	FVector ExecutionCameraSocketOffset = FVector(0.f, 25.f, 0.f);
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
-	float ExecutionCameraArmLength = 280.f;
+	float ExecutionCameraArmLength = 380.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
-	float ExecutionCameraApplyArmLength = 100.f;
+	float ExecutionCameraApplyArmLength = 200.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
 	float ExecutionCameraRotationInterpSpeed = 9.f;
@@ -944,10 +977,22 @@ protected: // Camera Tuning
 	float LockOnBreakDistance = 150000.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
-	float LockOnPitchOffset = -5.f;
+	float LockOnPitchOffset = -10.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
-	float LockOnClosePitchOffset = -40.f;
+	float LockOnClosePitchOffset = -30.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
+	float MinLockOnCameraPitch = -30.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
+	float MaxLockOnCameraPitch = 40.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
+	float LockOnTargetZRiseInterpSpeed = 12.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
+	float LockOnTargetZFallInterpSpeed = 8.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float LockOnTargetZIgnoreThreshold = 10.f;
@@ -975,10 +1020,19 @@ protected: // Attack / Defense Tuning
 	float GuardEndPlayRate = 1.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
+	float GuardEndBlendInTime = 0.12f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
+	float GuardStartToEndBlendOutTime = 0.08f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
 	float GuardMoveBlendDuration = 0.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
 	float DefaultParryWindowDuration = 0.5f; // 기본 패리 판정 시간
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
+	float PerfectParryWindowDuration = 0.15f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
 	float DefaultDeflectResolveTime = 0.156f;
@@ -1026,7 +1080,7 @@ protected: // Attack / Defense Tuning
 	float ParrySuccessDodgeCancelOpenTime = 0.4f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
-	float ParrySuccessMoveCancelOpenTime = 0.4f;
+	float ParrySuccessMoveCancelOpenTime = 0.7f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float ParrySuccessBasicAttackCancelBlendOutTime = 0.15f;
@@ -1258,19 +1312,19 @@ protected: // Attack / Defense Tuning
 
 	// Cancel open times are authored in montage timeline seconds at PlayRate 1.0.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
-	TArray<float> BasicAttackDodgeCancelOpenTimes = { 0.65f, 0.715f, 0.78f, 0.91f };
+	TArray<float> BasicAttackDodgeCancelOpenTimes = { 0.5f, 0.5f, 0.6f, 0.6f };
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
-	TArray<float> BasicAttackJumpCancelOpenTimes = { 0.65f, 0.715f, 0.78f, 0.91f };
+	TArray<float> BasicAttackJumpCancelOpenTimes = { 0.5f, 0.5f, 0.6f, 0.6f };
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
-	TArray<float> BasicAttackDefenseCancelOpenTimes = { 0.455f, 0.65f, 0.78f, 0.91f };
+	TArray<float> BasicAttackDefenseCancelOpenTimes = { 0.1f, 0.5f, 0.5f, 0.5f };
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
-	TArray<float> BasicAttackMoveCancelOpenTimes = { 1.3f, 1.3f, 1.3f, 1.3f };
+	TArray<float> BasicAttackMoveCancelOpenTimes = { 0.8f, 0.8f, 0.8f, 0.8f };
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
-	TArray<float> BasicAttackHeavyAttackCancelOpenTimes = { 0.65f, 0.715f, 0.78f, 0.91f };
+	TArray<float> BasicAttackHeavyAttackCancelOpenTimes = { 0.5f, 0.5f, 0.6f, 0.6f };
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
 	float BasicAttackDodgeCancelBlendOutTime = 0.1f;
@@ -1279,7 +1333,7 @@ protected: // Attack / Defense Tuning
 	float BasicAttackJumpCancelBlendOutTime = 0.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
-	float BasicAttackDefenseCancelBlendOutTime = 0.2f;
+	float BasicAttackDefenseCancelBlendOutTime = 0.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
 	float BasicAttackMoveCancelBlendOutTime = 0.25f;
@@ -1389,6 +1443,9 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	TObjectPtr<class UAnimMontage> ParrySuccessR_DownMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	TObjectPtr<class UAnimMontage> ParrySuccessFrontUpLeftMontage;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	TObjectPtr<class UAnimMontage> CurrentParrySuccessMontage;

@@ -25,6 +25,7 @@ enum class EWukongActionType : uint8
 	None,
 	ComboAttack,
 	NormalAttack,
+	ParryCounter,
 	Dash,
 	Dodge,
 	Turn
@@ -43,6 +44,15 @@ enum class EWukongReactiveActionType : uint8
 {
 	None,
 	EvadeBackward
+};
+
+UENUM(BlueprintType)
+enum class EWukongInitiativeState : uint8
+{
+	Neutral,
+	PlayerPressure,
+	BossPattern,
+	BossParryCounter
 };
 
 UENUM(BlueprintType)
@@ -290,8 +300,10 @@ public:
 	void BeginAttackSuperArmorWindow();
 	void EndAttackSuperArmorWindow();
 	void HandleComboDecisionPoint();
+	virtual void NotifyAttackParriedBy(class AJunPlayer* Parrier) override;
 
 protected:
+	virtual void HandleGameplayEventNotify(FGameplayTag EventTag) override;
 	virtual void EnterCombatState() override;
 	virtual void UpdateCombat(float DeltaTime) override;
 	virtual FMonsterAttackSelection ChooseNextAttackSelection() const override;
@@ -385,6 +397,10 @@ protected:
 	void ApplyTimedMontageSuperArmor(float MontageDuration, float DurationScale = -1.f);
 	void UpdateTimedMontageSuperArmor(float DeltaTime);
 	void ClearTimedMontageSuperArmor();
+	bool IsPlayerPressureActive() const;
+	void StartPlayerPressure();
+	void ClearPlayerPressure();
+	void UpdatePlayerPressure(float DeltaTime);
 	void ResetPlannedCombatPlan();
 	void EnsureCombatPlan();
 	bool TryEnterReactiveStateFromIdle();
@@ -393,12 +409,16 @@ protected:
 	bool TryEnterPlannedNonAttackStateFromIdle();
 	bool HasQueuedReactiveAction() const;
 	bool CanStartMobilityMontageSafely() const;
-	bool CanParryIncomingHit(EHitReactType HitType, AActor* DamageCauser) const;
-	UAnimMontage* GetParrySuccessMontage(const FVector& SwingDirection) const;
+	bool CanParryIncomingHit(EHitReactType HitType, AActor* DamageCauser, const FVector& SwingDirection) const;
+	UAnimMontage* GetParrySuccessMontage(const FVector& SwingDirection);
+	UAnimMontage* GetParryCounterMontage() const;
+	UAnimMontage* GetParryCounterFollowUpMontage() const;
 	void StartParrySuccessAgainstIncomingHit(
 		AActor* DamageCauser,
 		const FVector& SwingDirection,
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData);
+	bool TryStartParryCounterAttack();
+	bool TryStartParryCounterFollowUp();
 
 	UFUNCTION()
 	void OnParrySuccessMontageEnded(UAnimMontage* Montage, bool bInterrupted);
@@ -500,8 +520,68 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
 	TObjectPtr<class UAnimMontage> ParrySuccessRDownMontage = nullptr;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
+	TObjectPtr<class UAnimMontage> ParrySuccessFrontUpLeftMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
+	TObjectPtr<class UAnimMontage> ParrySuccessFrontUpRightMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
+	TObjectPtr<class UAnimMontage> ParryCounterLeftMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
+	TObjectPtr<class UAnimMontage> ParryCounterRightMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
+	TObjectPtr<class UAnimMontage> ParryCounterFollowUpLeftMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
+	TObjectPtr<class UAnimMontage> ParryCounterFollowUpRightMontage = nullptr;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float HitParryChance = 1.0f;
+	float PerfectHitParryChance = 0.8f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float NormalHitParryChance = 0.2f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
+	float NormalParryPostureGain = 10.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
+	float ParryCounterBlendOutTime = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
+	float ParryCounterBlendInTime = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.1"))
+	float ParryCounterPlayRate = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	float ParryCounterAttackRange = 250.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	float ParryCounterFacingDuration = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	float ParryCounterFacingInterpSpeed = 18.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
+	float ParryCounterFollowUpBlendOutTime = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
+	float ParryCounterFollowUpBlendInTime = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.1"))
+	float ParryCounterFollowUpPlayRate = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	float ParryCounterFollowUpAttackRange = 300.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	float ParryCounterFollowUpFacingDuration = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	float ParryCounterFollowUpFacingInterpSpeed = 18.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
 	float ParrySuccessFacingDuration = 0.25f;
@@ -517,6 +597,27 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
 	float ParrySuccessFallbackRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	int32 ParrySuccessSequenceIndex = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	bool bNextParrySuccessUsesLeftMontage = true;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	bool bNextParryFrontUpUsesLeftMontage = true;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	bool bCurrentParryCounterUsesLeftMontage = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	bool bParryCounterStarted = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	bool bCurrentParryCounterPerfectParried = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	bool bParryCounterFollowUpStarted = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Recovery")
 	float RecoveryDuration = 0.4f;
@@ -651,8 +752,17 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Turn")
 	float IdleEntryYawTolerance = 15.f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Combat", meta = (ClampMin = "0.0"))
+	float PlayerPressureHoldDuration = 0.6f;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
 	EWukongCombatState CurrentCombatSubState = EWukongCombatState::Approach;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
+	EWukongInitiativeState InitiativeState = EWukongInitiativeState::Neutral;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
+	float PlayerPressureRemainTime = 0.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
 	float CombatSubStateElapsedTime = 0.f;

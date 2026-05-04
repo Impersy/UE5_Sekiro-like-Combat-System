@@ -62,10 +62,12 @@ void AJunPlayer::SetupCameraComponents()
 
 	SpringArm->bEnableCameraLag = true;
 	SpringArm->bEnableCameraRotationLag = false;
+	SpringArm->bDoCollisionTest = true;
 	SpringArm->CameraLagSpeed = 15.f;
 	
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(SpringArm);
+	Camera->SetFieldOfView(FreeCameraFOV);
 }
 
 void AJunPlayer::SetupMovementDefaults()
@@ -1501,11 +1503,14 @@ void AJunPlayer::ReceiveHit(
 	{
 	case EJunPlayerHitResolveResult::Ignored:
 		return;
-	case EJunPlayerHitResolveResult::ParrySuccess:
+	case EJunPlayerHitResolveResult::PerfectParrySuccess:
 		if (AJunMonster* AttackingMonster = Cast<AJunMonster>(DamageCauser))
 		{
 			AttackingMonster->NotifyAttackParriedBy(this);
 		}
+		StartParrySuccess();
+		return;
+	case EJunPlayerHitResolveResult::NormalParrySuccess:
 		StartParrySuccess();
 		return;
 	case EJunPlayerHitResolveResult::GuardBlock:
@@ -3643,7 +3648,11 @@ EJunPlayerHitResolveResult AJunPlayer::ResolveIncomingHitResult(EHitReactType In
 
 	if (bParryWindowOpen)
 	{
-		return EJunPlayerHitResolveResult::ParrySuccess;
+		const float PerfectParryRemainThreshold =
+			FMath::Max(0.f, DefaultParryWindowDuration - PerfectParryWindowDuration);
+		return ParryWindowRemainTime >= PerfectParryRemainThreshold
+			? EJunPlayerHitResolveResult::PerfectParrySuccess
+			: EJunPlayerHitResolveResult::NormalParrySuccess;
 	}
 
 	if (DefenseState == EJunDefenseState::Guarding)
@@ -3897,24 +3906,16 @@ UAnimMontage* AJunPlayer::GetHitReactMontage(EHitReactType HitType, ECharacterHi
 	}
 }
 
-UAnimMontage* AJunPlayer::GetParrySuccessMontage(const FVector& SwingDirection) const
+UAnimMontage* AJunPlayer::GetParrySuccessMontage(const FVector& SwingDirection)
 {
-	const FVector SafeSwingDirection = SwingDirection.GetSafeNormal();
-	if (SafeSwingDirection.IsNearlyZero())
-	{
-		return ParrySuccessR_UpMontage ? ParrySuccessR_UpMontage : ParrySuccessL_UpMontage;
-	}
-
-	const FVector LocalSwingDirection = GetActorTransform().InverseTransformVectorNoScale(SafeSwingDirection);
-	const bool bUseLeft = LocalSwingDirection.Y < 0.f;
-	const bool bUseUp = LocalSwingDirection.Z >= 0.f;
-
+	const bool bUseLeft = bNextParrySuccessUsesLeftMontage;
+	bNextParrySuccessUsesLeftMontage = !bNextParrySuccessUsesLeftMontage;
 	if (bUseLeft)
 	{
-		return bUseUp ? ParrySuccessL_UpMontage : ParrySuccessL_DownMontage;
+		return ParrySuccessL_UpMontage ? ParrySuccessL_UpMontage : ParrySuccessL_DownMontage;
 	}
 
-	return bUseUp ? ParrySuccessR_UpMontage : ParrySuccessR_DownMontage;
+	return ParrySuccessR_UpMontage ? ParrySuccessR_UpMontage : ParrySuccessR_DownMontage;
 }
 
 void AJunPlayer::StartParrySuccess()
@@ -4522,12 +4523,20 @@ void AJunPlayer::BeginGuardEnd()
 		return;
 	}
 
+	const bool bEndingGuardWhileMoving =
+		!FMath::IsNearlyZero(PendingMoveForward) ||
+		!FMath::IsNearlyZero(PendingMoveRight) ||
+		!FMath::IsNearlyZero(DesiredMoveForward) ||
+		!FMath::IsNearlyZero(DesiredMoveRight);
+	const float GuardStartBlendOutTime = bEndingGuardWhileMoving ? GuardStartToEndBlendOutTime : 0.f;
+	const float GuardEndBlendInTimeToUse = bEndingGuardWhileMoving ? GuardEndBlendInTime : 0.f;
 	AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnGuardStartMontageEnded);
 	AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnGuardEndMontageEnded);
-	AnimInstance->Montage_Stop(0.02f, GuardStartMontage);
+	AnimInstance->Montage_Stop(GuardStartBlendOutTime, GuardStartMontage);
 	AnimInstance->OnMontageEnded.AddDynamic(this, &AJunPlayer::OnGuardEndMontageEnded);
 
-	if (AnimInstance->Montage_Play(GuardEndMontage, CurrentDefensePlayRate) <= 0.f)
+	const FMontageBlendSettings GuardEndBlendSettings(GuardEndBlendInTimeToUse);
+	if (AnimInstance->Montage_PlayWithBlendSettings(GuardEndMontage, GuardEndBlendSettings, CurrentDefensePlayRate) <= 0.f)
 	{
 		AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnGuardEndMontageEnded);
 		FinishDefense();
@@ -4831,13 +4840,56 @@ void AJunPlayer::UpdateJunCamera(float DeltaTime)
 
 	if (CameraMode != EJunCameraMode::Execution)
 	{
+		const float TargetArmLength = GetPitchAdjustedSpringArmLength();
+		const bool bShouldShortenArm = TargetArmLength < SpringArm->TargetArmLength;
+
 		SpringArm->TargetArmLength = FMath::FInterpTo(
 			SpringArm->TargetArmLength,
-			DefaultSpringArmLength,
+			TargetArmLength,
 			DeltaTime,
-			ExecutionCameraArmLengthRestoreInterpSpeed
+			bShouldShortenArm ? PitchArmShortenInterpSpeed : ExecutionCameraArmLengthRestoreInterpSpeed
 		);
 	}
+
+	UpdateCameraFOV(DeltaTime);
+}
+
+void AJunPlayer::UpdateCameraFOV(float DeltaTime)
+{
+	if (!Camera)
+	{
+		return;
+	}
+
+	float TargetFOV = FreeCameraFOV;
+	if (CameraMode == EJunCameraMode::Execution)
+	{
+		TargetFOV = ExecutionCameraFOV;
+	}
+	else if (bLockOnActive)
+	{
+		TargetFOV = LockOnCameraFOV;
+	}
+
+	const float NewFOV = FMath::FInterpTo(
+		Camera->FieldOfView,
+		TargetFOV,
+		DeltaTime,
+		CameraFOVInterpSpeed
+	);
+
+	Camera->SetFieldOfView(NewFOV);
+}
+
+float AJunPlayer::GetPitchAdjustedSpringArmLength() const
+{
+	const float PitchAlpha = FMath::GetMappedRangeValueClamped(
+		FVector2D(PitchArmShortenStartPitch, PitchArmShortenEndPitch),
+		FVector2D(0.f, 1.f),
+		FMath::Max(TargetCameraPitch, 0.f)
+	);
+
+	return FMath::Lerp(DefaultSpringArmLength, PitchShortenedSpringArmLength, PitchAlpha);
 }
 
 void AJunPlayer::UpdateFreeCamera(float DeltaTime)
@@ -4984,7 +5036,7 @@ void AJunPlayer::UpdateLockOnCamera(float DeltaTime)
 		DesiredRot.Pitch = FMath::Lerp(CurrentRot.Pitch, DesiredRot.Pitch, 0.35f);
 	}
 
-	DesiredRot.Pitch = FMath::Clamp(DesiredRot.Pitch, MinCameraPitch, MaxCameraPitch);
+	DesiredRot.Pitch = FMath::Clamp(DesiredRot.Pitch, MinLockOnCameraPitch, MaxLockOnCameraPitch);
 
 	FRotator NewRot = FMath::RInterpTo(
 		CurrentRot,
@@ -5202,7 +5254,17 @@ FVector AJunPlayer::GetFilteredLockOnTargetPoint()
 
 	if (ZDelta >= LockOnTargetZIgnoreThreshold)
 	{
-		CachedLockOnTargetPoint.Z = RawPoint.Z;
+		const float ZInterpSpeed = RawPoint.Z > CachedLockOnTargetPoint.Z
+			? LockOnTargetZRiseInterpSpeed
+			: LockOnTargetZFallInterpSpeed;
+
+		const float DeltaTime = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.f;
+		CachedLockOnTargetPoint.Z = FMath::FInterpTo(
+			CachedLockOnTargetPoint.Z,
+			RawPoint.Z,
+			DeltaTime,
+			ZInterpSpeed
+		);
 	}
 
 	return CachedLockOnTargetPoint;

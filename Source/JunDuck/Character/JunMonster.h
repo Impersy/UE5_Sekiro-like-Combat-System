@@ -111,7 +111,7 @@ public:
 		const FVector& SwingDirection,
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData);
 	virtual void OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker) override;
-	void NotifyAttackParriedBy(class AJunPlayer* Parrier);
+	virtual void NotifyAttackParriedBy(class AJunPlayer* Parrier);
 	bool IsExecutionReady() const;
 	bool CanBeExecutedBy(const class AJunPlayer* Player) const;
 	bool TryBeginExecutionBy(class AJunPlayer* Player);
@@ -393,7 +393,7 @@ protected:
 	bool bRunLocomotionRequested = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement")
-	float CombatFacingInterpSpeed = 2.f;
+	float CombatFacingInterpSpeed = 7.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement")
 	float AttackFacingInterpSpeed = 8.f;
