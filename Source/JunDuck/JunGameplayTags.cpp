@@ -27,6 +27,7 @@ UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Defense_GuardReady, "Event.Notify.Defense.Gu
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Defense_EndBaseRelease, "Event.Notify.Defense.EndBaseRelease");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Defense_GuardHoldBegin, "Event.Notify.Defense.GuardHoldBegin");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Execution_Apply, "Event.Notify.Execution.Apply");
+UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Execution_FinishCameraPullIn, "Event.Notify.Execution.FinishCameraPullIn");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Execution_CameraRestore, "Event.Notify.Execution.CameraRestore");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Wukong_ParryCounter, "Event.Notify.Wukong.ParryCounter");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Wukong_ParryCounterFollowUpDecision, "Event.Notify.Wukong.ParryCounterFollowUpDecision");

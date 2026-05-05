@@ -292,6 +292,9 @@ protected: // Execution
 	void TriggerExecutionTargetMontage();
 	void FinishExecution();
 	void SetExecutionCapsuleCollisionIgnore(class AJunMonster* Monster, bool bIgnore);
+	void ReduceExecutionCapsuleRadius(class AJunMonster* Monster);
+	void RestoreExecutionCapsuleRadius(class AJunMonster* Monster);
+	class UAnimMontage* GetExecutionMontageForTarget(const class AJunMonster* Monster) const;
 
 	UFUNCTION()
 	void OnExecutionMontageEnded(UAnimMontage* Montage, bool bInterrupted);
@@ -402,7 +405,16 @@ protected: // Camera
 	void StartExecutionCamera(class AJunMonster* Monster);
 	void EndExecutionCamera();
 	void AdvanceExecutionCameraStage();
+	void AdvanceExecutionFinishCameraPullInStage();
 	void UpdateExecutionCamera(float DeltaTime);
+	FVector GetCurrentExecutionCameraSocketOffset() const;
+	float GetCurrentExecutionCameraFOV() const;
+	float GetCurrentExecutionCameraArmLength() const;
+	float GetCurrentExecutionCameraApplyArmLength() const;
+	float GetCurrentExecutionCameraRotationInterpSpeed() const;
+	float GetCurrentExecutionCameraArmLengthInterpSpeed() const;
+	float GetCurrentExecutionCameraArmLengthRestoreInterpSpeed() const;
+	float GetCurrentExecutionCameraPitchOffset() const;
 	void UpdateLockOnCharacterRotation(float DeltaTime);
 	FVector GetRawLockOnBonePoint() const;
 	FVector GetLockOnDebugSpherePoint();
@@ -481,6 +493,15 @@ protected: // Runtime Camera State
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|Execution")
 	bool bExecutionCameraSecondStage = false;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|Execution")
+	bool bExecutionCameraFinishPullInStage = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|Execution")
+	bool bCurrentExecutionIsFinish = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|Execution")
+	bool bExecutionCameraRestoreUsesFinishTuning = false;
+
 protected: // Runtime Combat / Defense State
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BasicAttack")
 	bool bIsBasicAttacking = false;
@@ -552,6 +573,9 @@ protected: // Runtime Combat / Defense State
 	bool bBasicAttackComboAdvanceStateActive = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BasicAttack")
+	bool bCanRestartBasicAttackAfterComboAdvance = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BasicAttack")
 	EJunBufferedRecoveryAction BufferedBasicAttackRecoveryAction = EJunBufferedRecoveryAction::None;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BasicAttack")
@@ -595,6 +619,15 @@ protected: // Runtime Combat / Defense State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
 	TObjectPtr<class AJunMonster> CurrentExecutionTarget = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	TObjectPtr<class UAnimMontage> CurrentExecutionMontage = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	float SavedExecutionCapsuleRadius = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	bool bExecutionCapsuleRadiusReduced = false;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float ForwardDodgePlayRate = 1.2f;
@@ -804,10 +837,10 @@ protected: // Runtime Combat / Defense State
 	EJunBufferedParrySuccessCancelAction BufferedParrySuccessCancelAction = EJunBufferedParrySuccessCancelAction::None;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
-	int32 ParrySuccessSequenceIndex = 0;
+	bool bHasSelectedInitialParrySuccessSide = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
-	bool bNextParrySuccessUsesLeftMontage = true;
+	bool bNextParrySuccessUsesLeftSide = true;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	float KnockbackBrakingOverrideRemainTime = 0.f;
@@ -908,6 +941,9 @@ protected: // Camera Tuning
 	float ExecutionCameraFOV = 75.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera")
+	float ExecutionFinishCameraFOV = 75.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera")
 	float CameraFOVInterpSpeed = 6.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
@@ -946,23 +982,47 @@ protected: // Camera Tuning
 	UPROPERTY(EditDefaultsOnly, Category = "Camera|Execution")
 	FVector ExecutionCameraSocketOffset = FVector(0.f, 25.f, 0.f);
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
-	float ExecutionCameraArmLength = 380.f;
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Execution")
+	FVector ExecutionFinishCameraSocketOffset = FVector(0.f, 25.f, 0.f);
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
-	float ExecutionCameraApplyArmLength = 200.f;
+	float ExecutionCameraArmLength = 280.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
+	float ExecutionFinishCameraArmLength = 350.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
+	float ExecutionCameraApplyArmLength = 100.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
+	float ExecutionFinishCameraApplyArmLength = 200.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
+	float ExecutionFinishCameraPullInArmLength = 100.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
 	float ExecutionCameraRotationInterpSpeed = 9.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
-	float ExecutionCameraArmLengthInterpSpeed = 6.f;
+	float ExecutionFinishCameraRotationInterpSpeed = 9.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
+	float ExecutionCameraArmLengthInterpSpeed = 9.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
+	float ExecutionFinishCameraArmLengthInterpSpeed = 8.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
 	float ExecutionCameraArmLengthRestoreInterpSpeed = 5.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
+	float ExecutionFinishCameraArmLengthRestoreInterpSpeed = 5.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
 	float ExecutionCameraPitchOffset = -10.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
+	float ExecutionFinishCameraPitchOffset = -10.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
     float LockOnRotationInterpSpeed = 7.5f;
@@ -1341,6 +1401,9 @@ protected: // Attack / Defense Tuning
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
 	float BasicAttackHeavyAttackCancelBlendOutTime = 0.12f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
+	float BasicAttackRestartBlendOutTime = 0.08f;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BasicAttack")
 	float BasicAttackSectionElapsedTime = 0.f;
 
@@ -1404,6 +1467,9 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution")
 	TObjectPtr<class UAnimMontage> ExecutionMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution")
+	TObjectPtr<class UAnimMontage> ExecutionFinishMontage;
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|LockOn")
 	TObjectPtr<class UAnimMontage> LockOnDodgeRightMontage;

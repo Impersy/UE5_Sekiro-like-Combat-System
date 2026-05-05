@@ -215,7 +215,7 @@ void AJunPlayerController::UpdateLockOnMarkerWidget(AJunCharacter* CurrentLockOn
 	LockOnMarkerWidget->SetLockOnMarkerVisible(bShowLockOnMarker);
 
 	const AJunMonster* LockOnMonster = Cast<AJunMonster>(CurrentLockOnTarget);
-	LockOnMarkerWidget->SetExecutionReadyMarkerVisible(bShowLockOnMarker && LockOnMonster && LockOnMonster->CanBeExecutedBy(JunPlayer));
+	LockOnMarkerWidget->SetExecutionReadyMarkerVisible(bShowLockOnMarker && LockOnMonster && LockOnMonster->IsExecutionReady());
 }
 
 void AJunPlayerController::Input_Move(const FInputActionValue& InputValue)

@@ -94,6 +94,7 @@ UCLASS()
 class JUNDUCK_API AJunMonster : public AJunCharacter
 {
 	GENERATED_BODY()
+	friend class AJunPlayer;
 
 public:
 	// Engine / external entry points
@@ -118,6 +119,7 @@ public:
 	void TriggerPendingExecutionMontage();
 	void CancelPendingExecution();
 	void RestoreExecutionCapsuleCollisionIgnore();
+	void RestoreExecutionCapsuleRadius();
 	bool ShouldIgnoreExecutorCapsuleCollisionDuringExecution() const { return bIgnoreExecutorCapsuleCollisionDuringExecution; }
 	bool HasExecutionResultApplied() const;
 	void HandleEquipWeaponNotify();
@@ -133,6 +135,7 @@ public:
 	EMonsterMoveState GetMoveState() const;
 	int32 GetCurrentLifeCount() const;
 	int32 GetMaxLifeCount() const;
+	bool IsFinalExecution() const;
 	float GetCurrentPosture() const;
 	float GetMaxPosture() const;
 	FVector2D GetCombatMoveInput() const;
@@ -469,6 +472,9 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0"))
 	float ExecutionInteractRange = 180.f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0", ClampMax = "180"))
+	float ExecutionFrontAngle = 70.f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution")
 	bool bIgnoreExecutorCapsuleCollisionDuringExecution = false;
 
@@ -480,6 +486,9 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution")
 	TObjectPtr<class UAnimMontage> ExecutedDeathMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution")
+	TObjectPtr<class UAnimMontage> ExecutedFinishMontage = nullptr;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
 	bool bExecutionReady = false;
@@ -498,6 +507,12 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
 	TObjectPtr<class UAnimMontage> CurrentExecutionMontage = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	float SavedExecutionCapsuleRadius = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	bool bExecutionCapsuleRadiusReduced = false;
 
 	FTimerHandle ExecutionRecoveryTimerHandle;
 

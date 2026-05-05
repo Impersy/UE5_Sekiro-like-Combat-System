@@ -193,6 +193,8 @@ namespace
 AWukongBoss::AWukongBoss()
 {
 	MaxLifeCount = 3;
+	MaxPosture = 30.f;
+	bDisablePostureGain = false;
 	bStartWithCutsceneWait = true;
 	bStartWithPatrol = false;
 
@@ -276,6 +278,11 @@ void AWukongBoss::HandleGameplayEventNotify(FGameplayTag EventTag)
 	{
 		TryStartParryCounterFollowUp();
 	}
+}
+
+void AWukongBoss::HandleHitTurnDecisionPoint()
+{
+	TryStartHitReactTurnTransition(true);
 }
 
 void AWukongBoss::UpdateCombat(float DeltaTime)
@@ -861,7 +868,7 @@ void AWukongBoss::UpdateIdleState(float DeltaTime)
 		StopAIMovement();
 		SetDesiredMoveAxes(0.f, 0.f);
 		bRunLocomotionRequested = false;
-		UpdateFacingTowardsTargetWithoutTurn(DeltaTime, CombatFacingInterpSpeed);
+		TryStartOrWaitForWukongTurn(TurnStartAngle);
 		return;
 	}
 
@@ -1225,6 +1232,52 @@ bool AWukongBoss::TryStartOrWaitForWukongTurn(float YawThreshold)
 	CombatMoveInput = FVector2D::ZeroVector;
 	SetDesiredMoveAxes(0.f, 0.f);
 	bRunLocomotionRequested = false;
+	return true;
+}
+
+bool AWukongBoss::ShouldTurnAfterHitReact(ECharacterHitReactDirection HitDirection) const
+{
+	if (!CurrentTarget || GetTargetYawAbsDelta() < TurnStartAngle)
+	{
+		return false;
+	}
+
+	return HitDirection == ECharacterHitReactDirection::Left_L ||
+		HitDirection == ECharacterHitReactDirection::Right_R ||
+		HitDirection == ECharacterHitReactDirection::Back_B;
+}
+
+bool AWukongBoss::TryStartHitReactTurnTransition(bool bStopHitReactMontage)
+{
+	if (CurrentState != EMonsterState::Combat ||
+		CurrentCombatSubState != EWukongCombatState::Hit ||
+		!IsInHitReact() ||
+		!ShouldTurnAfterHitReact(LastHitReactDirectionForTurn))
+	{
+		return false;
+	}
+
+	if (bStopHitReactMontage)
+	{
+		if (UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+		{
+			if (UAnimMontage* ActiveMontage = AnimInstance->GetCurrentActiveMontage())
+			{
+				AnimInstance->Montage_Stop(HitReactTurnBlendOutTime, ActiveMontage);
+			}
+		}
+	}
+
+	StopAIMovement();
+	CombatMoveInput = FVector2D::ZeroVector;
+	SetDesiredMoveAxes(0.f, 0.f);
+	bRunLocomotionRequested = false;
+
+	bHitReactTurnTransitionInProgress = true;
+	EndHitReact();
+	bHitReactTurnTransitionInProgress = false;
+
+	SetWukongCombatState(EWukongCombatState::Turn);
 	return true;
 }
 
@@ -2119,19 +2172,55 @@ bool AWukongBoss::CanParryIncomingHit(EHitReactType HitType, AActor* DamageCause
 
 UAnimMontage* AWukongBoss::GetParrySuccessMontage(const FVector& SwingDirection)
 {
-	const bool bUseLeft = bNextParrySuccessUsesLeftMontage;
-	bNextParrySuccessUsesLeftMontage = !bNextParrySuccessUsesLeftMontage;
-	bCurrentParryCounterUsesLeftMontage = bUseLeft;
-	if (bUseLeft)
+	if (!bHasSelectedInitialParrySuccessSide)
 	{
-		return ParrySuccessLUpMontage ? ParrySuccessLUpMontage : ParrySuccessLDownMontage;
+		bNextParrySuccessUsesLeftSide = FMath::RandBool();
+		bHasSelectedInitialParrySuccessSide = true;
 	}
 
-	return ParrySuccessRUpMontage ? ParrySuccessRUpMontage : ParrySuccessRDownMontage;
+	const bool bUseLeft = bNextParrySuccessUsesLeftSide;
+	bNextParrySuccessUsesLeftSide = !bNextParrySuccessUsesLeftSide;
+	const bool bUseUp = FMath::RandBool();
+
+	UAnimMontage* SelectedMontage = nullptr;
+	if (bUseLeft)
+	{
+		SelectedMontage = bUseUp
+			? (ParrySuccessLUpMontage ? ParrySuccessLUpMontage.Get() : ParrySuccessLDownMontage.Get())
+			: (ParrySuccessLDownMontage ? ParrySuccessLDownMontage.Get() : ParrySuccessLUpMontage.Get());
+	}
+	else
+	{
+		SelectedMontage = bUseUp
+			? (ParrySuccessRUpMontage ? ParrySuccessRUpMontage.Get() : ParrySuccessRDownMontage.Get())
+			: (ParrySuccessRDownMontage ? ParrySuccessRDownMontage.Get() : ParrySuccessRUpMontage.Get());
+	}
+
+	bCurrentParryCounterUsesLeftMontage =
+		SelectedMontage == ParrySuccessLUpMontage.Get() ||
+		SelectedMontage == ParrySuccessLDownMontage.Get();
+	bCurrentParryCounterUsesDownMontage =
+		SelectedMontage == ParrySuccessLDownMontage.Get() ||
+		SelectedMontage == ParrySuccessRDownMontage.Get();
+	return SelectedMontage;
 }
 
 UAnimMontage* AWukongBoss::GetParryCounterMontage() const
 {
+	if (bCurrentParryCounterUsesDownMontage)
+	{
+		if (bCurrentParryCounterUsesLeftMontage)
+		{
+			return ParryCounterDownLeftMontage
+				? ParryCounterDownLeftMontage.Get()
+				: (ParryCounterLeftMontage ? ParryCounterLeftMontage.Get() : ParryCounterRightMontage.Get());
+		}
+
+		return ParryCounterDownRightMontage
+			? ParryCounterDownRightMontage.Get()
+			: (ParryCounterRightMontage ? ParryCounterRightMontage.Get() : ParryCounterLeftMontage.Get());
+	}
+
 	if (bCurrentParryCounterUsesLeftMontage)
 	{
 		return ParryCounterLeftMontage ? ParryCounterLeftMontage.Get() : ParryCounterRightMontage.Get();
@@ -2142,6 +2231,11 @@ UAnimMontage* AWukongBoss::GetParryCounterMontage() const
 
 UAnimMontage* AWukongBoss::GetParryCounterFollowUpMontage() const
 {
+	if (bCurrentParryCounterUsesDownMontage)
+	{
+		return nullptr;
+	}
+
 	if (bCurrentParryCounterUsesLeftMontage)
 	{
 		return ParryCounterFollowUpLeftMontage
@@ -2159,11 +2253,6 @@ void AWukongBoss::StartParrySuccessAgainstIncomingHit(
 	const FVector& SwingDirection,
 	const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
 {
-	const FVector SafeSwingDirection = SwingDirection.GetSafeNormal();
-	const FVector LocalSwingDirection = SafeSwingDirection.IsNearlyZero()
-		? FVector::ZeroVector
-		: GetActorTransform().InverseTransformVectorNoScale(SafeSwingDirection);
-	bCurrentParryCounterUsesLeftMontage = LocalSwingDirection.Y < 0.f;
 	bParryCounterStarted = false;
 	bCurrentParryCounterPerfectParried = false;
 	bParryCounterFollowUpStarted = false;
@@ -2504,6 +2593,7 @@ float AWukongBoss::GetHitReactControlLockDuration(EHitReactType HitType) const
 void AWukongBoss::OnHitReactStarted(EHitReactType NewHitReact, ECharacterHitReactDirection NewHitDirection)
 {
 	Super::OnHitReactStarted(NewHitReact, NewHitDirection);
+	LastHitReactDirectionForTurn = NewHitDirection;
 
 	if (CurrentState == EMonsterState::Combat)
 	{
@@ -2531,6 +2621,11 @@ void AWukongBoss::OnHitReactEnded(EHitReactType EndedHitReact)
 {
 	Super::OnHitReactEnded(EndedHitReact);
 
+	if (bHitReactTurnTransitionInProgress)
+	{
+		return;
+	}
+
 	const bool bWasHeavy =
 		EndedHitReact == EHitReactType::HeavyHit_A ||
 		EndedHitReact == EHitReactType::HeavyHit_B ||
@@ -2547,9 +2642,7 @@ void AWukongBoss::OnHitReactEnded(EHitReactType EndedHitReact)
 	{
 		ResetPlannedCombatPlan();
 
-		if (CurrentHitReactDirection == ECharacterHitReactDirection::Back_B &&
-			CurrentTarget &&
-			GetTargetYawAbsDelta() >= TurnStartAngle)
+		if (ShouldTurnAfterHitReact(LastHitReactDirectionForTurn))
 		{
 			StopAIMovement();
 			CombatMoveInput = FVector2D::ZeroVector;
@@ -2559,7 +2652,7 @@ void AWukongBoss::OnHitReactEnded(EHitReactType EndedHitReact)
 			return;
 		}
 
-		if (TryReactToHitDirection(CurrentHitReactDirection))
+		if (TryReactToHitDirection(LastHitReactDirectionForTurn))
 		{
 			SetWukongCombatState(EWukongCombatState::Idle);
 			return;

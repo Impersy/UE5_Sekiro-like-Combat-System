@@ -300,6 +300,7 @@ public:
 	void BeginAttackSuperArmorWindow();
 	void EndAttackSuperArmorWindow();
 	void HandleComboDecisionPoint();
+	void HandleHitTurnDecisionPoint();
 	virtual void NotifyAttackParriedBy(class AJunPlayer* Parrier) override;
 
 protected:
@@ -347,6 +348,8 @@ protected:
 
 	bool CanStartWukongTurn() const;
 	bool TryStartOrWaitForWukongTurn(float YawThreshold);
+	bool TryStartHitReactTurnTransition(bool bStopHitReactMontage);
+	bool ShouldTurnAfterHitReact(ECharacterHitReactDirection HitDirection) const;
 	bool HasAnyAttackCandidateForCurrentDistance() const;
 	bool HasValidPlannedAttack() const;
 	bool HasValidPlannedMovement() const;
@@ -533,6 +536,12 @@ protected:
 	TObjectPtr<class UAnimMontage> ParryCounterRightMontage = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
+	TObjectPtr<class UAnimMontage> ParryCounterDownLeftMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
+	TObjectPtr<class UAnimMontage> ParryCounterDownRightMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
 	TObjectPtr<class UAnimMontage> ParryCounterFollowUpLeftMontage = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
@@ -599,16 +608,19 @@ protected:
 	float ParrySuccessFallbackRemainTime = 0.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
-	int32 ParrySuccessSequenceIndex = 0;
+	bool bHasSelectedInitialParrySuccessSide = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
-	bool bNextParrySuccessUsesLeftMontage = true;
+	bool bNextParrySuccessUsesLeftSide = true;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
 	bool bNextParryFrontUpUsesLeftMontage = true;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
 	bool bCurrentParryCounterUsesLeftMontage = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	bool bCurrentParryCounterUsesDownMontage = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
 	bool bParryCounterStarted = false;
@@ -725,13 +737,22 @@ protected:
 	FWukongReactiveActionTuningData ReactiveBackwardEvade;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|HitReact")
-	float WukongLightHitDuration = 0.3f;
+	float WukongLightHitDuration = 0.4f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|HitReact")
-	float WukongLargeHitDuration = 0.5f;
+	float WukongLargeHitDuration = 0.6f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|HitReact")
-	float WukongLargeHitLongDuration = 0.9f;
+	float WukongLargeHitLongDuration = 0.8f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|HitReact")
+	float HitReactTurnBlendOutTime = 0.25f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|HitReact")
+	ECharacterHitReactDirection LastHitReactDirectionForTurn = ECharacterHitReactDirection::Front_F;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|HitReact")
+	bool bHitReactTurnTransitionInProgress = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|HitReact")
 	float WukongHeavyHitControlLockDuration = 0.55f;

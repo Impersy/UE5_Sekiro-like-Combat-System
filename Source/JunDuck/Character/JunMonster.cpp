@@ -399,7 +399,21 @@ bool AJunMonster::CanBeExecutedBy(const AJunPlayer* Player) const
 	}
 
 	const float Range = FMath::Max(ExecutionInteractRange, 0.f);
-	return FVector::DistSquared2D(GetActorLocation(), Player->GetActorLocation()) <= FMath::Square(Range);
+	if (FVector::DistSquared2D(GetActorLocation(), Player->GetActorLocation()) > FMath::Square(Range))
+	{
+		return false;
+	}
+
+	FVector ToPlayer = Player->GetActorLocation() - GetActorLocation();
+	ToPlayer.Z = 0.f;
+	if (ToPlayer.IsNearlyZero())
+	{
+		return true;
+	}
+
+	const float FrontDot = FVector::DotProduct(GetActorForwardVector().GetSafeNormal2D(), ToPlayer.GetSafeNormal());
+	const float MinFrontDot = FMath::Cos(FMath::DegreesToRadians(FMath::Clamp(ExecutionFrontAngle, 0.f, 180.f)));
+	return FrontDot >= MinFrontDot;
 }
 
 bool AJunMonster::TryBeginExecutionBy(AJunPlayer* Player)
@@ -448,7 +462,9 @@ void AJunMonster::TriggerPendingExecutionMontage()
 	Hp = 0;
 
 	const bool bFinalExecution = CurrentLifeCount <= 0;
-	UAnimMontage* MontageToPlay = bFinalExecution ? ExecutedDeathMontage.Get() : ExecutedMontage.Get();
+	UAnimMontage* MontageToPlay = bFinalExecution
+		? (ExecutedFinishMontage ? ExecutedFinishMontage.Get() : ExecutedDeathMontage.Get())
+		: ExecutedMontage.Get();
 
 	if (MontageToPlay)
 	{
@@ -487,6 +503,7 @@ void AJunMonster::CancelPendingExecution()
 	}
 
 	RestoreExecutionCapsuleCollisionIgnore();
+	RestoreExecutionCapsuleRadius();
 	bBeingExecuted = false;
 	ExecutionReadyRemainTime = 0.f;
 	CurrentPosture = 0.f;
@@ -520,6 +537,20 @@ void AJunMonster::RestoreExecutionCapsuleCollisionIgnore()
 	{
 		PlayerCapsule->IgnoreActorWhenMoving(this, false);
 	}
+}
+
+void AJunMonster::RestoreExecutionCapsuleRadius()
+{
+	if (UCapsuleComponent* MonsterCapsule = GetCapsuleComponent())
+	{
+		if (bExecutionCapsuleRadiusReduced && SavedExecutionCapsuleRadius > 0.f)
+		{
+			MonsterCapsule->SetCapsuleRadius(SavedExecutionCapsuleRadius, true);
+		}
+	}
+
+	SavedExecutionCapsuleRadius = 0.f;
+	bExecutionCapsuleRadiusReduced = false;
 }
 
 bool AJunMonster::HasExecutionResultApplied() const
@@ -591,6 +622,11 @@ int32 AJunMonster::GetCurrentLifeCount() const
 int32 AJunMonster::GetMaxLifeCount() const
 {
 	return MaxLifeCount;
+}
+
+bool AJunMonster::IsFinalExecution() const
+{
+	return CurrentLifeCount <= 1;
 }
 
 float AJunMonster::GetCurrentPosture() const
@@ -2595,6 +2631,7 @@ void AJunMonster::FinishExecutionRecovery()
 	}
 
 	RestoreExecutionCapsuleCollisionIgnore();
+	RestoreExecutionCapsuleRadius();
 	Hp = MaxHp;
 	bBeingExecuted = false;
 	bExecutionResultApplied = false;
@@ -2695,6 +2732,7 @@ void AJunMonster::UpdateExecutionFacing(float DeltaTime)
 void AJunMonster::ResetExecutionRuntimeState()
 {
 	RestoreExecutionCapsuleCollisionIgnore();
+	RestoreExecutionCapsuleRadius();
 	bExecutionReady = false;
 	bBeingExecuted = false;
 	bExecutionResultApplied = false;

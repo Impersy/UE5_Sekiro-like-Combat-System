@@ -608,7 +608,19 @@ void AJunPlayer::HandleGameplayEventNotify(FGameplayTag EventTag)
 	else if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Execution_Apply))
 	{
 		AdvanceExecutionCameraStage();
+		if (bCurrentExecutionIsFinish && bLockOnActive)
+		{
+			EndLockOn();
+			if (bIsExecuting && ExecutionCameraTarget)
+			{
+				CameraMode = EJunCameraMode::Execution;
+			}
+		}
 		TriggerExecutionTargetMontage();
+	}
+	else if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Execution_FinishCameraPullIn))
+	{
+		AdvanceExecutionFinishCameraPullInStage();
 	}
 	else if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Execution_CameraRestore))
 	{
@@ -681,6 +693,13 @@ void AJunPlayer::BasicAttack()
 	if (bCanBufferBasicAttackComboInput)
 	{
 		bBufferedBasicAttackComboInput = true;
+		return;
+	}
+
+	if (bCanRestartBasicAttackAfterComboAdvance)
+	{
+		CancelBasicAttackForRecoveryTransition(BasicAttackRestartBlendOutTime);
+		StartBasicAttack();
 		return;
 	}
 
@@ -1543,6 +1562,7 @@ void AJunPlayer::OnBasicAttackComboAdvanceStateBegin()
 {
 	bBasicAttackComboAdvanceStateActive = true;
 	bCanBufferBasicAttackComboInput = false;
+	bCanRestartBasicAttackAfterComboAdvance = false;
 
 	if (bBufferedBasicAttackComboInput)
 	{
@@ -1554,6 +1574,7 @@ void AJunPlayer::OnBasicAttackComboAdvanceStateEnd()
 {
 	bBasicAttackComboAdvanceStateActive = false;
 	bBufferedBasicAttackComboInput = false;
+	bCanRestartBasicAttackAfterComboAdvance = bIsBasicAttacking;
 }
 
 void AJunPlayer::UpdateDodgeState(float DeltaTime)
@@ -2984,7 +3005,7 @@ bool AJunPlayer::TryStartExecution()
 bool AJunPlayer::CanStartExecution(const AJunMonster* Monster) const
 {
 	return Monster
-		&& ExecutionMontage
+		&& GetExecutionMontageForTarget(Monster)
 		&& AnimInstance
 		&& Monster->CanBeExecutedBy(this);
 }
@@ -3006,8 +3027,11 @@ void AJunPlayer::StartExecution(AJunMonster* Monster)
 
 	bIsExecuting = true;
 	CurrentExecutionTarget = Monster;
+	bCurrentExecutionIsFinish = Monster->IsFinalExecution();
+	CurrentExecutionMontage = GetExecutionMontageForTarget(Monster);
 	TargetActor = Monster;
 	SetExecutionCapsuleCollisionIgnore(Monster, true);
+	ReduceExecutionCapsuleRadius(Monster);
 	StartExecutionCamera(Monster);
 
 	const FVector ToTarget = Monster->GetActorLocation() - GetActorLocation();
@@ -3025,7 +3049,7 @@ void AJunPlayer::StartExecution(AJunMonster* Monster)
 
 	AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnExecutionMontageEnded);
 	AnimInstance->OnMontageEnded.AddDynamic(this, &AJunPlayer::OnExecutionMontageEnded);
-	PlayAnimMontage(ExecutionMontage);
+	PlayAnimMontage(CurrentExecutionMontage);
 }
 
 void AJunPlayer::TriggerExecutionTargetMontage()
@@ -3053,12 +3077,15 @@ void AJunPlayer::FinishExecution()
 	bIsExecuting = false;
 	EndAttackFacingWindow();
 	EndExecutionCamera();
+	bCurrentExecutionIsFinish = false;
 	if (CurrentExecutionTarget && !CurrentExecutionTarget->HasExecutionResultApplied())
 	{
 		CurrentExecutionTarget->CancelPendingExecution();
 	}
 	SetExecutionCapsuleCollisionIgnore(CurrentExecutionTarget.Get(), false);
+	RestoreExecutionCapsuleRadius(CurrentExecutionTarget.Get());
 	CurrentExecutionTarget = nullptr;
+	CurrentExecutionMontage = nullptr;
 
 	RemoveGameplayTag(JunGameplayTags::State_Action_Attack);
 	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
@@ -3070,12 +3097,22 @@ void AJunPlayer::FinishExecution()
 
 void AJunPlayer::OnExecutionMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
-	if (Montage != ExecutionMontage)
+	if (Montage != CurrentExecutionMontage)
 	{
 		return;
 	}
 
 	FinishExecution();
+}
+
+UAnimMontage* AJunPlayer::GetExecutionMontageForTarget(const AJunMonster* Monster) const
+{
+	if (Monster && Monster->IsFinalExecution())
+	{
+		return ExecutionFinishMontage ? ExecutionFinishMontage.Get() : ExecutionMontage.Get();
+	}
+
+	return ExecutionMontage.Get();
 }
 
 void AJunPlayer::SetExecutionCapsuleCollisionIgnore(AJunMonster* Monster, bool bIgnore)
@@ -3098,6 +3135,55 @@ void AJunPlayer::SetExecutionCapsuleCollisionIgnore(AJunMonster* Monster, bool b
 	if (UCapsuleComponent* MonsterCapsule = Monster->GetCapsuleComponent())
 	{
 		MonsterCapsule->IgnoreActorWhenMoving(this, bIgnore);
+	}
+}
+
+void AJunPlayer::ReduceExecutionCapsuleRadius(AJunMonster* Monster)
+{
+	if (UCapsuleComponent* PlayerCapsule = GetCapsuleComponent())
+	{
+		if (!bExecutionCapsuleRadiusReduced)
+		{
+			SavedExecutionCapsuleRadius = PlayerCapsule->GetUnscaledCapsuleRadius();
+			bExecutionCapsuleRadiusReduced = true;
+		}
+
+		PlayerCapsule->SetCapsuleRadius(SavedExecutionCapsuleRadius / 3.f, true);
+	}
+
+	if (!Monster)
+	{
+		return;
+	}
+
+	if (UCapsuleComponent* MonsterCapsule = Monster->GetCapsuleComponent())
+	{
+		if (!Monster->bExecutionCapsuleRadiusReduced)
+		{
+			Monster->SavedExecutionCapsuleRadius = MonsterCapsule->GetUnscaledCapsuleRadius();
+			Monster->bExecutionCapsuleRadiusReduced = true;
+		}
+
+		MonsterCapsule->SetCapsuleRadius(Monster->SavedExecutionCapsuleRadius / 3.f, true);
+	}
+}
+
+void AJunPlayer::RestoreExecutionCapsuleRadius(AJunMonster* Monster)
+{
+	if (UCapsuleComponent* PlayerCapsule = GetCapsuleComponent())
+	{
+		if (bExecutionCapsuleRadiusReduced && SavedExecutionCapsuleRadius > 0.f)
+		{
+			PlayerCapsule->SetCapsuleRadius(SavedExecutionCapsuleRadius, true);
+		}
+	}
+
+	SavedExecutionCapsuleRadius = 0.f;
+	bExecutionCapsuleRadiusReduced = false;
+
+	if (Monster)
+	{
+		Monster->RestoreExecutionCapsuleRadius();
 	}
 }
 
@@ -3164,6 +3250,7 @@ void AJunPlayer::FinishBasicAttack()
 	bCanBufferBasicAttackComboInput = false;
 	bBufferedBasicAttackComboInput = false;
 	bBasicAttackComboAdvanceStateActive = false;
+	bCanRestartBasicAttackAfterComboAdvance = false;
 	BufferedBasicAttackRecoveryAction = EJunBufferedRecoveryAction::None;
 	PostBasicAttackJumpDodgeBufferRemainTime = PostBasicAttackJumpDodgeBufferDuration;
 	PostBasicAttackDefenseBufferRemainTime = PostBasicAttackDefenseBufferDuration;
@@ -3191,6 +3278,7 @@ void AJunPlayer::StartBasicAttack()
 	bCanBufferBasicAttackComboInput = false;
 	bBufferedBasicAttackComboInput = false;
 	bBasicAttackComboAdvanceStateActive = false;
+	bCanRestartBasicAttackAfterComboAdvance = false;
 	BufferedBasicAttackRecoveryAction = EJunBufferedRecoveryAction::None;
 	PostBasicAttackJumpDodgeBufferRemainTime = 0.f;
 	PostBasicAttackDefenseBufferRemainTime = 0.f;
@@ -3229,6 +3317,9 @@ void AJunPlayer::TryAdvanceBasicAttackCombo()
 	case 3:
 		NextSectionName = FName("4");
 		break;
+	case 4:
+		NextSectionName = FName("1");
+		break;
 	default:
 		return;
 	}
@@ -3236,7 +3327,8 @@ void AJunPlayer::TryAdvanceBasicAttackCombo()
 	bBufferedBasicAttackComboInput = false;
 	bCanBufferBasicAttackComboInput = false;
 	bBasicAttackComboAdvanceStateActive = false;
-	BasicAttackComboIndex++;
+	bCanRestartBasicAttackAfterComboAdvance = false;
+	BasicAttackComboIndex = BasicAttackComboIndex >= 4 ? 1 : BasicAttackComboIndex + 1;
 	BasicAttackSectionElapsedTime = 0.f;
 
 	TargetActor = LockOnTarget ? LockOnTarget.Get() : FindBestAttackTarget();
@@ -3908,14 +4000,26 @@ UAnimMontage* AJunPlayer::GetHitReactMontage(EHitReactType HitType, ECharacterHi
 
 UAnimMontage* AJunPlayer::GetParrySuccessMontage(const FVector& SwingDirection)
 {
-	const bool bUseLeft = bNextParrySuccessUsesLeftMontage;
-	bNextParrySuccessUsesLeftMontage = !bNextParrySuccessUsesLeftMontage;
-	if (bUseLeft)
+	if (!bHasSelectedInitialParrySuccessSide)
 	{
-		return ParrySuccessL_UpMontage ? ParrySuccessL_UpMontage : ParrySuccessL_DownMontage;
+		bNextParrySuccessUsesLeftSide = FMath::RandBool();
+		bHasSelectedInitialParrySuccessSide = true;
 	}
 
-	return ParrySuccessR_UpMontage ? ParrySuccessR_UpMontage : ParrySuccessR_DownMontage;
+	const bool bUseLeft = bNextParrySuccessUsesLeftSide;
+	bNextParrySuccessUsesLeftSide = !bNextParrySuccessUsesLeftSide;
+	const bool bUseUp = FMath::RandBool();
+
+	if (bUseLeft)
+	{
+		return bUseUp
+			? (ParrySuccessL_UpMontage ? ParrySuccessL_UpMontage : ParrySuccessL_DownMontage)
+			: (ParrySuccessL_DownMontage ? ParrySuccessL_DownMontage : ParrySuccessL_UpMontage);
+	}
+
+	return bUseUp
+		? (ParrySuccessR_UpMontage ? ParrySuccessR_UpMontage : ParrySuccessR_DownMontage)
+		: (ParrySuccessR_DownMontage ? ParrySuccessR_DownMontage : ParrySuccessR_UpMontage);
 }
 
 void AJunPlayer::StartParrySuccess()
@@ -4817,7 +4921,7 @@ void AJunPlayer::UpdateJunCamera(float DeltaTime)
 	FVector TargetSocketOffset = FreeCameraSocketOffset;
 	if (CameraMode == EJunCameraMode::Execution)
 	{
-		TargetSocketOffset = ExecutionCameraSocketOffset;
+		TargetSocketOffset = GetCurrentExecutionCameraSocketOffset();
 	}
 	else if (bLockOnActive)
 	{
@@ -4847,8 +4951,13 @@ void AJunPlayer::UpdateJunCamera(float DeltaTime)
 			SpringArm->TargetArmLength,
 			TargetArmLength,
 			DeltaTime,
-			bShouldShortenArm ? PitchArmShortenInterpSpeed : ExecutionCameraArmLengthRestoreInterpSpeed
+			bShouldShortenArm ? PitchArmShortenInterpSpeed : GetCurrentExecutionCameraArmLengthRestoreInterpSpeed()
 		);
+
+		if (FMath::IsNearlyEqual(SpringArm->TargetArmLength, TargetArmLength, 1.f))
+		{
+			bExecutionCameraRestoreUsesFinishTuning = false;
+		}
 	}
 
 	UpdateCameraFOV(DeltaTime);
@@ -4864,7 +4973,7 @@ void AJunPlayer::UpdateCameraFOV(float DeltaTime)
 	float TargetFOV = FreeCameraFOV;
 	if (CameraMode == EJunCameraMode::Execution)
 	{
-		TargetFOV = ExecutionCameraFOV;
+		TargetFOV = GetCurrentExecutionCameraFOV();
 	}
 	else if (bLockOnActive)
 	{
@@ -5060,7 +5169,10 @@ void AJunPlayer::StartExecutionCamera(AJunMonster* Monster)
 
 	CameraModeBeforeExecution = CameraMode;
 	ExecutionCameraTarget = Monster;
+	bCurrentExecutionIsFinish = Monster->IsFinalExecution();
+	bExecutionCameraRestoreUsesFinishTuning = false;
 	bExecutionCameraSecondStage = false;
+	bExecutionCameraFinishPullInStage = false;
 	CameraMode = EJunCameraMode::Execution;
 	CancelLockOnTurn(0.05f);
 	PendingCameraLookInput = FVector2D::ZeroVector;
@@ -5072,12 +5184,17 @@ void AJunPlayer::EndExecutionCamera()
 	{
 		ExecutionCameraTarget = nullptr;
 		bExecutionCameraSecondStage = false;
+		bExecutionCameraFinishPullInStage = false;
+		bCurrentExecutionIsFinish = false;
 		return;
 	}
 
 	CameraMode = bLockOnActive && LockOnTarget ? EJunCameraMode::LockOn : EJunCameraMode::Free;
 	ExecutionCameraTarget = nullptr;
 	bExecutionCameraSecondStage = false;
+	bExecutionCameraFinishPullInStage = false;
+	bExecutionCameraRestoreUsesFinishTuning = bCurrentExecutionIsFinish;
+	bCurrentExecutionIsFinish = false;
 }
 
 void AJunPlayer::AdvanceExecutionCameraStage()
@@ -5085,6 +5202,15 @@ void AJunPlayer::AdvanceExecutionCameraStage()
 	if (CameraMode == EJunCameraMode::Execution)
 	{
 		bExecutionCameraSecondStage = true;
+	}
+}
+
+void AJunPlayer::AdvanceExecutionFinishCameraPullInStage()
+{
+	if (CameraMode == EJunCameraMode::Execution && bCurrentExecutionIsFinish)
+	{
+		bExecutionCameraSecondStage = true;
+		bExecutionCameraFinishPullInStage = true;
 	}
 }
 
@@ -5111,14 +5237,14 @@ void AJunPlayer::UpdateExecutionCamera(float DeltaTime)
 
 	FRotator DesiredRot = ToTarget.Rotation();
 	DesiredRot.Roll = 0.f;
-	DesiredRot.Pitch = ExecutionCameraPitchOffset;
+	DesiredRot.Pitch = GetCurrentExecutionCameraPitchOffset();
 	DesiredRot.Pitch = FMath::Clamp(DesiredRot.Pitch, MinCameraPitch, MaxCameraPitch);
 
 	const FRotator NewRot = FMath::RInterpTo(
 		Controller->GetControlRotation(),
 		DesiredRot,
 		DeltaTime,
-		ExecutionCameraRotationInterpSpeed
+		GetCurrentExecutionCameraRotationInterpSpeed()
 	);
 
 	Controller->SetControlRotation(NewRot);
@@ -5128,17 +5254,65 @@ void AJunPlayer::UpdateExecutionCamera(float DeltaTime)
 
 	if (SpringArm)
 	{
-		const float TargetArmLength = bExecutionCameraSecondStage
-			? ExecutionCameraApplyArmLength
-			: ExecutionCameraArmLength;
+		float TargetArmLength = GetCurrentExecutionCameraArmLength();
+		if (bExecutionCameraFinishPullInStage)
+		{
+			TargetArmLength = ExecutionFinishCameraPullInArmLength;
+		}
+		else if (bExecutionCameraSecondStage)
+		{
+			TargetArmLength = GetCurrentExecutionCameraApplyArmLength();
+		}
 
 		SpringArm->TargetArmLength = FMath::FInterpTo(
 			SpringArm->TargetArmLength,
 			TargetArmLength,
 			DeltaTime,
-			ExecutionCameraArmLengthInterpSpeed
+			GetCurrentExecutionCameraArmLengthInterpSpeed()
 		);
 	}
+}
+
+FVector AJunPlayer::GetCurrentExecutionCameraSocketOffset() const
+{
+	return bCurrentExecutionIsFinish ? ExecutionFinishCameraSocketOffset : ExecutionCameraSocketOffset;
+}
+
+float AJunPlayer::GetCurrentExecutionCameraFOV() const
+{
+	return bCurrentExecutionIsFinish ? ExecutionFinishCameraFOV : ExecutionCameraFOV;
+}
+
+float AJunPlayer::GetCurrentExecutionCameraArmLength() const
+{
+	return bCurrentExecutionIsFinish ? ExecutionFinishCameraArmLength : ExecutionCameraArmLength;
+}
+
+float AJunPlayer::GetCurrentExecutionCameraApplyArmLength() const
+{
+	return bCurrentExecutionIsFinish ? ExecutionFinishCameraApplyArmLength : ExecutionCameraApplyArmLength;
+}
+
+float AJunPlayer::GetCurrentExecutionCameraRotationInterpSpeed() const
+{
+	return bCurrentExecutionIsFinish ? ExecutionFinishCameraRotationInterpSpeed : ExecutionCameraRotationInterpSpeed;
+}
+
+float AJunPlayer::GetCurrentExecutionCameraArmLengthInterpSpeed() const
+{
+	return bCurrentExecutionIsFinish ? ExecutionFinishCameraArmLengthInterpSpeed : ExecutionCameraArmLengthInterpSpeed;
+}
+
+float AJunPlayer::GetCurrentExecutionCameraArmLengthRestoreInterpSpeed() const
+{
+	return bExecutionCameraRestoreUsesFinishTuning
+		? ExecutionFinishCameraArmLengthRestoreInterpSpeed
+		: ExecutionCameraArmLengthRestoreInterpSpeed;
+}
+
+float AJunPlayer::GetCurrentExecutionCameraPitchOffset() const
+{
+	return bCurrentExecutionIsFinish ? ExecutionFinishCameraPitchOffset : ExecutionCameraPitchOffset;
 }
 
 void AJunPlayer::UpdateLockOnCharacterRotation(float DeltaTime)
