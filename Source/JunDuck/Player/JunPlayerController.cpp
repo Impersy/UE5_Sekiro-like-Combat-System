@@ -139,20 +139,31 @@ void AJunPlayerController::UpdateCombatWidgets()
 	if (CombatHUDWidget)
 	{
 		CombatHUDWidget->SetPlayerHealth(JunPlayer->GetHp(), JunPlayer->GetMaxHp());
+		CombatHUDWidget->SetPlayerPosture(JunPlayer->GetCurrentPosture(), JunPlayer->GetMaxPosture());
 		CombatHUDWidget->SetBossHealthVisible(ActiveCombatBoss != nullptr);
 
 		if (ActiveCombatBoss)
 		{
 			CombatHUDWidget->SetBossHealth(ActiveCombatBoss->GetHp(), ActiveCombatBoss->GetMaxHp());
+			CombatHUDWidget->SetBossPosture(ActiveCombatBoss->GetCurrentPosture(), ActiveCombatBoss->GetMaxPosture());
 			CombatHUDWidget->SetBossLifeState(ActiveCombatBoss->GetCurrentLifeCount(), ActiveCombatBoss->GetMaxLifeCount());
 		}
 		else
 		{
+			CombatHUDWidget->SetBossPosture(0.f, 1.f);
 			CombatHUDWidget->SetBossLifeState(0, 0);
 		}
 	}
 
 	UpdateLockOnMarkerWidget(CurrentLockOnTarget);
+}
+
+void AJunPlayerController::PlayPlayerPostureBreakGlow()
+{
+	if (CombatHUDWidget)
+	{
+		CombatHUDWidget->PlayPlayerPostureBreakGlow();
+	}
 }
 
 AJunMonster* AJunPlayerController::FindActiveCombatBoss() const

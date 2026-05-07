@@ -20,6 +20,7 @@ class JUNDUCK_API AJunPlayerController : public APlayerController
 
 public:
 	AJunPlayerController(const FObjectInitializer& objectInitializer);
+	void PlayPlayerPostureBreakGlow();
 
 protected:
 	virtual void BeginPlay() override;

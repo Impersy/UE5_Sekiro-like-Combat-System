@@ -1,6 +1,8 @@
 #include "UI/JunCombatHUDWidget.h"
 
 #include "Components/ProgressBar.h"
+#include "Components/Image.h"
+#include "Components/SizeBox.h"
 #include "Components/Widget.h"
 
 void UJunCombatHUDWidget::NativeConstruct()
@@ -15,8 +17,23 @@ void UJunCombatHUDWidget::NativeConstruct()
 
 	ApplyPlayerHealthBars();
 	ApplyBossHealthBars();
+	ApplyPostureBars();
 	ApplyBossHealthVisibility();
 	ApplyBossLifeWidgets();
+	if (Player_RedGlow_Root)
+	{
+		Player_RedGlow_Root->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+		Player_RedGlow_Root->SetRenderScale(FVector2D(RedGlowStartScaleX, RedGlowScaleY));
+		Player_RedGlow_Root->SetRenderOpacity(0.f);
+		Player_RedGlow_Root->SetVisibility(ESlateVisibility::Hidden);
+	}
+	if (Boss_RedGlow_Root)
+	{
+		Boss_RedGlow_Root->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+		Boss_RedGlow_Root->SetRenderScale(FVector2D(RedGlowStartScaleX, RedGlowScaleY));
+		Boss_RedGlow_Root->SetRenderOpacity(0.f);
+		Boss_RedGlow_Root->SetVisibility(ESlateVisibility::Hidden);
+	}
 	OnBossHealthVisibilityChanged(bBossHealthVisible);
 	OnPlayerDelayedHealthChanged(PlayerDelayedHealthPercent);
 	OnBossDelayedHealthChanged(BossDelayedHealthPercent);
@@ -28,6 +45,7 @@ void UJunCombatHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 
 	UpdateBossHealthFill(InDeltaTime);
 	UpdateDelayedHealthBars(InDeltaTime);
+	UpdateRedGlowEffects(InDeltaTime);
 }
 
 void UJunCombatHUDWidget::SetPlayerHealth(int32 CurrentHealth, int32 MaxHealth)
@@ -95,6 +113,40 @@ void UJunCombatHUDWidget::SetBossLifeState(int32 CurrentLifeCount, int32 MaxLife
 	ApplyBossLifeWidgets();
 }
 
+void UJunCombatHUDWidget::SetPlayerPosture(float CurrentPosture, float MaxPosture)
+{
+	PlayerPosturePercent = MaxPosture > 0.f
+		? FMath::Clamp(CurrentPosture / MaxPosture, 0.f, 1.f)
+		: 0.f;
+
+	ApplyPostureBars();
+}
+
+void UJunCombatHUDWidget::SetBossPosture(float CurrentPosture, float MaxPosture)
+{
+	const float PreviousBossPosturePercent = BossPosturePercent;
+	BossPosturePercent = MaxPosture > 0.f
+		? FMath::Clamp(CurrentPosture / MaxPosture, 0.f, 1.f)
+		: 0.f;
+
+	if (PreviousBossPosturePercent < 1.f && BossPosturePercent >= 1.f)
+	{
+		PlayBossPostureBreakGlow();
+	}
+
+	ApplyPostureBars();
+}
+
+void UJunCombatHUDWidget::PlayPlayerPostureBreakGlow()
+{
+	StartRedGlowEffect(Player_RedGlow_Root, PlayerRedGlowElapsedTime);
+}
+
+void UJunCombatHUDWidget::PlayBossPostureBreakGlow()
+{
+	StartRedGlowEffect(Boss_RedGlow_Root, BossRedGlowElapsedTime);
+}
+
 void UJunCombatHUDWidget::SetBossHealthVisible(bool bVisible)
 {
 	if (bBossHealthVisible == bVisible)
@@ -158,6 +210,54 @@ void UJunCombatHUDWidget::UpdateBossHealthFill(float DeltaTime)
 
 		ApplyBossHealthBars();
 	}
+}
+
+void UJunCombatHUDWidget::UpdateRedGlowEffects(float DeltaTime)
+{
+	UpdateRedGlowEffect(DeltaTime, Player_RedGlow_Root, PlayerRedGlowElapsedTime);
+	UpdateRedGlowEffect(DeltaTime, Boss_RedGlow_Root, BossRedGlowElapsedTime);
+}
+
+void UJunCombatHUDWidget::UpdateRedGlowEffect(float DeltaTime, UWidget* RootWidget, float& ElapsedTime)
+{
+	if (!RootWidget || ElapsedTime < 0.f)
+	{
+		return;
+	}
+
+	ElapsedTime += DeltaTime;
+	const float Alpha = RedGlowDuration > 0.f
+		? FMath::Clamp(ElapsedTime / RedGlowDuration, 0.f, 1.f)
+		: 1.f;
+	const float EaseAlpha = 1.f - FMath::Square(1.f - Alpha);
+	const float ScaleX = FMath::Lerp(RedGlowStartScaleX, RedGlowEndScaleX, EaseAlpha);
+	const float Opacity = FMath::Pow(1.f - Alpha, 0.65f);
+
+	RootWidget->SetRenderScale(FVector2D(ScaleX, RedGlowScaleY));
+	RootWidget->SetRenderOpacity(Opacity);
+	RootWidget->SetVisibility(Opacity > 0.f ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+
+	if (Alpha >= 1.f)
+	{
+		ElapsedTime = -1.f;
+		RootWidget->SetRenderOpacity(0.f);
+		RootWidget->SetRenderScale(FVector2D(RedGlowStartScaleX, RedGlowScaleY));
+		RootWidget->SetVisibility(ESlateVisibility::Hidden);
+	}
+}
+
+void UJunCombatHUDWidget::StartRedGlowEffect(UWidget* RootWidget, float& ElapsedTime)
+{
+	if (!RootWidget)
+	{
+		return;
+	}
+
+	ElapsedTime = 0.f;
+	RootWidget->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+	RootWidget->SetRenderScale(FVector2D(RedGlowStartScaleX, RedGlowScaleY));
+	RootWidget->SetRenderOpacity(1.f);
+	RootWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
 }
 
 void UJunCombatHUDWidget::UpdateDelayedHealthBar(
@@ -225,11 +325,52 @@ void UJunCombatHUDWidget::ApplyBossHealthBars()
 	}
 }
 
+void UJunCombatHUDWidget::ApplyPostureBars()
+{
+	ApplyPostureFill(BossFillCenter, BossPosturePercent, BossPostureFillMaxWidth);
+	ApplyPostureFill(PlayerFillCenter, PlayerPosturePercent, PlayerPostureFillMaxWidth);
+	ApplyPostureTint(BossCenter_Image, BossPosturePercent);
+	ApplyPostureTint(BossLeftCap, BossPosturePercent);
+	ApplyPostureTint(BossRightCap, BossPosturePercent);
+	ApplyPostureTint(PlayerCenter_Image, PlayerPosturePercent);
+	ApplyPostureTint(PlayerLeftCap, PlayerPosturePercent);
+	ApplyPostureTint(PlayerRightCap, PlayerPosturePercent);
+}
+
+void UJunCombatHUDWidget::ApplyPostureFill(USizeBox* FillCenter, float Percent, float MaxWidth) const
+{
+	if (!FillCenter)
+	{
+		return;
+	}
+
+	FillCenter->SetWidthOverride(FMath::Max(0.f, MaxWidth * FMath::Clamp(Percent, 0.f, 1.f)));
+	FillCenter->SetHeightOverride(PostureFillHeight);
+}
+
+void UJunCombatHUDWidget::ApplyPostureTint(UImage* FillImage, float Percent) const
+{
+	if (!FillImage)
+	{
+		return;
+	}
+
+	const FLinearColor TargetTint = Percent >= PostureWarningTintThreshold
+		? PostureWarningTint
+		: PostureNormalTint;
+	FillImage->SetColorAndOpacity(TargetTint);
+}
+
 void UJunCombatHUDWidget::ApplyBossHealthVisibility()
 {
 	if (BossHealthRoot)
 	{
 		BossHealthRoot->SetVisibility(GetBossHealthSlateVisibility());
+	}
+
+	if (BossPostureRoot)
+	{
+		BossPostureRoot->SetVisibility(GetBossHealthSlateVisibility());
 	}
 }
 

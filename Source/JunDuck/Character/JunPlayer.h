@@ -95,6 +95,7 @@ enum class EJunPlayerHitState : uint8
 	None,
 	ParrySuccess,
 	GuardBlock,
+	GuardBreak,
 	HitReact
 };
 
@@ -184,6 +185,8 @@ public: // Query / State API
 	float GetDesiredMaxWalkSpeed() const;
 	bool ShouldUseRunningAnim() const;
 	bool IsExecuting() const;
+	float GetCurrentPosture() const { return CurrentPosture; }
+	float GetMaxPosture() const { return MaxPosture; }
 
 	void ToggleWalkingState();
 	void SetDesiredMoveAxes(float NewForward, float NewRight);
@@ -306,11 +309,16 @@ protected: // Hit
 	ECharacterKnockbackDirection DetermineKnockbackDirectionFromDamageCauser(const AActor* DamageCauser) const;
 	UAnimMontage* GetHitReactMontage(EHitReactType HitType, ECharacterHitReactDirection HitDirection) const;
 	UAnimMontage* GetParrySuccessMontage(const FVector& SwingDirection);
+	bool AddPosture(float Amount);
+	bool IsPostureFull() const;
+	void UpdatePostureRecovery(float DeltaTime);
+	bool CanRecoverPosture() const;
 	void StartParrySuccess();
 	void CancelParrySuccessForCancelTransition(float BlendOutTime);
 	void ExecuteBufferedParrySuccessCancelAction();
 	void TryExecuteBufferedParrySuccessCancelAction();
 	void StartGuardBlock();
+	void StartGuardBreak();
 	void StartHitReact(EHitReactType HitType, ECharacterHitReactDirection HitDirection);
 	void ApplyCommonKnockback(
 		ECharacterKnockbackDirection KnockbackDirection,
@@ -322,6 +330,7 @@ protected: // Hit
 	);
 	void InterruptActionsForHitReaction();
 	void UpdatePlayerHitState(float DeltaTime);
+	void UpdateGuardBreakVulnerability(float DeltaTime);
 	void ReleaseHitReactControlLock();
 	bool TryCancelHitReactIntoMove();
 	void FinishPlayerHitState();
@@ -809,6 +818,15 @@ protected: // Runtime Combat / Defense State
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	float PlayerHitStateRemainTime = 0.f;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Posture")
+	float CurrentPosture = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Posture")
+	float PostureRecoveryDelayRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Posture")
+	float GuardBreakVulnerableRemainTime = 0.f;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	float PlayerHitControlLockRemainTime = 0.f;
 
@@ -917,7 +935,7 @@ protected: // Camera Tuning
 	float CameraSocketOffsetInterpSpeed = 8.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
-	float DefaultSpringArmLength = 500.f;
+	float DefaultSpringArmLength = 470.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera")
 	float PitchArmShortenStartPitch = 0.f;
@@ -986,13 +1004,13 @@ protected: // Camera Tuning
 	FVector ExecutionFinishCameraSocketOffset = FVector(0.f, 25.f, 0.f);
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
-	float ExecutionCameraArmLength = 280.f;
+	float ExecutionCameraArmLength = 300.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
 	float ExecutionFinishCameraArmLength = 350.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
-	float ExecutionCameraApplyArmLength = 100.f;
+	float ExecutionCameraApplyArmLength = 180.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
 	float ExecutionFinishCameraApplyArmLength = 200.f;
@@ -1040,10 +1058,10 @@ protected: // Camera Tuning
 	float LockOnPitchOffset = -10.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
-	float LockOnClosePitchOffset = -30.f;
+	float LockOnClosePitchOffset = -35.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
-	float MinLockOnCameraPitch = -30.f;
+	float MinLockOnCameraPitch = -35.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float MaxLockOnCameraPitch = 40.f;
@@ -1159,6 +1177,39 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float GuardBlockDuration = 0.3f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "1"))
+	float MaxPosture = 240.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "0"))
+	float PerfectParryPostureGain = 15.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "0"))
+	float NormalParryPostureGain = 30.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "0"))
+	float GuardBlockPostureGain = 60.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "0"))
+	float HitReactPostureGain = 60.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture")
+	float GuardBreakDuration = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture")
+	float GuardBreakControlLockDuration = 1.8f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture")
+	float GuardBreakDamageMultiplier = 2.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Recovery", meta = (ClampMin = "0"))
+	float PostureRecoveryDelay = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Recovery", meta = (ClampMin = "0"))
+	float PostureRecoveryRate = 20.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Recovery", meta = (ClampMin = "0"))
+	float GuardPostureRecoveryMultiplier = 2.5f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float HitReactDuration = 0.5f;
@@ -1378,22 +1429,22 @@ protected: // Attack / Defense Tuning
 	TArray<float> BasicAttackJumpCancelOpenTimes = { 0.5f, 0.5f, 0.6f, 0.6f };
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
-	TArray<float> BasicAttackDefenseCancelOpenTimes = { 0.1f, 0.5f, 0.5f, 0.5f };
+	TArray<float> BasicAttackDefenseCancelOpenTimes = { 0.1f, 0.1f, 0.1f, 0.1f };
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
-	TArray<float> BasicAttackMoveCancelOpenTimes = { 0.8f, 0.8f, 0.8f, 0.8f };
+	TArray<float> BasicAttackMoveCancelOpenTimes = { 1.1f, 0.8f, 0.8f, 0.9f };
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
 	TArray<float> BasicAttackHeavyAttackCancelOpenTimes = { 0.5f, 0.5f, 0.6f, 0.6f };
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
-	float BasicAttackDodgeCancelBlendOutTime = 0.1f;
+	float BasicAttackDodgeCancelBlendOutTime = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
-	float BasicAttackJumpCancelBlendOutTime = 0.1f;
+	float BasicAttackJumpCancelBlendOutTime = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
-	float BasicAttackDefenseCancelBlendOutTime = 0.1f;
+	float BasicAttackDefenseCancelBlendOutTime = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
 	float BasicAttackMoveCancelBlendOutTime = 0.25f;
@@ -1402,7 +1453,7 @@ protected: // Attack / Defense Tuning
 	float BasicAttackHeavyAttackCancelBlendOutTime = 0.12f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
-	float BasicAttackRestartBlendOutTime = 0.08f;
+	float BasicAttackRestartBlendOutTime = 0.2f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BasicAttack")
 	float BasicAttackSectionElapsedTime = 0.f;
@@ -1518,6 +1569,9 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	TObjectPtr<class UAnimMontage> GuardBlockMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	TObjectPtr<class UAnimMontage> GuardBreakMontage;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	TObjectPtr<class UAnimMontage> HeavyHitFront_AMontage;

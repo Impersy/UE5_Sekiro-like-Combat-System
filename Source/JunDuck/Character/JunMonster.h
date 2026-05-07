@@ -261,6 +261,9 @@ protected:
 
 protected:
 	void AddPosture(float Amount);
+	void UpdatePostureRecovery(float DeltaTime);
+	bool CanRecoverPosture() const;
+	float GetPostureRecoveryVitalityScale() const;
 	void StartExecutionReady();
 	void EndExecutionReady();
 	void FinishExecutionRecovery();
@@ -457,6 +460,9 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
 	float CurrentPosture = 0.f;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	float PostureRecoveryDelayRemainTime = 0.f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution")
 	bool bDisablePostureGain = true;
 
@@ -465,6 +471,12 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0"))
 	float ParriedPostureGain = 35.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|PostureRecovery", meta = (ClampMin = "0"))
+	float PostureRecoveryDelay = 0.6f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|PostureRecovery", meta = (ClampMin = "0"))
+	float PostureRecoveryRate = 25.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0.1"))
 	float ExecutionReadyDuration = 2.f;

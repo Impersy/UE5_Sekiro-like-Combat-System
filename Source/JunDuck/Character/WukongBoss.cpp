@@ -193,7 +193,7 @@ namespace
 AWukongBoss::AWukongBoss()
 {
 	MaxLifeCount = 3;
-	MaxPosture = 30.f;
+	MaxPosture = 700.f;
 	bDisablePostureGain = false;
 	bStartWithCutsceneWait = true;
 	bStartWithPatrol = false;

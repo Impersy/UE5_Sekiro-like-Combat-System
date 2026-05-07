@@ -6,6 +6,8 @@
 
 class UWidget;
 class UProgressBar;
+class USizeBox;
+class UImage;
 
 UCLASS()
 class JUNDUCK_API UJunCombatHUDWidget : public UUserWidget
@@ -25,11 +27,29 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
 	void SetBossLifeState(int32 CurrentLifeCount, int32 MaxLifeCount);
 
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
+	void SetPlayerPosture(float CurrentPosture, float MaxPosture);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
+	void SetBossPosture(float CurrentPosture, float MaxPosture);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
+	void PlayPlayerPostureBreakGlow();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
+	void PlayBossPostureBreakGlow();
+
 	UFUNCTION(BlueprintPure, Category = "CombatHUD")
 	float GetPlayerHealthPercent() const { return PlayerHealthPercent; }
 
 	UFUNCTION(BlueprintPure, Category = "CombatHUD")
 	float GetBossHealthPercent() const { return BossHealthPercent; }
+
+	UFUNCTION(BlueprintPure, Category = "CombatHUD")
+	float GetPlayerPosturePercent() const { return PlayerPosturePercent; }
+
+	UFUNCTION(BlueprintPure, Category = "CombatHUD")
+	float GetBossPosturePercent() const { return BossPosturePercent; }
 
 	UFUNCTION(BlueprintPure, Category = "CombatHUD")
 	int32 GetBossCurrentLifeCount() const { return BossCurrentLifeCount; }
@@ -72,8 +92,14 @@ protected:
 
 private:
 	void UpdateBossHealthFill(float DeltaTime);
+	void UpdateRedGlowEffects(float DeltaTime);
+	void UpdateRedGlowEffect(float DeltaTime, UWidget* RootWidget, float& ElapsedTime);
+	void StartRedGlowEffect(UWidget* RootWidget, float& ElapsedTime);
 	void ApplyPlayerHealthBars();
 	void ApplyBossHealthBars();
+	void ApplyPostureBars();
+	void ApplyPostureFill(USizeBox* FillCenter, float Percent, float MaxWidth) const;
+	void ApplyPostureTint(UImage* FillImage, float Percent) const;
 	void ApplyBossHealthVisibility();
 	void ApplyBossLifeWidgets();
 	void ApplyBossLifeWidget(int32 LifeIndex, UWidget* RootWidget, UWidget* GrayWidget, UWidget* RedWidget) const;
@@ -94,6 +120,12 @@ private:
 	float BossDelayedHealthPercent = 1.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHUD", meta = (AllowPrivateAccess = "true"))
+	float PlayerPosturePercent = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHUD", meta = (AllowPrivateAccess = "true"))
+	float BossPosturePercent = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHUD", meta = (AllowPrivateAccess = "true"))
 	bool bBossHealthVisible = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHUD", meta = (AllowPrivateAccess = "true"))
@@ -111,11 +143,46 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|BossHealth", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
 	float BossHealthFillInterpSpeed = 2.5f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Posture", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float BossPostureFillMaxWidth = 540.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Posture", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float PlayerPostureFillMaxWidth = 321.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Posture", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float PostureFillHeight = 8.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Posture", meta = (AllowPrivateAccess = "true", ClampMin = "0", ClampMax = "1"))
+	float PostureWarningTintThreshold = 0.7f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Posture", meta = (AllowPrivateAccess = "true"))
+	FLinearColor PostureNormalTint = FLinearColor::White;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Posture", meta = (AllowPrivateAccess = "true"))
+	FLinearColor PostureWarningTint = FLinearColor(1.f, 0.529412f, 0.364706f, 1.f);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|PostureGlow", meta = (AllowPrivateAccess = "true", ClampMin = "0.01"))
+	float RedGlowDuration = 1.15f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|PostureGlow", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float RedGlowStartScaleX = 0.2f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|PostureGlow", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float RedGlowEndScaleX = 2.4f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|PostureGlow", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float RedGlowScaleY = 1.f;
+
 	float PlayerDelayedHealthDelayRemainTime = 0.f;
 	float BossDelayedHealthDelayRemainTime = 0.f;
+	float PlayerRedGlowElapsedTime = -1.f;
+	float BossRedGlowElapsedTime = -1.f;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> BossHealthRoot;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> BossPostureRoot;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UProgressBar> PlayerHealthBar;
@@ -128,6 +195,36 @@ private:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UProgressBar> BossDelayedHealthBar;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<USizeBox> BossFillCenter;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<USizeBox> PlayerFillCenter;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> BossCenter_Image;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> BossLeftCap;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> BossRightCap;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> PlayerCenter_Image;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> PlayerLeftCap;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> PlayerRightCap;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Boss_RedGlow_Root;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Player_RedGlow_Root;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> Life_1_Root;

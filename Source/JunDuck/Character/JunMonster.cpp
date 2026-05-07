@@ -216,6 +216,7 @@ void AJunMonster::Tick(float DeltaTime)
 	}
 
 	UpdateAttack(DeltaTime);
+	UpdatePostureRecovery(DeltaTime);
 
 	// 몬스터는 "상위 상태 업데이트"와 "피격 리액션 타이머"를 매 프레임 병렬로 관리한다.
 	StateTime += DeltaTime;
@@ -2556,10 +2557,69 @@ void AJunMonster::AddPosture(float Amount)
 	}
 
 	CurrentPosture = FMath::Clamp(CurrentPosture + Amount, 0.f, MaxPosture);
+	PostureRecoveryDelayRemainTime = PostureRecoveryDelay;
 	if (CurrentPosture >= MaxPosture)
 	{
 		StartExecutionReady();
 	}
+}
+
+void AJunMonster::UpdatePostureRecovery(float DeltaTime)
+{
+	if (bDisablePostureGain || CurrentPosture <= 0.f || !CanRecoverPosture())
+	{
+		return;
+	}
+
+	if (PostureRecoveryDelayRemainTime > 0.f)
+	{
+		PostureRecoveryDelayRemainTime = FMath::Max(0.f, PostureRecoveryDelayRemainTime - DeltaTime);
+		return;
+	}
+
+	const float RecoveryAmount = PostureRecoveryRate * GetPostureRecoveryVitalityScale() * DeltaTime;
+	CurrentPosture = FMath::Max(0.f, CurrentPosture - RecoveryAmount);
+}
+
+bool AJunMonster::CanRecoverPosture() const
+{
+	if (CurrentState == EMonsterState::Dead || bExecutionReady || bBeingExecuted)
+	{
+		return false;
+	}
+
+	if (bIsAttacking || IsInHitReact())
+	{
+		return false;
+	}
+
+	if (HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
+	{
+		return false;
+	}
+
+	return true;
+}
+
+float AJunMonster::GetPostureRecoveryVitalityScale() const
+{
+	const float HpRatio = MaxHp > 0
+		? FMath::Clamp(static_cast<float>(Hp) / static_cast<float>(MaxHp), 0.f, 1.f)
+		: 0.f;
+
+	if (HpRatio > 0.75f)
+	{
+		return 1.f;
+	}
+	if (HpRatio > 0.5f)
+	{
+		return 0.66f;
+	}
+	if (HpRatio > 0.25f)
+	{
+		return 0.33f;
+	}
+	return 0.01f;
 }
 
 void AJunMonster::StartExecutionReady()
