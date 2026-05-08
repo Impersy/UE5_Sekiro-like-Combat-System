@@ -39,6 +39,27 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
 	void PlayBossPostureBreakGlow();
 
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
+	void ShowBossClearUI();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Death")
+	void ShowFakeDeathUI();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Death")
+	void HideFakeDeathUI();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Death")
+	void ShowRealDeathUI();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Death")
+	void StartFullBlackFadeIn();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Death")
+	void HideDeathUI();
+
+	UFUNCTION(BlueprintPure, Category = "CombatHUD|Death")
+	bool IsFullBlackOpaque() const;
+
 	UFUNCTION(BlueprintPure, Category = "CombatHUD")
 	float GetPlayerHealthPercent() const { return PlayerHealthPercent; }
 
@@ -95,6 +116,10 @@ private:
 	void UpdateRedGlowEffects(float DeltaTime);
 	void UpdateRedGlowEffect(float DeltaTime, UWidget* RootWidget, float& ElapsedTime);
 	void StartRedGlowEffect(UWidget* RootWidget, float& ElapsedTime);
+	void UpdateBossClearUI(float DeltaTime);
+	void UpdateDeathUI(float DeltaTime);
+	void ApplyWidgetOpacity(UWidget* Widget, float Opacity, bool bHideWhenZero = true) const;
+	void SetDeathRootVisible(bool bVisible);
 	void ApplyPlayerHealthBars();
 	void ApplyBossHealthBars();
 	void ApplyPostureBars();
@@ -127,6 +152,9 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHUD", meta = (AllowPrivateAccess = "true"))
 	bool bBossHealthVisible = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHUD", meta = (AllowPrivateAccess = "true"))
+	bool bBossClearUIActive = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHUD", meta = (AllowPrivateAccess = "true"))
 	int32 BossCurrentLifeCount = 0;
@@ -177,6 +205,35 @@ private:
 	float BossDelayedHealthDelayRemainTime = 0.f;
 	float PlayerRedGlowElapsedTime = -1.f;
 	float BossRedGlowElapsedTime = -1.f;
+	float DimBlackOpacity = 0.f;
+	float FullBlackOpacity = 0.f;
+	float FakeDeathOpacity = 0.f;
+	float RealDeathOpacity = 0.f;
+	float TargetDimBlackOpacity = 0.f;
+	float TargetFullBlackOpacity = 0.f;
+	float TargetFakeDeathOpacity = 0.f;
+	float TargetRealDeathOpacity = 0.f;
+	float BossClearOpacity = 0.f;
+	float TargetBossClearOpacity = 0.f;
+	float BossClearHoldRemainTime = 0.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|BossClear", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float BossClearFadeInSpeed = 2.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|BossClear", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float BossClearFadeOutSpeed = 6.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|BossClear", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float BossClearHoldDuration = 2.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Death", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float DeathUIFadeSpeed = 2.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Death", meta = (AllowPrivateAccess = "true", ClampMin = "0", ClampMax = "1"))
+	float FakeDeathDimBlackOpacity = 0.32f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Death", meta = (AllowPrivateAccess = "true", ClampMin = "0", ClampMax = "1"))
+	float RealDeathDimBlackOpacity = 0.45f;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> BossHealthRoot;
@@ -225,6 +282,30 @@ private:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> Player_RedGlow_Root;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Boss_Clear;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Death_Root;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> DimBlack;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> FullBlack;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Real_Death;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Fake_Death;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Die_Select;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Resurrect_Select;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> Life_1_Root;

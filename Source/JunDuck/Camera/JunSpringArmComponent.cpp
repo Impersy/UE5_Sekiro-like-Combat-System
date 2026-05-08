@@ -4,6 +4,12 @@ UJunSpringArmComponent::UJunSpringArmComponent()
 {
 }
 
+void UJunSpringArmComponent::ResetCameraSmoothing()
+{
+	bCollisionBlendInitialized = false;
+	SmoothedArmLength = 0.f;
+}
+
 FVector UJunSpringArmComponent::BlendLocations(
 	const FVector& DesiredArmLocation,
 	const FVector& TraceHitLocation,

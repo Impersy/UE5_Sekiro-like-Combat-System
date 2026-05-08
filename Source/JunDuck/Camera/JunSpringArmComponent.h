@@ -11,6 +11,7 @@ class JUNDUCK_API UJunSpringArmComponent : public USpringArmComponent
 
 public:
 	UJunSpringArmComponent();
+	void ResetCameraSmoothing();
 
 protected:
 	virtual FVector BlendLocations(

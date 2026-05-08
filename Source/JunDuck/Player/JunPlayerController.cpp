@@ -1,6 +1,3 @@
-
-
-
 #include "JunPlayerController.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -166,6 +163,78 @@ void AJunPlayerController::PlayPlayerPostureBreakGlow()
 	}
 }
 
+void AJunPlayerController::PlayBossPostureBreakGlow()
+{
+	if (CombatHUDWidget)
+	{
+		CombatHUDWidget->PlayBossPostureBreakGlow();
+	}
+}
+
+void AJunPlayerController::ShowBossClearUI()
+{
+	if (CombatHUDWidget)
+	{
+		CombatHUDWidget->ShowBossClearUI();
+	}
+}
+
+void AJunPlayerController::ShowFakeDeathUI()
+{
+	if (CombatHUDWidget)
+	{
+		CombatHUDWidget->ShowFakeDeathUI();
+	}
+}
+
+void AJunPlayerController::HideFakeDeathUI()
+{
+	if (CombatHUDWidget)
+	{
+		CombatHUDWidget->HideFakeDeathUI();
+	}
+}
+
+void AJunPlayerController::ShowRealDeathUI()
+{
+	if (CombatHUDWidget)
+	{
+		CombatHUDWidget->ShowRealDeathUI();
+	}
+}
+
+void AJunPlayerController::StartDeathFullBlackFadeIn()
+{
+	if (CombatHUDWidget)
+	{
+		CombatHUDWidget->StartFullBlackFadeIn();
+	}
+}
+
+void AJunPlayerController::HideDeathUI()
+{
+	if (CombatHUDWidget)
+	{
+		CombatHUDWidget->HideDeathUI();
+	}
+}
+
+bool AJunPlayerController::IsDeathFullBlackOpaque() const
+{
+	return CombatHUDWidget && CombatHUDWidget->IsFullBlackOpaque();
+}
+
+void AJunPlayerController::SetLockOnMarkerSuppressed(bool bSuppressed)
+{
+	bLockOnMarkerSuppressed = bSuppressed;
+
+	if (bLockOnMarkerSuppressed && LockOnMarkerWidget)
+	{
+		LockOnMarkerWidget->SetExecutionReadyMarkerVisible(false);
+		LockOnMarkerWidget->SetLockOnMarkerVisible(false);
+	}
+}
+
 AJunMonster* AJunPlayerController::FindActiveCombatBoss() const
 {
 	const UWorld* World = GetWorld();
@@ -190,6 +259,13 @@ void AJunPlayerController::UpdateLockOnMarkerWidget(AJunCharacter* CurrentLockOn
 {
 	if (!LockOnMarkerWidget)
 	{
+		return;
+	}
+
+	if (bLockOnMarkerSuppressed)
+	{
+		LockOnMarkerWidget->SetExecutionReadyMarkerVisible(false);
+		LockOnMarkerWidget->SetLockOnMarkerVisible(false);
 		return;
 	}
 
@@ -445,6 +521,11 @@ void AJunPlayerController::Input_BasicAttack(const FInputActionValue& InputValue
 		return;
 	}
 
+	if (JunPlayer->TryChooseFakeDeathDie())
+	{
+		return;
+	}
+
 	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Action_Dodge))
 	{
 		if (!JunPlayer->TryStartDodgeAttack())
@@ -542,6 +623,11 @@ void AJunPlayerController::Input_LockOn(const FInputActionValue& InputValue)
 void AJunPlayerController::Input_Defense(const FInputActionValue& InputValue)
 {
 	if (!JunPlayer)
+	{
+		return;
+	}
+
+	if (JunPlayer->TryChooseFakeDeathRevive())
 	{
 		return;
 	}

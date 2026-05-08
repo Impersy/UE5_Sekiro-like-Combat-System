@@ -112,11 +112,12 @@ public:
 		const FVector& SwingDirection,
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData);
 	virtual void OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker) override;
-	virtual void NotifyAttackParriedBy(class AJunPlayer* Parrier);
+	virtual void NotifyAttackParriedBy(class AJunPlayer* Parrier, float PostureScale = 1.f);
 	bool IsExecutionReady() const;
 	bool CanBeExecutedBy(const class AJunPlayer* Player) const;
 	bool TryBeginExecutionBy(class AJunPlayer* Player);
-	void TriggerPendingExecutionMontage();
+	void TriggerPendingExecutionMontage(bool bApplyResultImmediately = true);
+	void ApplyPendingExecutionResult();
 	void CancelPendingExecution();
 	void RestoreExecutionCapsuleCollisionIgnore();
 	void RestoreExecutionCapsuleRadius();
@@ -156,6 +157,7 @@ public:
 	virtual void EndKickAttackTraceWindow() override;
 	void BeginAttackFacingWindow(float InterpSpeed);
 	void EndAttackFacingWindow();
+	virtual void HandleGameplayEventNotify(FGameplayTag EventTag) override;
 
 protected:
 	// Spawn-time setup: team, weapon, home position and initial top-level state.
@@ -165,6 +167,9 @@ protected:
 	// Top-level state machine.
 	// Enter*() configures the state once, Update*() advances it every Tick.
 	void SetMonsterState(EMonsterState NewState);
+	void EnterPlayerDeathWait();
+	void ResumeAfterPlayerFakeDeath();
+	void ResetAfterPlayerRealDeath();
 	void EnterCutsceneWaitState();
 	void EnterIdleState();
 	void EnterPatrolState();
@@ -218,7 +223,7 @@ protected:
 	void ClearCurrentTarget();
 	bool TryHandleDeadCurrentTarget(EMonsterState NextStateIfDead);
 	void StopAllAttackTraces();
-	void ResetCurrentAttackRuntimeState();
+	virtual void ResetCurrentAttackRuntimeState();
 	bool TryResolveReachableLocationToward(const FVector& DesiredLocation, FVector& OutReachableLocation) const;
 	float GetEffectiveReturnReachedDistance() const;
 	bool HasReachedReturnTarget() const;
@@ -230,6 +235,20 @@ protected:
 	void AttachWeaponToSocket(FName SocketName);
 	void AttachWeaponToHandSocket();
 	void AttachWeaponToSheathedSocket();
+	void SetWeaponVisible(bool bVisible);
+	void SetBowVisible(bool bVisible);
+
+public:
+	void SpawnAttachedArrow();
+	void FireAttachedArrow(
+		EHitReactType HitReactType,
+		const FJunAttackDamageData& DamageData,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
+		float Speed,
+		float LifeSeconds,
+		float HomingDuration,
+		float HomingInterpSpeed,
+		float HomingTargetHeightOffset);
 
 protected:
 	// Hit react lifecycle.
@@ -331,10 +350,19 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
 	TObjectPtr<class AWeaponActor> EquippedKickWeaponRight = nullptr;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
+	TObjectPtr<class AWeaponActor> EquippedBow = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
+	TObjectPtr<class AArrowProjectile> AttachedArrow = nullptr;
+
 protected:
 	// Patrol / return runtime data.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Patrol")
 	FVector HomeLocation = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Patrol")
+	FRotator HomeRotation = FRotator::ZeroRotator;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Patrol")
 	FVector PatrolTargetLocation = FVector::ZeroVector;
@@ -589,6 +617,12 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
 	TSubclassOf<class AWeaponActor> DefaultScabbardClass;
 
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Bow")
+	TSubclassOf<class AWeaponActor> DefaultBowClass;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Bow")
+	TSubclassOf<class AArrowProjectile> DefaultArrowProjectileClass;
+
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
 	TSubclassOf<class AWeaponActor> DefaultKickWeaponClass;
 
@@ -603,6 +637,12 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
 	FName ScabbardSocketName = TEXT("ScabSocket");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Bow")
+	FName BowSocketName = TEXT("Bow_l");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Bow")
+	FName ArrowSocketName = TEXT("Arrow_r");
 
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
 	FName KickWeaponSocketName = TEXT("foot_rSocket");

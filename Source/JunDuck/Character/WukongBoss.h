@@ -62,9 +62,6 @@ enum class EWukongPlannedNonAttackType : uint8
 	Strafe,
 	Dash,
 	Dodge,
-	ComeHere,
-	Sleep,
-	Boring,
 	Hold
 };
 
@@ -96,7 +93,10 @@ enum class EWukongNormalAttackType : uint8
 	Ambush,
 	NinjaA,
 	NinjaB,
-	Execution
+	Execution,
+	Bow4Combo,
+	BowBackDashAttack,
+	BowHeavyAttack
 };
 
 UENUM(BlueprintType)
@@ -301,7 +301,7 @@ public:
 	void EndAttackSuperArmorWindow();
 	void HandleComboDecisionPoint();
 	void HandleHitTurnDecisionPoint();
-	virtual void NotifyAttackParriedBy(class AJunPlayer* Parrier) override;
+	virtual void NotifyAttackParriedBy(class AJunPlayer* Parrier, float PostureScale = 1.f) override;
 
 protected:
 	virtual void HandleGameplayEventNotify(FGameplayTag EventTag) override;
@@ -354,10 +354,12 @@ protected:
 	bool HasValidPlannedAttack() const;
 	bool HasValidPlannedMovement() const;
 	bool IsMobilityNonAttackType(EWukongPlannedNonAttackType NonAttackType) const;
-	bool IsExpressiveNonAttackType(EWukongPlannedNonAttackType NonAttackType) const;
 	bool IsComboSetEnabledByTestFilter(EWukongComboSet ComboSet) const;
 	bool IsNormalAttackEnabledByTestFilter(EWukongNormalAttackType NormalAttackType) const;
 	float GetMaxEnabledComboCandidateRange() const;
+	float GetMaxEnabledAttackCandidateRange() const;
+	bool IsFartherThanAllAttackCandidates() const;
+	bool HasAnyNonBowAttackCandidateForCurrentDistance() const;
 	EWukongMovementDirection ChooseStrafeDirectionAvoidingImmediateReverse() const;
 	bool IsOppositeStrafeDirection(EWukongMovementDirection A, EWukongMovementDirection B) const;
 	void CollectNormalAttackCandidates(float TargetDistance, bool bIgnoreRepeat, TArray<EWukongNormalAttackType>& OutCandidates) const;
@@ -375,7 +377,6 @@ protected:
 	UAnimMontage* GetPlannedComboMontage() const;
 	const FWukongNormalAttackData* GetPlannedNormalAttackData() const;
 	float GetPlannedComboFacingDuration() const;
-	UAnimMontage* GetExpressiveNonAttackMontage(EWukongPlannedNonAttackType NonAttackType) const;
 	UAnimMontage* GetMobilityNonAttackMontage(EWukongPlannedNonAttackType NonAttackType, EWukongMovementDirection MovementDirection) const;
 	UAnimMontage* GetPlannedNonAttackMontage() const;
 	UAnimMontage* GetReactiveActionMontage() const;
@@ -396,7 +397,10 @@ protected:
 	void ResetActiveReactiveActionState();
 	void ResetReactiveEvadePressure();
 	void ResetPendingAttackMotionState();
-	void ResetCurrentAttackRuntimeState();
+	virtual void ResetCurrentAttackRuntimeState() override;
+	bool IsBowNormalAttackType(EWukongNormalAttackType AttackType) const;
+	void BeginBowAttackPresentation();
+	void EndBowAttackPresentation();
 	void ApplyTimedMontageSuperArmor(float MontageDuration, float DurationScale = -1.f);
 	void UpdateTimedMontageSuperArmor(float DeltaTime);
 	void ClearTimedMontageSuperArmor();
@@ -413,6 +417,9 @@ protected:
 	bool HasQueuedReactiveAction() const;
 	bool CanStartMobilityMontageSafely() const;
 	bool CanParryIncomingHit(EHitReactType HitType, AActor* DamageCauser, const FVector& SwingDirection) const;
+	bool IsParryableHitType(EHitReactType HitType) const;
+	float GetPerfectParryChanceForHitType(EHitReactType HitType) const;
+	float GetNormalParryChanceForHitType(EHitReactType HitType) const;
 	UAnimMontage* GetParrySuccessMontage(const FVector& SwingDirection);
 	UAnimMontage* GetParryCounterMontage() const;
 	UAnimMontage* GetParryCounterFollowUpMontage() const;
@@ -449,17 +456,9 @@ protected:
 	bool WasRecentlyUsed(EWukongActionType ActionType, int32 Depth) const;
 	bool WasRecentlyUsed(EWukongComboSet ComboSet, int32 ComboLength, int32 Depth) const;
 	bool WasRecentlyUsed(EWukongNormalAttackType AttackType, int32 Depth) const;
+	bool WasRecentlyUsedBowNormalAttack(int32 Depth) const;
 
 protected:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Approach")
-	TObjectPtr<class UAnimMontage> ComeHereMontage = nullptr;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Approach")
-	TObjectPtr<class UAnimMontage> SleepMontage = nullptr;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Approach")
-	TObjectPtr<class UAnimMontage> BoringMontage = nullptr;
-
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|ComboAttack")
 	FWukongComboAttackData ComboAttackA;
 
@@ -486,6 +485,15 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack")
 	FWukongNormalAttackData ExecutionAttack;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Bow")
+	FWukongNormalAttackData Bow4ComboAttack;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Bow")
+	FWukongNormalAttackData BowBackDashAttack;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Bow")
+	FWukongNormalAttackData BowHeavyAttack;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Dash")
 	TObjectPtr<class UAnimMontage> DashForwardMontage = nullptr;
@@ -548,10 +556,16 @@ protected:
 	TObjectPtr<class UAnimMontage> ParryCounterFollowUpRightMontage = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float PerfectHitParryChance = 0.8f;
+	float LightHitPerfectParryChance = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float NormalHitParryChance = 0.2f;
+	float LightHitNormalParryChance = 0.4f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float StrongHitPerfectParryChance = 0.1f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float StrongHitNormalParryChance = 0.4f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
 	float NormalParryPostureGain = 10.f;
@@ -641,7 +655,7 @@ protected:
 	float NoAttackCandidateApproachDelay = 5.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Approach")
-	bool bEnableExpressiveNonAttackActions = false;
+	bool bForceApproachAfterBowAttack = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement")
 	float StrafeMinDuration = 2.f;
@@ -711,6 +725,15 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableExecution = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableBow4Combo = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableBowBackDashAttack = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableBowHeavyAttack = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement")
 	float EvadeFallbackDuration = 0.6f;
@@ -829,9 +852,6 @@ protected:
 	EWukongMovementDirection LastCompletedStrafeDirection = EWukongMovementDirection::None;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
-	EWukongPlannedNonAttackType NextExpressiveNonAttackType = EWukongPlannedNonAttackType::ComeHere;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
 	bool bShouldStartNoAttackFallbackWithStrafe = true;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
@@ -872,6 +892,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
 	float NoAttackCandidateApproachRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
+	bool bPostBowCloseRangeApproachInProgress = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|AttackMotion")
 	bool bPendingCodeDrivenAttackMove = false;

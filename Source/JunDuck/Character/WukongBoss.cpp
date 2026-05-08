@@ -5,23 +5,10 @@
 #include "Engine/Engine.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "JunGameplayTags.h"
+#include "Weapon/ArrowProjectile.h"
 
 namespace
 {
-	EWukongPlannedNonAttackType GetNextExpressiveNonAttackTypeInSequence(EWukongPlannedNonAttackType CurrentType)
-	{
-		switch (CurrentType)
-		{
-		case EWukongPlannedNonAttackType::ComeHere:
-			return EWukongPlannedNonAttackType::Sleep;
-		case EWukongPlannedNonAttackType::Sleep:
-			return EWukongPlannedNonAttackType::Boring;
-		case EWukongPlannedNonAttackType::Boring:
-		default:
-			return EWukongPlannedNonAttackType::ComeHere;
-		}
-	}
-
 	const TCHAR* GetWukongCombatStateDebugText(EWukongCombatState State)
 	{
 		switch (State)
@@ -87,12 +74,6 @@ namespace
 			return TEXT("Dash");
 		case EWukongPlannedNonAttackType::Dodge:
 			return TEXT("Dodge");
-		case EWukongPlannedNonAttackType::ComeHere:
-			return TEXT("ComeHere");
-		case EWukongPlannedNonAttackType::Sleep:
-			return TEXT("Sleep");
-		case EWukongPlannedNonAttackType::Boring:
-			return TEXT("Boring");
 		case EWukongPlannedNonAttackType::Hold:
 			return TEXT("Hold");
 		case EWukongPlannedNonAttackType::None:
@@ -133,6 +114,12 @@ namespace
 			return TEXT("NinjaB");
 		case EWukongNormalAttackType::Execution:
 			return TEXT("Execution");
+		case EWukongNormalAttackType::Bow4Combo:
+			return TEXT("Bow4Combo");
+		case EWukongNormalAttackType::BowBackDashAttack:
+			return TEXT("BowBackDashAttack");
+		case EWukongNormalAttackType::BowHeavyAttack:
+			return TEXT("BowHeavyAttack");
 		case EWukongNormalAttackType::None:
 		default:
 			return TEXT("None");
@@ -186,7 +173,10 @@ namespace
 		EWukongNormalAttackType::Ambush,
 		EWukongNormalAttackType::NinjaA,
 		EWukongNormalAttackType::NinjaB,
-		EWukongNormalAttackType::Execution
+		EWukongNormalAttackType::Execution,
+		EWukongNormalAttackType::Bow4Combo,
+		EWukongNormalAttackType::BowBackDashAttack,
+		EWukongNormalAttackType::BowHeavyAttack
 	};
 }
 
@@ -251,6 +241,36 @@ AWukongBoss::AWukongBoss()
 	NinjaBAttack.AirTrackInterpSpeed = 8.f;
 	NinjaBAttack.CodeMoveStopDistance = 120.f;
 	NinjaBAttack.CodeMoveMaxDistance = 500.f;
+
+	BowBackDashAttack.MinRange = 180.f;
+	BowBackDashAttack.MaxRange = 650.f;
+	BowBackDashAttack.CandidateMaxRange = 800.f;
+	BowBackDashAttack.bFaceTargetDuringAttack = true;
+	BowBackDashAttack.FacingDuration = 0.35f;
+	BowBackDashAttack.FacingInterpSpeed = 18.f;
+	BowBackDashAttack.SelectionWeight = 1;
+	BowBackDashAttack.bTryTurnAfterAttack = true;
+	BowBackDashAttack.PostAttackTurnStartAngle = 45.f;
+
+	Bow4ComboAttack.MinRange = 700.f;
+	Bow4ComboAttack.MaxRange = 1600.f;
+	Bow4ComboAttack.CandidateMaxRange = 1800.f;
+	Bow4ComboAttack.bFaceTargetDuringAttack = true;
+	Bow4ComboAttack.FacingDuration = 0.5f;
+	Bow4ComboAttack.FacingInterpSpeed = 16.f;
+	Bow4ComboAttack.SelectionWeight = 1;
+	Bow4ComboAttack.bTryTurnAfterAttack = true;
+	Bow4ComboAttack.PostAttackTurnStartAngle = 45.f;
+
+	BowHeavyAttack.MinRange = 700.f;
+	BowHeavyAttack.MaxRange = 1600.f;
+	BowHeavyAttack.CandidateMaxRange = 1800.f;
+	BowHeavyAttack.bFaceTargetDuringAttack = true;
+	BowHeavyAttack.FacingDuration = 0.65f;
+	BowHeavyAttack.FacingInterpSpeed = 16.f;
+	BowHeavyAttack.SelectionWeight = 1;
+	BowHeavyAttack.bTryTurnAfterAttack = true;
+	BowHeavyAttack.PostAttackTurnStartAngle = 45.f;
 }
 
 void AWukongBoss::EnterCombatState()
@@ -262,6 +282,7 @@ void AWukongBoss::EnterCombatState()
 	ClearPlayerPressure();
 	ClearNoAttackCandidateApproach();
 	bUseNonAttackFallbackUntilAttackCandidateAppears = false;
+	bPostBowCloseRangeApproachInProgress = false;
 	CloseRangeBackDashCooldownRemainTime = 0.f;
 	SetWukongCombatState(EWukongCombatState::Approach);
 }
@@ -524,6 +545,15 @@ void AWukongBoss::EnterAttackState()
 		CurrentAttackActionType = EWukongActionType::NormalAttack;
 		CurrentAttackNormalAttackType = PlannedNormalAttackType;
 		InitiativeState = EWukongInitiativeState::BossPattern;
+		if (IsBowNormalAttackType(CurrentAttackNormalAttackType))
+		{
+			BeginBowAttackPresentation();
+			bPostBowCloseRangeApproachInProgress = bForceApproachAfterBowAttack;
+		}
+		else
+		{
+			bPostBowCloseRangeApproachInProgress = false;
+		}
 	}
 	else if (AttackSelection.Montage == GetPlannedComboMontage())
 	{
@@ -532,6 +562,7 @@ void AWukongBoss::EnterAttackState()
 		CurrentAttackComboLength = 1;
 		PlannedComboLength = 1;
 		InitiativeState = EWukongInitiativeState::BossPattern;
+		bPostBowCloseRangeApproachInProgress = false;
 	}
 
 	const bool bUseNormalAttackAnimNotifyTiming = CurrentNormalAttackData && CurrentNormalAttackData->bUseAnimNotifyTiming;
@@ -770,7 +801,11 @@ void AWukongBoss::UpdateApproachState(float DeltaTime)
 
 	if (bNoAttackCandidateApproachInProgress)
 	{
-		if (HasAnyAttackCandidateForCurrentDistance())
+		const bool bPostBowStillNeedsApproach =
+			bPostBowCloseRangeApproachInProgress && !HasAnyNonBowAttackCandidateForCurrentDistance();
+		const bool bFartherThanAllCandidates = IsFartherThanAllAttackCandidates();
+
+		if (HasAnyAttackCandidateForCurrentDistance() && !bPostBowStillNeedsApproach && !bFartherThanAllCandidates)
 		{
 			ClearNoAttackCandidateApproach();
 			bUseNonAttackFallbackUntilAttackCandidateAppears = false;
@@ -796,6 +831,11 @@ void AWukongBoss::UpdateApproachState(float DeltaTime)
 
 		if (NoAttackCandidateApproachRemainTime <= 0.f)
 		{
+			if (bPostBowStillNeedsApproach || bFartherThanAllCandidates)
+			{
+				return;
+			}
+
 			ClearNoAttackCandidateApproach();
 			bUseNonAttackFallbackUntilAttackCandidateAppears = true;
 			ResetPlannedCombatPlan();
@@ -1096,11 +1136,6 @@ void AWukongBoss::UpdateNonAttackActionState(float DeltaTime)
 	}
 
 	LastCompletedNonAttackType = PlannedNonAttackType;
-	if (IsExpressiveNonAttackType(PlannedNonAttackType) &&
-		PlannedNonAttackType != EWukongPlannedNonAttackType::Hold)
-	{
-		NextExpressiveNonAttackType = GetNextExpressiveNonAttackTypeInSequence(PlannedNonAttackType);
-	}
 	ResetPlannedCombatPlan();
 	SetWukongCombatState(EWukongCombatState::Idle);
 }
@@ -1185,7 +1220,10 @@ bool AWukongBoss::HasAnyAttackCandidateForCurrentDistance() const
 		EWukongNormalAttackType::Ambush,
 		EWukongNormalAttackType::NinjaA,
 		EWukongNormalAttackType::NinjaB,
-		EWukongNormalAttackType::Execution })
+		EWukongNormalAttackType::Execution,
+		EWukongNormalAttackType::Bow4Combo,
+		EWukongNormalAttackType::BowBackDashAttack,
+		EWukongNormalAttackType::BowHeavyAttack })
 	{
 		if (!IsNormalAttackEnabledByTestFilter(NormalAttackType))
 		{
@@ -1310,7 +1348,7 @@ bool AWukongBoss::HasValidPlannedMovement() const
 		return PlannedMovementDuration > 0.f;
 	}
 
-	if (IsMobilityNonAttackType(PlannedNonAttackType) || IsExpressiveNonAttackType(PlannedNonAttackType))
+	if (IsMobilityNonAttackType(PlannedNonAttackType))
 	{
 		return GetPlannedNonAttackMontage() != nullptr;
 	}
@@ -1323,14 +1361,6 @@ bool AWukongBoss::IsMobilityNonAttackType(EWukongPlannedNonAttackType NonAttackT
 	return NonAttackType == EWukongPlannedNonAttackType::Strafe ||
 		NonAttackType == EWukongPlannedNonAttackType::Dash ||
 		NonAttackType == EWukongPlannedNonAttackType::Dodge;
-}
-
-bool AWukongBoss::IsExpressiveNonAttackType(EWukongPlannedNonAttackType NonAttackType) const
-{
-	return NonAttackType == EWukongPlannedNonAttackType::ComeHere ||
-		NonAttackType == EWukongPlannedNonAttackType::Sleep ||
-		NonAttackType == EWukongPlannedNonAttackType::Boring ||
-		NonAttackType == EWukongPlannedNonAttackType::Hold;
 }
 
 bool AWukongBoss::IsComboSetEnabledByTestFilter(EWukongComboSet ComboSet) const
@@ -1375,6 +1405,12 @@ bool AWukongBoss::IsNormalAttackEnabledByTestFilter(EWukongNormalAttackType Norm
 		return bTestEnableNinjaB;
 	case EWukongNormalAttackType::Execution:
 		return bTestEnableExecution;
+	case EWukongNormalAttackType::Bow4Combo:
+		return bTestEnableBow4Combo;
+	case EWukongNormalAttackType::BowBackDashAttack:
+		return bTestEnableBowBackDashAttack;
+	case EWukongNormalAttackType::BowHeavyAttack:
+		return bTestEnableBowHeavyAttack;
 	case EWukongNormalAttackType::None:
 	default:
 		return false;
@@ -1395,6 +1431,74 @@ float AWukongBoss::GetMaxEnabledComboCandidateRange() const
 	}
 
 	return MaxCandidateRange;
+}
+
+float AWukongBoss::GetMaxEnabledAttackCandidateRange() const
+{
+	float MaxCandidateRange = GetMaxEnabledComboCandidateRange();
+	for (const EWukongNormalAttackType NormalAttackType : AllWukongNormalAttackTypes)
+	{
+		if (!IsNormalAttackEnabledByTestFilter(NormalAttackType))
+		{
+			continue;
+		}
+
+		const FWukongNormalAttackData* NormalAttackData = GetNormalAttackData(NormalAttackType);
+		if (NormalAttackData && NormalAttackData->Montage)
+		{
+			MaxCandidateRange = FMath::Max(MaxCandidateRange, NormalAttackData->CandidateMaxRange);
+		}
+	}
+
+	return MaxCandidateRange;
+}
+
+bool AWukongBoss::IsFartherThanAllAttackCandidates() const
+{
+	if (!CurrentTarget)
+	{
+		return false;
+	}
+
+	const float MaxCandidateRange = GetMaxEnabledAttackCandidateRange();
+	return MaxCandidateRange > 0.f && GetTargetDistance2D() > MaxCandidateRange;
+}
+
+bool AWukongBoss::HasAnyNonBowAttackCandidateForCurrentDistance() const
+{
+	if (!CurrentTarget)
+	{
+		return false;
+	}
+
+	const float TargetDistance = GetTargetDistance2D();
+	auto IsWithinRange = [TargetDistance](float MinRange, float MaxRange)
+	{
+		return TargetDistance >= MinRange && TargetDistance <= MaxRange;
+	};
+
+	if (HasAnyComboMontage() && IsWithinRange(0.f, GetMaxEnabledComboCandidateRange()))
+	{
+		return true;
+	}
+
+	for (const EWukongNormalAttackType NormalAttackType : AllWukongNormalAttackTypes)
+	{
+		if (IsBowNormalAttackType(NormalAttackType) || !IsNormalAttackEnabledByTestFilter(NormalAttackType))
+		{
+			continue;
+		}
+
+		const FWukongNormalAttackData* NormalAttackData = GetNormalAttackData(NormalAttackType);
+		if (NormalAttackData &&
+			NormalAttackData->Montage &&
+			IsWithinRange(NormalAttackData->MinRange, NormalAttackData->CandidateMaxRange))
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 EWukongMovementDirection AWukongBoss::ChooseStrafeDirectionAvoidingImmediateReverse() const
@@ -1427,6 +1531,12 @@ void AWukongBoss::CollectNormalAttackCandidates(float TargetDistance, bool bIgno
 
 	for (const EWukongNormalAttackType NormalAttackType : AllWukongNormalAttackTypes)
 	{
+		const bool bIsBowAttack = IsBowNormalAttackType(NormalAttackType);
+		if (bIsBowAttack && (bPostBowCloseRangeApproachInProgress || WasRecentlyUsedBowNormalAttack(1)))
+		{
+			continue;
+		}
+
 		if (!IsNormalAttackEnabledByTestFilter(NormalAttackType))
 		{
 			continue;
@@ -1547,6 +1657,12 @@ const FWukongNormalAttackData* AWukongBoss::GetNormalAttackData(EWukongNormalAtt
 		return &NinjaBAttack;
 	case EWukongNormalAttackType::Execution:
 		return &ExecutionAttack;
+	case EWukongNormalAttackType::Bow4Combo:
+		return &Bow4ComboAttack;
+	case EWukongNormalAttackType::BowBackDashAttack:
+		return &BowBackDashAttack;
+	case EWukongNormalAttackType::BowHeavyAttack:
+		return &BowHeavyAttack;
 	case EWukongNormalAttackType::None:
 	default:
 		return nullptr;
@@ -1670,23 +1786,6 @@ void AWukongBoss::HandleComboDecisionPoint()
 	AnimInstance->Montage_JumpToSection(NextSectionName, ComboMontage);
 }
 
-UAnimMontage* AWukongBoss::GetExpressiveNonAttackMontage(EWukongPlannedNonAttackType NonAttackType) const
-{
-	switch (NonAttackType)
-	{
-	case EWukongPlannedNonAttackType::ComeHere:
-		return ComeHereMontage.Get();
-	case EWukongPlannedNonAttackType::Sleep:
-		return SleepMontage.Get();
-	case EWukongPlannedNonAttackType::Boring:
-		return BoringMontage.Get();
-	case EWukongPlannedNonAttackType::Hold:
-	case EWukongPlannedNonAttackType::None:
-	default:
-		return nullptr;
-	}
-}
-
 UAnimMontage* AWukongBoss::GetMobilityNonAttackMontage(EWukongPlannedNonAttackType NonAttackType, EWukongMovementDirection MovementDirection) const
 {
 	switch (NonAttackType)
@@ -1719,9 +1818,6 @@ UAnimMontage* AWukongBoss::GetMobilityNonAttackMontage(EWukongPlannedNonAttackTy
 		}
 	case EWukongPlannedNonAttackType::Strafe:
 	case EWukongPlannedNonAttackType::Hold:
-	case EWukongPlannedNonAttackType::ComeHere:
-	case EWukongPlannedNonAttackType::Sleep:
-	case EWukongPlannedNonAttackType::Boring:
 	case EWukongPlannedNonAttackType::None:
 	default:
 		return nullptr;
@@ -1730,11 +1826,6 @@ UAnimMontage* AWukongBoss::GetMobilityNonAttackMontage(EWukongPlannedNonAttackTy
 
 UAnimMontage* AWukongBoss::GetPlannedNonAttackMontage() const
 {
-	if (IsExpressiveNonAttackType(PlannedNonAttackType))
-	{
-		return GetExpressiveNonAttackMontage(PlannedNonAttackType);
-	}
-
 	if (IsMobilityNonAttackType(PlannedNonAttackType))
 	{
 		return GetMobilityNonAttackMontage(PlannedNonAttackType, PlannedMovementDirection);
@@ -1774,6 +1865,13 @@ void AWukongBoss::RecordAction(EWukongActionType ActionType, EWukongComboSet Com
 	{
 		RecentActionHistory.RemoveAt(0, RecentActionHistory.Num() - MaxRecentActionHistory);
 	}
+
+	if (bForceApproachAfterBowAttack &&
+		ActionType == EWukongActionType::NormalAttack &&
+		IsBowNormalAttackType(NormalAttackType))
+	{
+		bPostBowCloseRangeApproachInProgress = true;
+	}
 }
 
 bool AWukongBoss::WasRecentlyUsed(EWukongActionType ActionType, int32 Depth) const
@@ -1811,6 +1909,21 @@ bool AWukongBoss::WasRecentlyUsed(EWukongNormalAttackType AttackType, int32 Dept
 	for (int32 Index = RecentActionHistory.Num() - 1; Index >= RecentActionHistory.Num() - NumToCheck; --Index)
 	{
 		if (RecentActionHistory[Index].NormalAttackType == AttackType)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool AWukongBoss::WasRecentlyUsedBowNormalAttack(int32 Depth) const
+{
+	const int32 NumToCheck = FMath::Min(Depth, RecentActionHistory.Num());
+	for (int32 Index = RecentActionHistory.Num() - 1; Index >= RecentActionHistory.Num() - NumToCheck; --Index)
+	{
+		const FWukongActionRecord& Record = RecentActionHistory[Index];
+		if (Record.ActionType == EWukongActionType::NormalAttack && IsBowNormalAttackType(Record.NormalAttackType))
 		{
 			return true;
 		}
@@ -1948,10 +2061,37 @@ void AWukongBoss::ResetPendingAttackMotionState()
 
 void AWukongBoss::ResetCurrentAttackRuntimeState()
 {
+	EndBowAttackPresentation();
+	Super::ResetCurrentAttackRuntimeState();
 	CurrentAttackActionType = EWukongActionType::None;
 	CurrentAttackComboSet = EWukongComboSet::None;
 	CurrentAttackComboLength = 0;
 	CurrentAttackNormalAttackType = EWukongNormalAttackType::None;
+}
+
+bool AWukongBoss::IsBowNormalAttackType(EWukongNormalAttackType AttackType) const
+{
+	return AttackType == EWukongNormalAttackType::Bow4Combo ||
+		AttackType == EWukongNormalAttackType::BowBackDashAttack ||
+		AttackType == EWukongNormalAttackType::BowHeavyAttack;
+}
+
+void AWukongBoss::BeginBowAttackPresentation()
+{
+	SetWeaponVisible(false);
+	SetBowVisible(true);
+}
+
+void AWukongBoss::EndBowAttackPresentation()
+{
+	if (AttachedArrow)
+	{
+		AttachedArrow->Destroy();
+		AttachedArrow = nullptr;
+	}
+
+	SetBowVisible(false);
+	SetWeaponVisible(true);
 }
 
 void AWukongBoss::ApplyTimedMontageSuperArmor(float MontageDuration, float DurationScale)
@@ -2148,9 +2288,8 @@ bool AWukongBoss::CanStartMobilityMontageSafely() const
 bool AWukongBoss::CanParryIncomingHit(EHitReactType HitType, AActor* DamageCauser, const FVector& SwingDirection) const
 {
 	if (CurrentState != EMonsterState::Combat ||
-		HitType != EHitReactType::LightHit ||
+		!IsParryableHitType(HitType) ||
 		!DamageCauser ||
-		CurrentCombatSubState == EWukongCombatState::ParrySuccess ||
 		CurrentAttackActionType == EWukongActionType::ParryCounter ||
 		IsInHitReact() ||
 		bBeingExecuted ||
@@ -2168,6 +2307,42 @@ bool AWukongBoss::CanParryIncomingHit(EHitReactType HitType, AActor* DamageCause
 	}
 
 	return true;
+}
+
+bool AWukongBoss::IsParryableHitType(EHitReactType HitType) const
+{
+	switch (HitType)
+	{
+	case EHitReactType::LightHit:
+	case EHitReactType::HeavyHit_A:
+	case EHitReactType::HeavyHit_B:
+	case EHitReactType::HeavyHit_C:
+	case EHitReactType::LargeHit_Short:
+	case EHitReactType::LargeHit_Long:
+	case EHitReactType::Airborne:
+	case EHitReactType::Knockdown:
+		return true;
+	case EHitReactType::None:
+	case EHitReactType::Execution:
+	case EHitReactType::Dead:
+	default:
+		return false;
+	}
+}
+
+float AWukongBoss::GetPerfectParryChanceForHitType(EHitReactType HitType) const
+{
+	return FMath::Clamp(
+		HitType == EHitReactType::LightHit ? LightHitPerfectParryChance : StrongHitPerfectParryChance,
+		0.f,
+		1.f);
+}
+
+float AWukongBoss::GetNormalParryChanceForHitType(EHitReactType HitType) const
+{
+	const float PerfectChance = GetPerfectParryChanceForHitType(HitType);
+	const float RawNormalChance = HitType == EHitReactType::LightHit ? LightHitNormalParryChance : StrongHitNormalParryChance;
+	return FMath::Clamp(RawNormalChance, 0.f, 1.f - PerfectChance);
 }
 
 UAnimMontage* AWukongBoss::GetParrySuccessMontage(const FVector& SwingDirection)
@@ -2522,8 +2697,8 @@ bool AWukongBoss::TryHandleIncomingHitBeforeDamage(
 		return false;
 	}
 
-	const float PerfectChance = FMath::Clamp(PerfectHitParryChance, 0.f, 1.f);
-	const float NormalChance = FMath::Clamp(NormalHitParryChance, 0.f, 1.f);
+	const float PerfectChance = GetPerfectParryChanceForHitType(HitType);
+	const float NormalChance = GetNormalParryChanceForHitType(HitType);
 	const float Roll = FMath::FRand();
 
 	if (Roll <= PerfectChance)
@@ -2546,9 +2721,9 @@ bool AWukongBoss::TryHandleIncomingHitBeforeDamage(
 	return false;
 }
 
-void AWukongBoss::NotifyAttackParriedBy(AJunPlayer* Parrier)
+void AWukongBoss::NotifyAttackParriedBy(AJunPlayer* Parrier, float PostureScale)
 {
-	Super::NotifyAttackParriedBy(Parrier);
+	Super::NotifyAttackParriedBy(Parrier, PostureScale);
 
 	// 일반 패턴 공격은 플레이어가 패리해도 공격권을 넘기지 않는다.
 	// 보스가 플레이어 공격을 완벽 패리해서 얻은 반격만 다시 빼앗길 수 있다.
@@ -3248,6 +3423,24 @@ void AWukongBoss::RefreshPlannedCombatPlan()
 {
 	ResetPlannedCombatPlan();
 
+	const bool bShouldCloseAfterBow =
+		bPostBowCloseRangeApproachInProgress || WasRecentlyUsedBowNormalAttack(1);
+
+	if (bShouldCloseAfterBow && !HasAnyNonBowAttackCandidateForCurrentDistance())
+	{
+		bPostBowCloseRangeApproachInProgress = true;
+		BeginNoAttackCandidateApproach();
+		PlannedActionType = EWukongPlannedActionType::None;
+		return;
+	}
+
+	if (IsFartherThanAllAttackCandidates())
+	{
+		BeginNoAttackCandidateApproach();
+		PlannedActionType = EWukongPlannedActionType::None;
+		return;
+	}
+
 	if (!HasAnyAttackCandidateForCurrentDistance())
 	{
 		if (bUseNonAttackFallbackUntilAttackCandidateAppears)
@@ -3265,6 +3458,19 @@ void AWukongBoss::RefreshPlannedCombatPlan()
 	ClearNoAttackCandidateApproach();
 	bUseNonAttackFallbackUntilAttackCandidateAppears = false;
 	bShouldStartNoAttackFallbackWithStrafe = true;
+
+	if (bShouldCloseAfterBow)
+	{
+		bPostBowCloseRangeApproachInProgress = true;
+		PlannedActionType = EWukongPlannedActionType::Attack;
+		RefreshPlannedAttackType();
+		if (PlannedAttackType == EWukongPlannedAttackType::None)
+		{
+			BeginNoAttackCandidateApproach();
+			PlannedActionType = EWukongPlannedActionType::None;
+		}
+		return;
+	}
 
 	if (FMath::FRand() <= AttackPlanWeight)
 	{
@@ -3302,55 +3508,6 @@ void AWukongBoss::RefreshNoAttackFallbackMovementType()
 
 	TArray<EWukongPlannedNonAttackType> NonAttackCandidates;
 	NonAttackCandidates.Add(EWukongPlannedNonAttackType::Strafe);
-	const bool bLastWasExpressiveNonAttack =
-		IsExpressiveNonAttackType(LastCompletedNonAttackType) &&
-		LastCompletedNonAttackType != EWukongPlannedNonAttackType::Hold;
-
-	if (bEnableExpressiveNonAttackActions && !bLastWasExpressiveNonAttack)
-	{
-		auto TryAddExpressiveCandidate = [this, &NonAttackCandidates](EWukongPlannedNonAttackType CandidateType)
-		{
-			switch (CandidateType)
-			{
-			case EWukongPlannedNonAttackType::ComeHere:
-				if (ComeHereMontage)
-				{
-					NonAttackCandidates.Add(CandidateType);
-					return true;
-				}
-				break;
-			case EWukongPlannedNonAttackType::Sleep:
-				if (SleepMontage)
-				{
-					NonAttackCandidates.Add(CandidateType);
-					return true;
-				}
-				break;
-			case EWukongPlannedNonAttackType::Boring:
-				if (BoringMontage)
-				{
-					NonAttackCandidates.Add(CandidateType);
-					return true;
-				}
-				break;
-			default:
-				break;
-			}
-
-			return false;
-		};
-
-		EWukongPlannedNonAttackType CandidateType = NextExpressiveNonAttackType;
-		for (int32 Attempt = 0; Attempt < 3; ++Attempt)
-		{
-			if (TryAddExpressiveCandidate(CandidateType))
-			{
-				break;
-			}
-
-			CandidateType = GetNextExpressiveNonAttackTypeInSequence(CandidateType);
-		}
-	}
 	NonAttackCandidates.Add(EWukongPlannedNonAttackType::Hold);
 
 	if (NonAttackCandidates.Num() <= 0)

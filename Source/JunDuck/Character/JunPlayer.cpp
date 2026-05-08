@@ -13,8 +13,10 @@
 #include "Kismet/KismetMathLibrary.h"
 #include "Engine/World.h"
 #include "Engine/Engine.h"
+#include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/PlayerStart.h"
 #include "UObject/UnrealType.h"
 
 namespace
@@ -93,11 +95,13 @@ void AJunPlayer::BeginPlay()
 	Super::BeginPlay();
 
 	SetTeamTag(JunGameplayTags::Team_Player);
+	CurrentReviveCount = FMath::Max(0, MaxReviveCount);
 	SpawnAndAttachWeapon();
 	SpawnAndAttachScabbard();
 	GetPlayerAnimInstance();
 	CacheDefaultMovementBrakingSettings();
-	TryInitializeCameraRotationFromController();
+	ResetCameraToSpawnView(GetActorRotation());
+	StartCameraHardSnap();
 
 	if (CameraAnchor)
 	{
@@ -110,11 +114,17 @@ void AJunPlayer::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 
 	TryInitializeCameraRotationFromController();
+	UpdateCameraHardSnap();
 	UpdateCameraAnchor(DeltaTime);
+	UpdateJunCamera(DeltaTime);
+
+	if (DeathState != EJunPlayerDeathState::Alive)
+	{
+		UpdateDeathState(DeltaTime);
+		return;
+	}
 
 	ValidateLockOnTarget();
-
-	UpdateJunCamera(DeltaTime);
 
 	UpdateCharacterRotationForCurrentCameraMode(DeltaTime);
 
@@ -141,6 +151,28 @@ void AJunPlayer::Tick(float DeltaTime)
 	UpdatePostureRecovery(DeltaTime);
 
 	UpdateJumpStartAnimTrigger(DeltaTime);
+}
+
+void AJunPlayer::OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker)
+{
+	if (Damage <= 0 || DeathState != EJunPlayerDeathState::Alive)
+	{
+		return;
+	}
+
+	Hp = FMath::Clamp(Hp - Damage, 0, MaxHp);
+	if (Hp > 0)
+	{
+		return;
+	}
+
+	if (CurrentReviveCount > 0)
+	{
+		EnterFakeDeath();
+		return;
+	}
+
+	EnterRealDeath();
 }
 
 void AJunPlayer::UpdateCameraAnchor(float DeltaTime)
@@ -283,10 +315,72 @@ void AJunPlayer::TryInitializeCameraRotationFromController()
 		return;
 	}
 
-	const FRotator ControlRot = Controller->GetControlRotation();
-	TargetCameraYaw = ControlRot.Yaw;
-	TargetCameraPitch = ControlRot.Pitch;
+	ResetCameraToSpawnView(GetActorRotation());
+	StartCameraHardSnap();
+}
+
+void AJunPlayer::ResetCameraToSpawnView(const FRotator& SpawnRotation)
+{
+	if (!Controller)
+	{
+		bCameraRotationInitialized = false;
+		return;
+	}
+
+	TargetCameraYaw = SpawnRotation.Yaw;
+	TargetCameraPitch = FMath::Clamp(SpawnCameraPitch, MinCameraPitch, MaxCameraPitch);
+	Controller->SetControlRotation(FRotator(TargetCameraPitch, TargetCameraYaw, 0.f));
 	bCameraRotationInitialized = true;
+}
+
+void AJunPlayer::SnapCameraToCurrentFreeView()
+{
+	if (CameraAnchor && GetCapsuleComponent())
+	{
+		CameraAnchor->SetWorldLocation(GetCapsuleComponent()->GetComponentLocation());
+	}
+
+	if (SpringArm)
+	{
+		SpringArm->SocketOffset = FreeCameraSocketOffset;
+		SpringArm->TargetArmLength = GetPitchAdjustedSpringArmLength();
+		if (UJunSpringArmComponent* JunSpringArm = Cast<UJunSpringArmComponent>(SpringArm))
+		{
+			JunSpringArm->ResetCameraSmoothing();
+		}
+	}
+
+	if (Camera)
+	{
+		Camera->SetFieldOfView(FreeCameraFOV);
+	}
+}
+
+void AJunPlayer::StartCameraHardSnap(int32 FrameCount)
+{
+	CameraHardSnapRemainFrames = FMath::Max(CameraHardSnapRemainFrames, FrameCount);
+	if (SpringArm)
+	{
+		bSavedCameraLagEnabledForHardSnap = SpringArm->bEnableCameraLag;
+		SpringArm->bEnableCameraLag = false;
+	}
+	SnapCameraToCurrentFreeView();
+}
+
+void AJunPlayer::UpdateCameraHardSnap()
+{
+	if (CameraHardSnapRemainFrames <= 0)
+	{
+		return;
+	}
+
+	SnapCameraToCurrentFreeView();
+	--CameraHardSnapRemainFrames;
+
+	if (CameraHardSnapRemainFrames <= 0 && SpringArm)
+	{
+		SpringArm->bEnableCameraLag = bSavedCameraLagEnabledForHardSnap;
+	}
 }
 
 void AJunPlayer::UpdateMovementSpeed(float DeltaTime)
@@ -448,6 +542,16 @@ bool AJunPlayer::IsDodgeAttacking() const
 bool AJunPlayer::IsExecuting() const
 {
 	return bIsExecuting;
+}
+
+bool AJunPlayer::IsInDeathSequence() const
+{
+	return DeathState != EJunPlayerDeathState::Alive;
+}
+
+bool AJunPlayer::IsWaitingForFakeDeathChoice() const
+{
+	return DeathState == EJunPlayerDeathState::FakeDeath && bDeathPresentationStarted;
 }
 
 bool AJunPlayer::IsLockOnTurnPlaying() const
@@ -619,15 +723,26 @@ void AJunPlayer::HandleGameplayEventNotify(FGameplayTag EventTag)
 				CameraMode = EJunCameraMode::Execution;
 			}
 		}
-		TriggerExecutionTargetMontage();
+		if (bIsExecuting && CurrentExecutionTarget)
+		{
+			CurrentExecutionTarget->TriggerPendingExecutionMontage(!bCurrentExecutionIsFinish);
+		}
 	}
 	else if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Execution_FinishCameraPullIn))
 	{
 		AdvanceExecutionFinishCameraPullInStage();
+		if (bCurrentExecutionIsFinish && bIsExecuting && CurrentExecutionTarget)
+		{
+			CurrentExecutionTarget->ApplyPendingExecutionResult();
+		}
 	}
 	else if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Execution_CameraRestore))
 	{
 		EndExecutionCamera();
+	}
+	else if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Death_Present))
+	{
+		TriggerPendingDeathPresentation();
 	}
 }
 
@@ -1063,7 +1178,7 @@ void AJunPlayer::ToggleLockOn()
 		return;
 	}
 
-	AJunCharacter* NewTarget = FindBestAttackTarget();
+	AJunCharacter* NewTarget = FindBestLockOnTarget();
 	if (!NewTarget)
 	{
 		return;
@@ -1507,9 +1622,10 @@ void AJunPlayer::ReceiveHit(
 	float DamageAmount,
 	AActor* DamageCauser,
 	const FVector& SwingDirection,
-	const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
+	const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
+	bool bCanBuildAttackerPostureOnParry)
 {
-	if (Is_Dead() || bIsExecuting)
+	if (Is_Dead() || bIsExecuting || IsInDeathSequence())
 	{
 		return;
 	}
@@ -1527,9 +1643,12 @@ void AJunPlayer::ReceiveHit(
 		return;
 	case EJunPlayerHitResolveResult::PerfectParrySuccess:
 		AddPosture(PerfectParryPostureGain);
-		if (AJunMonster* AttackingMonster = Cast<AJunMonster>(DamageCauser))
+		if (bCanBuildAttackerPostureOnParry)
 		{
-			AttackingMonster->NotifyAttackParriedBy(this);
+			if (AJunMonster* AttackingMonster = Cast<AJunMonster>(DamageCauser))
+			{
+				AttackingMonster->NotifyAttackParriedBy(this, 1.f);
+			}
 		}
 		StartParrySuccess();
 		return;
@@ -1538,6 +1657,13 @@ void AJunPlayer::ReceiveHit(
 		{
 			StartGuardBreak();
 			return;
+		}
+		if (bCanBuildAttackerPostureOnParry)
+		{
+			if (AJunMonster* AttackingMonster = Cast<AJunMonster>(DamageCauser))
+			{
+				AttackingMonster->NotifyAttackParriedBy(this, 0.5f);
+			}
 		}
 		AddPosture(NormalParryPostureGain);
 		StartParrySuccess();
@@ -1557,7 +1683,7 @@ void AJunPlayer::ReceiveHit(
 			? GuardBreakDamageMultiplier
 			: 1.f;
 		OnDamaged(FMath::RoundToInt(DamageAmount * DamageMultiplier), AttackerCharacter);
-		if (Is_Dead())
+		if (Is_Dead() || IsInDeathSequence())
 		{
 			return;
 		}
@@ -3084,7 +3210,7 @@ void AJunPlayer::TriggerExecutionTargetMontage()
 		return;
 	}
 
-	CurrentExecutionTarget->TriggerPendingExecutionMontage();
+	CurrentExecutionTarget->TriggerPendingExecutionMontage(!bCurrentExecutionIsFinish);
 }
 
 void AJunPlayer::FinishExecution()
@@ -3651,6 +3777,349 @@ float AJunPlayer::GetCurrentDodgeTimelineRate() const
 	return FMath::Max(CurrentDodgePlayRate, KINDA_SMALL_NUMBER);
 }
 
+bool AJunPlayer::TryChooseFakeDeathDie()
+{
+	if (!IsWaitingForFakeDeathChoice())
+	{
+		return false;
+	}
+
+	if (AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(GetController()))
+	{
+		JunPlayerController->HideFakeDeathUI();
+	}
+	ConfirmRealDeathFromFakeDeath();
+	return true;
+}
+
+bool AJunPlayer::TryChooseFakeDeathRevive()
+{
+	if (!IsWaitingForFakeDeathChoice() || CurrentReviveCount <= 0)
+	{
+		return false;
+	}
+
+	StartFakeDeathRevive();
+	return true;
+}
+
+void AJunPlayer::EnterFakeDeath()
+{
+	DeathState = EJunPlayerDeathState::FakeDeath;
+	Hp = 0;
+	bDeathPresentationStarted = false;
+	ApplyDeathControlLock();
+	NotifyBossPlayerFakeDeathStarted();
+
+	if (FakeDeathMontage)
+	{
+		PlayAnimMontage(FakeDeathMontage);
+	}
+	bPendingDeathPresentationIsRealDeath = false;
+}
+
+void AJunPlayer::EnterRealDeath()
+{
+	DeathState = EJunPlayerDeathState::RealDeath;
+	Hp = 0;
+	RealDeathHoldRemainTime = 0.f;
+	RealDeathFullBlackHoldRemainTime = -1.f;
+	bRealDeathBlackFadeStarted = false;
+	bDeathPresentationStarted = false;
+	AddGameplayTag(JunGameplayTags::State_Condition_Dead);
+	ApplyDeathControlLock();
+	NotifyBossPlayerRealDeathStarted();
+
+	if (DeathMontage)
+	{
+		PlayAnimMontage(DeathMontage);
+	}
+	bPendingDeathPresentationIsRealDeath = true;
+}
+
+void AJunPlayer::ConfirmRealDeathFromFakeDeath()
+{
+	DeathState = EJunPlayerDeathState::RealDeath;
+	Hp = 0;
+	RealDeathHoldRemainTime = 0.f;
+	RealDeathFullBlackHoldRemainTime = -1.f;
+	bRealDeathBlackFadeStarted = false;
+	bPendingDeathPresentationIsRealDeath = true;
+	bDeathPresentationStarted = false;
+	AddGameplayTag(JunGameplayTags::State_Condition_Dead);
+	ApplyDeathControlLock();
+	NotifyBossPlayerRealDeathStarted();
+
+	// Already lying in FakeDeath's Death loop, so there is no new death-section notify to wait for.
+	TriggerPendingDeathPresentation();
+}
+
+void AJunPlayer::TriggerPendingDeathPresentation()
+{
+	if (DeathState != EJunPlayerDeathState::FakeDeath &&
+		DeathState != EJunPlayerDeathState::RealDeath)
+	{
+		return;
+	}
+
+	if (bDeathPresentationStarted)
+	{
+		return;
+	}
+
+	bDeathPresentationStarted = true;
+	if (AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(GetController()))
+	{
+		JunPlayerController->SetLockOnMarkerSuppressed(true);
+
+		if (bPendingDeathPresentationIsRealDeath)
+		{
+			RealDeathHoldRemainTime = RealDeathUIHoldDuration;
+			JunPlayerController->ShowRealDeathUI();
+		}
+		else
+		{
+			JunPlayerController->ShowFakeDeathUI();
+		}
+	}
+}
+
+void AJunPlayer::StartFakeDeathRevive()
+{
+	DeathState = EJunPlayerDeathState::FakeDeathReviving;
+	CurrentReviveCount = FMath::Max(0, CurrentReviveCount - 1);
+	bDeathPresentationStarted = false;
+
+	if (AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(GetController()))
+	{
+		JunPlayerController->HideFakeDeathUI();
+	}
+
+	if (UAnimInstance* PlayerAnimInstance = GetPlayerAnimInstance())
+	{
+		PlayerAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnFakeDeathGetUpMontageEnded);
+		PlayerAnimInstance->OnMontageEnded.AddDynamic(this, &AJunPlayer::OnFakeDeathGetUpMontageEnded);
+	}
+
+	if (!FakeDeathGetUpMontage || PlayAnimMontage(FakeDeathGetUpMontage) <= 0.f)
+	{
+		FinishFakeDeathRevive();
+	}
+}
+
+void AJunPlayer::FinishFakeDeathRevive()
+{
+	if (UAnimInstance* PlayerAnimInstance = GetPlayerAnimInstance())
+	{
+		PlayerAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnFakeDeathGetUpMontageEnded);
+	}
+
+	Hp = FMath::Clamp(FMath::RoundToInt(static_cast<float>(MaxHp) * FakeDeathReviveHealthRatio), 1, MaxHp);
+	DeathState = EJunPlayerDeathState::Alive;
+	CurrentPosture = 0.f;
+	bDeathPresentationStarted = false;
+	ClearDeathControlLock();
+	EndLockOn();
+	NotifyBossPlayerRevivedFromFakeDeath();
+
+	if (AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(GetController()))
+	{
+		JunPlayerController->SetLockOnMarkerSuppressed(false);
+		JunPlayerController->HideDeathUI();
+	}
+}
+
+void AJunPlayer::UpdateDeathState(float DeltaTime)
+{
+	if (DeathState != EJunPlayerDeathState::RealDeath)
+	{
+		return;
+	}
+
+	if (!bDeathPresentationStarted)
+	{
+		return;
+	}
+
+	if (RealDeathHoldRemainTime > 0.f)
+	{
+		RealDeathHoldRemainTime = FMath::Max(0.f, RealDeathHoldRemainTime - DeltaTime);
+		return;
+	}
+
+	AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(GetController());
+	if (!bRealDeathBlackFadeStarted)
+	{
+		bRealDeathBlackFadeStarted = true;
+		if (JunPlayerController)
+		{
+			JunPlayerController->StartDeathFullBlackFadeIn();
+		}
+		return;
+	}
+
+	if (JunPlayerController && JunPlayerController->IsDeathFullBlackOpaque())
+	{
+		if (RealDeathFullBlackHoldRemainTime < 0.f)
+		{
+			RealDeathFullBlackHoldRemainTime = RealDeathFullBlackHoldDuration;
+			return;
+		}
+
+		if (RealDeathFullBlackHoldRemainTime > 0.f)
+		{
+			RealDeathFullBlackHoldRemainTime = FMath::Max(0.f, RealDeathFullBlackHoldRemainTime - DeltaTime);
+			return;
+		}
+
+		DeathState = EJunPlayerDeathState::Respawning;
+		ResetBossesAfterPlayerRealDeath();
+		RespawnAtPlayerStart();
+	}
+}
+
+void AJunPlayer::ApplyDeathControlLock()
+{
+	InterruptActionsForHitReaction();
+	CancelLockOnTurn();
+	if (EquippedWeapon)
+	{
+		EquippedWeapon->StopAttackTrace();
+	}
+	DesiredMoveForward = 0.f;
+	DesiredMoveRight = 0.f;
+	PendingMoveForward = 0.f;
+	PendingMoveRight = 0.f;
+	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	{
+		MovementComponent->StopMovementImmediately();
+	}
+	AddGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	AddGameplayTag(JunGameplayTags::State_Block_Move);
+	AddGameplayTag(JunGameplayTags::State_Block_Jump);
+	AddGameplayTag(JunGameplayTags::State_Block_Attack);
+	AddGameplayTag(JunGameplayTags::State_Block_Dodge);
+}
+
+void AJunPlayer::ClearDeathControlLock()
+{
+	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Jump);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Attack);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Dodge);
+	RemoveGameplayTag(JunGameplayTags::State_Condition_Dead);
+}
+
+void AJunPlayer::NotifyBossPlayerFakeDeathStarted()
+{
+	for (TActorIterator<AJunMonster> It(GetWorld()); It; ++It)
+	{
+		It->EnterPlayerDeathWait();
+	}
+}
+
+void AJunPlayer::NotifyBossPlayerRevivedFromFakeDeath()
+{
+	for (TActorIterator<AJunMonster> It(GetWorld()); It; ++It)
+	{
+		It->ResumeAfterPlayerFakeDeath();
+	}
+}
+
+void AJunPlayer::NotifyBossPlayerRealDeathStarted()
+{
+	for (TActorIterator<AJunMonster> It(GetWorld()); It; ++It)
+	{
+		It->EnterPlayerDeathWait();
+	}
+}
+
+void AJunPlayer::ResetBossesAfterPlayerRealDeath()
+{
+	for (TActorIterator<AJunMonster> It(GetWorld()); It; ++It)
+	{
+		It->ResetAfterPlayerRealDeath();
+	}
+}
+
+void AJunPlayer::RespawnAtPlayerStart()
+{
+	if (UAnimInstance* PlayerAnimInstance = GetPlayerAnimInstance())
+	{
+		if (FakeDeathMontage)
+		{
+			PlayerAnimInstance->Montage_Stop(0.f, FakeDeathMontage);
+		}
+		if (DeathMontage)
+		{
+			PlayerAnimInstance->Montage_Stop(0.f, DeathMontage);
+		}
+		if (FakeDeathGetUpMontage)
+		{
+			PlayerAnimInstance->Montage_Stop(0.f, FakeDeathGetUpMontage);
+		}
+	}
+
+	APlayerStart* PlayerStart = nullptr;
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<APlayerStart> It(World); It; ++It)
+		{
+			PlayerStart = *It;
+			break;
+		}
+	}
+
+	const FRotator SpawnViewRotation = PlayerStart
+		? PlayerStart->GetActorRotation()
+		: GetActorRotation();
+
+	if (PlayerStart)
+	{
+		SetActorLocationAndRotation(
+			PlayerStart->GetActorLocation(),
+			SpawnViewRotation,
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics);
+	}
+
+	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	{
+		MovementComponent->StopMovementImmediately();
+	}
+
+	Hp = MaxHp;
+	CurrentReviveCount = FMath::Max(0, MaxReviveCount);
+	CurrentPosture = 0.f;
+	DeathState = EJunPlayerDeathState::Alive;
+	RealDeathHoldRemainTime = 0.f;
+	RealDeathFullBlackHoldRemainTime = -1.f;
+	bRealDeathBlackFadeStarted = false;
+	bDeathPresentationStarted = false;
+	EndLockOn();
+	ResetCameraToSpawnView(SpawnViewRotation);
+	StartCameraHardSnap(3);
+	ClearDeathControlLock();
+
+	if (AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(GetController()))
+	{
+		JunPlayerController->SetLockOnMarkerSuppressed(false);
+		JunPlayerController->HideDeathUI();
+	}
+}
+
+void AJunPlayer::OnFakeDeathGetUpMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	if (Montage != FakeDeathGetUpMontage)
+	{
+		return;
+	}
+
+	FinishFakeDeathRevive();
+}
+
 void AJunPlayer::UpdateDefenseInput(float DeltaTime)
 {
 	const float DefenseTimelineDeltaTime = DeltaTime * GetCurrentDefenseTimelineRate();
@@ -4059,6 +4528,11 @@ UAnimMontage* AJunPlayer::GetParrySuccessMontage(const FVector& SwingDirection)
 
 bool AJunPlayer::AddPosture(float Amount)
 {
+	if (GuardBreakVulnerableRemainTime > 0.f)
+	{
+		return IsPostureFull();
+	}
+
 	if (MaxPosture <= 0.f || Amount <= 0.f)
 	{
 		return IsPostureFull();
@@ -4925,10 +5399,14 @@ FVector AJunPlayer::GetJumpLaunchDirection(const FVector2D& MoveInput) const
 	return LaunchDirection.GetSafeNormal();
 }
 
-AJunCharacter* AJunPlayer::FindBestAttackTarget()
+AJunCharacter* AJunPlayer::FindBestLockOnTarget()
 {
 	const FVector Start = GetActorLocation();
-	const float Radius = LockOnAcquireDistance;
+	const float Radius = FMath::Max(0.f, LockOnAcquireDistance);
+	if (Radius <= 0.f)
+	{
+		return nullptr;
+	}
 
 	TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
 	ObjectTypes.Add(UEngineTypes::ConvertToObjectType(ECC_Pawn));
@@ -4985,6 +5463,86 @@ AJunCharacter* AJunPlayer::FindBestAttackTarget()
 
 		const float Dot = FVector::DotProduct(CameraForward, ToTarget);
 		if (Dot < 0.2f)
+		{
+			continue;
+		}
+
+		const float Score = Dot * 1000.f - Distance;
+		if (Score > BestScore)
+		{
+			BestScore = Score;
+			BestTarget = Candidate;
+		}
+	}
+
+	return BestTarget;
+}
+
+AJunCharacter* AJunPlayer::FindBestAttackTarget()
+{
+	const FVector Start = GetActorLocation();
+	const float Radius = FMath::Max(0.f, FreeAttackFacingAcquireDistance);
+	if (Radius <= 0.f)
+	{
+		return nullptr;
+	}
+
+	TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
+	ObjectTypes.Add(UEngineTypes::ConvertToObjectType(ECC_Pawn));
+
+	TArray<AActor*> ActorsToIgnore;
+	ActorsToIgnore.Add(this);
+
+	TArray<AActor*> OutActors;
+
+	const bool bHit = UKismetSystemLibrary::SphereOverlapActors(
+		GetWorld(),
+		Start,
+		Radius,
+		ObjectTypes,
+		AJunCharacter::StaticClass(),
+		ActorsToIgnore,
+		OutActors
+	);
+
+	if (!bHit)
+	{
+		return nullptr;
+	}
+
+	AJunCharacter* BestTarget = nullptr;
+	float BestScore = -FLT_MAX;
+
+	const FVector MyLocation = GetActorLocation();
+	const FVector CameraForward = GetCameraForwardOnPlane();
+	const float MinFacingDot = FMath::Cos(FMath::DegreesToRadians(FMath::Clamp(FreeAttackFacingAcquireAngle, 0.f, 180.f)));
+
+	for (AActor* HitActor : OutActors)
+	{
+		AJunCharacter* Candidate = Cast<AJunCharacter>(HitActor);
+		if (!Candidate || Candidate == this)
+		{
+			continue;
+		}
+
+		if (IsSameTeam(Candidate))
+		{
+			continue;
+		}
+
+		FVector ToTarget = Candidate->GetActorLocation() - MyLocation;
+		ToTarget.Z = 0.f;
+
+		const float Distance = ToTarget.Length();
+		if (Distance <= KINDA_SMALL_NUMBER)
+		{
+			continue;
+		}
+
+		ToTarget.Normalize();
+
+		const float Dot = FVector::DotProduct(CameraForward, ToTarget);
+		if (Dot < MinFacingDot)
 		{
 			continue;
 		}
@@ -5069,6 +5627,9 @@ void AJunPlayer::UpdateJunCamera(float DeltaTime)
 	case EJunCameraMode::Execution:
 		UpdateExecutionCamera(DeltaTime);
 		break;
+	case EJunCameraMode::Death:
+		UpdateDeathCamera(DeltaTime);
+		break;
 	case EJunCameraMode::LockOn:
 		UpdateLockOnCamera(DeltaTime);
 		break;
@@ -5082,6 +5643,10 @@ void AJunPlayer::UpdateJunCamera(float DeltaTime)
 	if (CameraMode == EJunCameraMode::Execution)
 	{
 		TargetSocketOffset = GetCurrentExecutionCameraSocketOffset();
+	}
+	else if (CameraMode == EJunCameraMode::Death)
+	{
+		TargetSocketOffset = SpringArm ? SpringArm->SocketOffset : FreeCameraSocketOffset;
 	}
 	else if (bLockOnActive)
 	{
@@ -5104,7 +5669,9 @@ void AJunPlayer::UpdateJunCamera(float DeltaTime)
 
 	if (CameraMode != EJunCameraMode::Execution)
 	{
-		const float TargetArmLength = GetPitchAdjustedSpringArmLength();
+		const float TargetArmLength = CameraMode == EJunCameraMode::Death
+			? (SpringArm ? SpringArm->TargetArmLength : DefaultSpringArmLength)
+			: GetPitchAdjustedSpringArmLength();
 		const bool bShouldShortenArm = TargetArmLength < SpringArm->TargetArmLength;
 
 		SpringArm->TargetArmLength = FMath::FInterpTo(
@@ -5372,6 +5939,71 @@ void AJunPlayer::AdvanceExecutionFinishCameraPullInStage()
 		bExecutionCameraSecondStage = true;
 		bExecutionCameraFinishPullInStage = true;
 	}
+}
+
+void AJunPlayer::StartDeathCamera()
+{
+	if (bLockOnActive)
+	{
+		EndLockOn();
+	}
+
+	CameraMode = EJunCameraMode::Death;
+	CancelLockOnTurn(0.05f);
+	PendingCameraLookInput = FVector2D::ZeroVector;
+	if (GetCharacterMovement())
+	{
+		GetCharacterMovement()->bOrientRotationToMovement = true;
+	}
+}
+
+void AJunPlayer::EndDeathCamera()
+{
+	if (CameraMode == EJunCameraMode::Death)
+	{
+		CameraMode = EJunCameraMode::Free;
+	}
+}
+
+void AJunPlayer::UpdateDeathCamera(float DeltaTime)
+{
+	if (!Controller)
+	{
+		PendingCameraLookInput = FVector2D::ZeroVector;
+		return;
+	}
+
+	FVector CameraBasePoint = CameraAnchor
+		? CameraAnchor->GetComponentLocation()
+		: GetActorLocation();
+	CameraBasePoint.Z += 50.f;
+
+	FVector TargetPoint = GetActorLocation();
+	TargetPoint.Z += DeathCameraTargetHeight;
+
+	const FVector ToTarget = TargetPoint - CameraBasePoint;
+	if (ToTarget.IsNearlyZero())
+	{
+		PendingCameraLookInput = FVector2D::ZeroVector;
+		return;
+	}
+
+	FRotator DesiredRot = ToTarget.Rotation();
+	DesiredRot.Pitch += DeathCameraPitchOffset;
+	DesiredRot.Roll = 0.f;
+	DesiredRot.Pitch = FMath::Clamp(DesiredRot.Pitch, MinCameraPitch, MaxCameraPitch);
+
+	const FRotator NewRot = FMath::RInterpTo(
+		Controller->GetControlRotation(),
+		DesiredRot,
+		DeltaTime,
+		DeathCameraRotationInterpSpeed
+	);
+
+	Controller->SetControlRotation(NewRot);
+	TargetCameraYaw = NewRot.Yaw;
+	TargetCameraPitch = NewRot.Pitch;
+	PendingCameraLookInput = FVector2D::ZeroVector;
 }
 
 void AJunPlayer::UpdateExecutionCamera(float DeltaTime)

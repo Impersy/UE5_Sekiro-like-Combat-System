@@ -1,5 +1,3 @@
-
-
 #pragma once
 
 #include "CoreMinimal.h"
@@ -21,6 +19,15 @@ class JUNDUCK_API AJunPlayerController : public APlayerController
 public:
 	AJunPlayerController(const FObjectInitializer& objectInitializer);
 	void PlayPlayerPostureBreakGlow();
+	void PlayBossPostureBreakGlow();
+	void ShowBossClearUI();
+	void ShowFakeDeathUI();
+	void HideFakeDeathUI();
+	void ShowRealDeathUI();
+	void StartDeathFullBlackFadeIn();
+	void HideDeathUI();
+	bool IsDeathFullBlackOpaque() const;
+	void SetLockOnMarkerSuppressed(bool bSuppressed);
 
 protected:
 	virtual void BeginPlay() override;
@@ -72,4 +79,7 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI|LockOn")
 	float LockOnMarkerShowDelayRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI|LockOn")
+	bool bLockOnMarkerSuppressed = false;
 };

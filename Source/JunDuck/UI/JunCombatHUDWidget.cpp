@@ -34,6 +34,8 @@ void UJunCombatHUDWidget::NativeConstruct()
 		Boss_RedGlow_Root->SetRenderOpacity(0.f);
 		Boss_RedGlow_Root->SetVisibility(ESlateVisibility::Hidden);
 	}
+	ApplyWidgetOpacity(Boss_Clear, 0.f);
+	HideDeathUI();
 	OnBossHealthVisibilityChanged(bBossHealthVisible);
 	OnPlayerDelayedHealthChanged(PlayerDelayedHealthPercent);
 	OnBossDelayedHealthChanged(BossDelayedHealthPercent);
@@ -46,6 +48,8 @@ void UJunCombatHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 	UpdateBossHealthFill(InDeltaTime);
 	UpdateDelayedHealthBars(InDeltaTime);
 	UpdateRedGlowEffects(InDeltaTime);
+	UpdateBossClearUI(InDeltaTime);
+	UpdateDeathUI(InDeltaTime);
 }
 
 void UJunCombatHUDWidget::SetPlayerHealth(int32 CurrentHealth, int32 MaxHealth)
@@ -147,8 +151,114 @@ void UJunCombatHUDWidget::PlayBossPostureBreakGlow()
 	StartRedGlowEffect(Boss_RedGlow_Root, BossRedGlowElapsedTime);
 }
 
+void UJunCombatHUDWidget::ShowBossClearUI()
+{
+	bBossClearUIActive = true;
+	BossClearHoldRemainTime = BossClearHoldDuration;
+	TargetBossClearOpacity = 1.f;
+	SetBossHealthVisible(false);
+	if (BossPostureRoot)
+	{
+		BossPostureRoot->SetVisibility(ESlateVisibility::Hidden);
+	}
+	if (Boss_Clear)
+	{
+		Boss_Clear->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+}
+
+void UJunCombatHUDWidget::ShowFakeDeathUI()
+{
+	SetDeathRootVisible(true);
+	TargetDimBlackOpacity = FakeDeathDimBlackOpacity;
+	TargetFakeDeathOpacity = 1.f;
+	TargetRealDeathOpacity = 0.f;
+	TargetFullBlackOpacity = 0.f;
+
+	if (Die_Select)
+	{
+		Die_Select->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	if (Resurrect_Select)
+	{
+		Resurrect_Select->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+}
+
+void UJunCombatHUDWidget::HideFakeDeathUI()
+{
+	TargetFakeDeathOpacity = 0.f;
+	TargetDimBlackOpacity = 0.f;
+	if (Die_Select)
+	{
+		Die_Select->SetVisibility(ESlateVisibility::Hidden);
+	}
+	if (Resurrect_Select)
+	{
+		Resurrect_Select->SetVisibility(ESlateVisibility::Hidden);
+	}
+}
+
+void UJunCombatHUDWidget::ShowRealDeathUI()
+{
+	SetDeathRootVisible(true);
+	TargetDimBlackOpacity = RealDeathDimBlackOpacity;
+	TargetFakeDeathOpacity = 0.f;
+	TargetRealDeathOpacity = 1.f;
+	TargetFullBlackOpacity = 0.f;
+	if (Die_Select)
+	{
+		Die_Select->SetVisibility(ESlateVisibility::Hidden);
+	}
+	if (Resurrect_Select)
+	{
+		Resurrect_Select->SetVisibility(ESlateVisibility::Hidden);
+	}
+}
+
+void UJunCombatHUDWidget::StartFullBlackFadeIn()
+{
+	SetDeathRootVisible(true);
+	TargetFullBlackOpacity = 1.f;
+}
+
+void UJunCombatHUDWidget::HideDeathUI()
+{
+	DimBlackOpacity = 0.f;
+	FullBlackOpacity = 0.f;
+	FakeDeathOpacity = 0.f;
+	RealDeathOpacity = 0.f;
+	TargetDimBlackOpacity = 0.f;
+	TargetFullBlackOpacity = 0.f;
+	TargetFakeDeathOpacity = 0.f;
+	TargetRealDeathOpacity = 0.f;
+	ApplyWidgetOpacity(DimBlack, 0.f);
+	ApplyWidgetOpacity(FullBlack, 0.f);
+	ApplyWidgetOpacity(Fake_Death, 0.f);
+	ApplyWidgetOpacity(Real_Death, 0.f);
+	if (Die_Select)
+	{
+		Die_Select->SetVisibility(ESlateVisibility::Hidden);
+	}
+	if (Resurrect_Select)
+	{
+		Resurrect_Select->SetVisibility(ESlateVisibility::Hidden);
+	}
+	SetDeathRootVisible(false);
+}
+
+bool UJunCombatHUDWidget::IsFullBlackOpaque() const
+{
+	return FullBlackOpacity >= 0.99f;
+}
+
 void UJunCombatHUDWidget::SetBossHealthVisible(bool bVisible)
 {
+	if (bBossClearUIActive)
+	{
+		bVisible = false;
+	}
+
 	if (bBossHealthVisible == bVisible)
 	{
 		ApplyBossHealthVisibility();
@@ -258,6 +368,98 @@ void UJunCombatHUDWidget::StartRedGlowEffect(UWidget* RootWidget, float& Elapsed
 	RootWidget->SetRenderScale(FVector2D(RedGlowStartScaleX, RedGlowScaleY));
 	RootWidget->SetRenderOpacity(1.f);
 	RootWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+}
+
+void UJunCombatHUDWidget::UpdateDeathUI(float DeltaTime)
+{
+	const auto InterpOpacity = [this, DeltaTime](float Current, float Target)
+	{
+		return DeathUIFadeSpeed > 0.f
+			? FMath::FInterpTo(Current, Target, DeltaTime, DeathUIFadeSpeed)
+			: Target;
+	};
+
+	DimBlackOpacity = InterpOpacity(DimBlackOpacity, TargetDimBlackOpacity);
+	FullBlackOpacity = InterpOpacity(FullBlackOpacity, TargetFullBlackOpacity);
+	FakeDeathOpacity = InterpOpacity(FakeDeathOpacity, TargetFakeDeathOpacity);
+	RealDeathOpacity = InterpOpacity(RealDeathOpacity, TargetRealDeathOpacity);
+
+	if (FMath::IsNearlyEqual(DimBlackOpacity, TargetDimBlackOpacity, 0.005f))
+	{
+		DimBlackOpacity = TargetDimBlackOpacity;
+	}
+	if (FMath::IsNearlyEqual(FullBlackOpacity, TargetFullBlackOpacity, 0.005f))
+	{
+		FullBlackOpacity = TargetFullBlackOpacity;
+	}
+	if (FMath::IsNearlyEqual(FakeDeathOpacity, TargetFakeDeathOpacity, 0.005f))
+	{
+		FakeDeathOpacity = TargetFakeDeathOpacity;
+	}
+	if (FMath::IsNearlyEqual(RealDeathOpacity, TargetRealDeathOpacity, 0.005f))
+	{
+		RealDeathOpacity = TargetRealDeathOpacity;
+	}
+
+	ApplyWidgetOpacity(DimBlack, DimBlackOpacity);
+	ApplyWidgetOpacity(FullBlack, FullBlackOpacity);
+	ApplyWidgetOpacity(Fake_Death, FakeDeathOpacity);
+	ApplyWidgetOpacity(Real_Death, RealDeathOpacity);
+
+	const bool bAnyDeathUIVisible =
+		DimBlackOpacity > 0.f ||
+		FullBlackOpacity > 0.f ||
+		FakeDeathOpacity > 0.f ||
+		RealDeathOpacity > 0.f ||
+		TargetDimBlackOpacity > 0.f ||
+		TargetFullBlackOpacity > 0.f ||
+		TargetFakeDeathOpacity > 0.f ||
+		TargetRealDeathOpacity > 0.f;
+	SetDeathRootVisible(bAnyDeathUIVisible);
+}
+
+void UJunCombatHUDWidget::UpdateBossClearUI(float DeltaTime)
+{
+	const bool bFadingOut = TargetBossClearOpacity < BossClearOpacity;
+	const float InterpSpeed = bFadingOut ? BossClearFadeOutSpeed : BossClearFadeInSpeed;
+	BossClearOpacity = InterpSpeed > 0.f
+		? FMath::FInterpTo(BossClearOpacity, TargetBossClearOpacity, DeltaTime, InterpSpeed)
+		: TargetBossClearOpacity;
+
+	if (FMath::IsNearlyEqual(BossClearOpacity, TargetBossClearOpacity, 0.005f))
+	{
+		BossClearOpacity = TargetBossClearOpacity;
+	}
+
+	if (BossClearHoldRemainTime > 0.f && BossClearOpacity >= 0.99f)
+	{
+		BossClearHoldRemainTime = FMath::Max(0.f, BossClearHoldRemainTime - DeltaTime);
+		if (BossClearHoldRemainTime <= 0.f)
+		{
+			TargetBossClearOpacity = 0.f;
+		}
+	}
+
+	ApplyWidgetOpacity(Boss_Clear, BossClearOpacity);
+}
+
+void UJunCombatHUDWidget::ApplyWidgetOpacity(UWidget* Widget, float Opacity, bool bHideWhenZero) const
+{
+	if (!Widget)
+	{
+		return;
+	}
+
+	Widget->SetRenderOpacity(Opacity);
+	Widget->SetVisibility(!bHideWhenZero || Opacity > 0.f ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+}
+
+void UJunCombatHUDWidget::SetDeathRootVisible(bool bVisible)
+{
+	if (Death_Root)
+	{
+		Death_Root->SetVisibility(bVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
 }
 
 void UJunCombatHUDWidget::UpdateDelayedHealthBar(
@@ -383,7 +585,7 @@ void UJunCombatHUDWidget::ApplyBossLifeWidgets()
 
 void UJunCombatHUDWidget::ApplyBossLifeWidget(int32 LifeIndex, UWidget* RootWidget, UWidget* GrayWidget, UWidget* RedWidget) const
 {
-	const bool bActiveLifeSlot = LifeIndex <= BossMaxLifeCount;
+	const bool bActiveLifeSlot = bBossHealthVisible && LifeIndex <= BossMaxLifeCount;
 	const bool bLifeRemaining = LifeIndex <= BossCurrentLifeCount;
 
 	if (RootWidget)

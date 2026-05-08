@@ -9,6 +9,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "NavigationSystem.h"
+#include "Player/JunPlayerController.h"
+#include "Weapon/ArrowProjectile.h"
 #include "Weapon/WeaponActor.h"
 
 // Engine lifecycle / external API
@@ -163,6 +165,7 @@ void AJunMonster::BeginPlay()
 	SpawnAndAttachWeapon();
 
 	HomeLocation = GetActorLocation();
+	HomeRotation = GetActorRotation();
 	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
 	{
 		DefaultMonsterBrakingDecelerationWalking = MovementComponent->BrakingDecelerationWalking;
@@ -222,6 +225,21 @@ void AJunMonster::Tick(float DeltaTime)
 	StateTime += DeltaTime;
 	Update_State(DeltaTime);
 	UpdateHitReact(DeltaTime);
+}
+
+void AJunMonster::HandleGameplayEventNotify(FGameplayTag EventTag)
+{
+	Super::HandleGameplayEventNotify(EventTag);
+
+	if (!EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Boss_Clear))
+	{
+		return;
+	}
+
+	if (AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(UGameplayStatics::GetPlayerController(this, 0)))
+	{
+		JunPlayerController->ShowBossClearUI();
+	}
 }
 
 void AJunMonster::HandlePatrolMoveCompleted(bool bSuccess)
@@ -377,14 +395,14 @@ void AJunMonster::OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker)
 	}
 }
 
-void AJunMonster::NotifyAttackParriedBy(AJunPlayer* Parrier)
+void AJunMonster::NotifyAttackParriedBy(AJunPlayer* Parrier, float PostureScale)
 {
 	if (!Parrier || CurrentState == EMonsterState::Dead || bBeingExecuted)
 	{
 		return;
 	}
 
-	AddPosture(ParriedPostureGain);
+	AddPosture(ParriedPostureGain * FMath::Max(0.f, PostureScale));
 }
 
 bool AJunMonster::IsExecutionReady() const
@@ -450,19 +468,14 @@ bool AJunMonster::TryBeginExecutionBy(AJunPlayer* Player)
 	return true;
 }
 
-void AJunMonster::TriggerPendingExecutionMontage()
+void AJunMonster::TriggerPendingExecutionMontage(bool bApplyResultImmediately)
 {
 	if (!bBeingExecuted || bExecutionResultApplied || CurrentState == EMonsterState::Dead)
 	{
 		return;
 	}
 
-	bExecutionResultApplied = true;
-	CurrentLifeCount = FMath::Max(0, CurrentLifeCount - 1);
-	CurrentPosture = 0.f;
-	Hp = 0;
-
-	const bool bFinalExecution = CurrentLifeCount <= 0;
+	const bool bFinalExecution = CurrentLifeCount <= 1;
 	UAnimMontage* MontageToPlay = bFinalExecution
 		? (ExecutedFinishMontage ? ExecutedFinishMontage.Get() : ExecutedDeathMontage.Get())
 		: ExecutedMontage.Get();
@@ -482,17 +495,34 @@ void AJunMonster::TriggerPendingExecutionMontage()
 		PlayAnimMontage(MontageToPlay);
 	}
 
-	if (bFinalExecution)
+	if (bApplyResultImmediately)
+	{
+		ApplyPendingExecutionResult();
+	}
+
+	if (!MontageToPlay && !bFinalExecution)
+	{
+		FinishExecutionRecovery();
+	}
+}
+
+void AJunMonster::ApplyPendingExecutionResult()
+{
+	if (!bBeingExecuted || bExecutionResultApplied || CurrentState == EMonsterState::Dead)
+	{
+		return;
+	}
+
+	bExecutionResultApplied = true;
+	CurrentLifeCount = FMath::Max(0, CurrentLifeCount - 1);
+	CurrentPosture = 0.f;
+	Hp = 0;
+
+	if (CurrentLifeCount <= 0)
 	{
 		EndAttackFacingWindow();
 		AddGameplayTag(JunGameplayTags::State_Condition_Dead);
 		SetMonsterState(EMonsterState::Dead);
-		return;
-	}
-
-	if (!MontageToPlay)
-	{
-		FinishExecutionRecovery();
 	}
 }
 
@@ -774,6 +804,68 @@ void AJunMonster::SetMonsterState(EMonsterState NewState)
 	default:
 		break;
 	}
+}
+
+void AJunMonster::EnterPlayerDeathWait()
+{
+	StopAIMovement();
+	StopAllAttackTraces();
+	CancelCombatTurn();
+	ResetCombatTurnState();
+	ResetCurrentAttackRuntimeState();
+	EndHitReact();
+	bIsAttacking = false;
+	bRunLocomotionRequested = false;
+	CombatMoveInput = FVector2D::ZeroVector;
+	SetDesiredMoveAxes(0.f, 0.f);
+	if (GetCharacterMovement())
+	{
+		GetCharacterMovement()->StopMovementImmediately();
+	}
+	AddGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	AddGameplayTag(JunGameplayTags::State_Block_Move);
+	if (CurrentState != EMonsterState::Combat)
+	{
+		SetMonsterState(EMonsterState::Combat);
+	}
+}
+
+void AJunMonster::ResumeAfterPlayerFakeDeath()
+{
+	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
+	if (CurrentState != EMonsterState::Combat)
+	{
+		SetMonsterState(EMonsterState::Combat);
+	}
+}
+
+void AJunMonster::ResetAfterPlayerRealDeath()
+{
+	StopAIMovement();
+	StopAllAttackTraces();
+	CancelCombatTurn();
+	ResetCombatTurnState();
+	ResetCurrentAttackRuntimeState();
+	ResetExecutionRuntimeState();
+	EndHitReact();
+	RemoveGameplayTag(JunGameplayTags::State_Condition_Dead);
+	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
+	bIsAttacking = false;
+	bRunLocomotionRequested = false;
+	CombatMoveInput = FVector2D::ZeroVector;
+	SetDesiredMoveAxes(0.f, 0.f);
+	ClearCurrentTarget();
+	Hp = MaxHp;
+	CurrentLifeCount = FMath::Max(1, MaxLifeCount);
+	CurrentPosture = 0.f;
+	SetActorLocationAndRotation(HomeLocation, HomeRotation, false, nullptr, ETeleportType::TeleportPhysics);
+	if (GetCharacterMovement())
+	{
+		GetCharacterMovement()->StopMovementImmediately();
+	}
+	SetMonsterState(EMonsterState::CutsceneWait);
 }
 
 void AJunMonster::EnterCutsceneWaitState()
@@ -1793,6 +1885,12 @@ void AJunMonster::StopAllAttackTraces()
 	{
 		EquippedScabbard->StopAttackTrace();
 	}
+
+	if (AttachedArrow)
+	{
+		AttachedArrow->Destroy();
+		AttachedArrow = nullptr;
+	}
 }
 
 void AJunMonster::ResetCurrentAttackRuntimeState()
@@ -2067,6 +2165,32 @@ void AJunMonster::SpawnAndAttachWeapon()
 		}
 	}
 
+	if (DefaultBowClass)
+	{
+		EquippedBow = World->SpawnActor<AWeaponActor>(
+			DefaultBowClass,
+			FVector::ZeroVector,
+			FRotator::ZeroRotator,
+			SpawnParams
+		);
+
+		if (!EquippedBow)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Failed to spawn monster bow."));
+		}
+		else
+		{
+			EquippedBow->StopAttackTrace();
+			EquippedBow->SetActorTickEnabled(false);
+			EquippedBow->AttachToComponent(
+				GetMesh(),
+				FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+				BowSocketName
+			);
+			EquippedBow->SetActorHiddenInGame(true);
+		}
+	}
+
 	if (DefaultKickWeaponClass)
 	{
 		EquippedKickWeapon = World->SpawnActor<AWeaponActor>(
@@ -2140,6 +2264,88 @@ void AJunMonster::AttachWeaponToHandSocket()
 void AJunMonster::AttachWeaponToSheathedSocket()
 {
 	AttachWeaponToSocket(SheathedWeaponSocketName);
+}
+
+void AJunMonster::SetWeaponVisible(bool bVisible)
+{
+	if (EquippedWeapon)
+	{
+		EquippedWeapon->SetActorHiddenInGame(!bVisible);
+	}
+}
+
+void AJunMonster::SetBowVisible(bool bVisible)
+{
+	if (EquippedBow)
+	{
+		EquippedBow->SetActorHiddenInGame(!bVisible);
+	}
+}
+
+void AJunMonster::SpawnAttachedArrow()
+{
+	if (!DefaultArrowProjectileClass || !GetWorld() || !GetMesh())
+	{
+		return;
+	}
+
+	if (AttachedArrow)
+	{
+		AttachedArrow->Destroy();
+		AttachedArrow = nullptr;
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = this;
+	SpawnParams.Instigator = this;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	AttachedArrow = GetWorld()->SpawnActor<AArrowProjectile>(
+		DefaultArrowProjectileClass,
+		FVector::ZeroVector,
+		FRotator::ZeroRotator,
+		SpawnParams
+	);
+
+	if (!AttachedArrow)
+	{
+		return;
+	}
+
+	AttachedArrow->AttachToComponent(
+		GetMesh(),
+		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+		ArrowSocketName
+	);
+}
+
+void AJunMonster::FireAttachedArrow(
+	EHitReactType HitReactType,
+	const FJunAttackDamageData& DamageData,
+	const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
+	float Speed,
+	float LifeSeconds,
+	float HomingDuration,
+	float HomingInterpSpeed,
+	float HomingTargetHeightOffset)
+{
+	if (!AttachedArrow)
+	{
+		SpawnAttachedArrow();
+	}
+
+	if (!AttachedArrow)
+	{
+		return;
+	}
+
+	FVector AimPoint = CurrentTarget ? CurrentTarget->GetActorLocation() : (GetActorLocation() + GetActorForwardVector() * 1000.f);
+	AimPoint.Z += 50.f;
+	const FVector FireDirection = (AimPoint - AttachedArrow->GetActorLocation()).GetSafeNormal();
+
+	AttachedArrow->InitializeArrow(this, HitReactType, DamageData, DefenseKnockbackData);
+	AttachedArrow->Fire(FireDirection, Speed, LifeSeconds, CurrentTarget.Get(), HomingDuration, HomingInterpSpeed, HomingTargetHeightOffset);
+	AttachedArrow = nullptr;
 }
 
 // Hit react
@@ -2560,6 +2766,10 @@ void AJunMonster::AddPosture(float Amount)
 	PostureRecoveryDelayRemainTime = PostureRecoveryDelay;
 	if (CurrentPosture >= MaxPosture)
 	{
+		if (AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(UGameplayStatics::GetPlayerController(this, 0)))
+		{
+			JunPlayerController->PlayBossPostureBreakGlow();
+		}
 		StartExecutionReady();
 	}
 }
@@ -2631,7 +2841,7 @@ void AJunMonster::StartExecutionReady()
 
 	bExecutionReady = true;
 	ExecutionReadyRemainTime = ExecutionReadyDuration;
-	CurrentPosture = MaxPosture;
+	CurrentPosture = 0.f;
 
 	StopAIMovement();
 	StopAllAttackTraces();

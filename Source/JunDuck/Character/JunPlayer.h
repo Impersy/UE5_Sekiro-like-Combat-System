@@ -9,7 +9,8 @@ enum class EJunCameraMode : uint8
 {
 	Free,
 	LockOn,
-	Execution
+	Execution,
+	Death
 };
 
 UENUM(BlueprintType)
@@ -99,6 +100,16 @@ enum class EJunPlayerHitState : uint8
 	HitReact
 };
 
+UENUM(BlueprintType)
+enum class EJunPlayerDeathState : uint8
+{
+	Alive,
+	FakeDeath,
+	FakeDeathReviving,
+	RealDeath,
+	Respawning
+};
+
 UCLASS()
 class JUNDUCK_API AJunPlayer : public AJunCharacter
 {
@@ -110,6 +121,7 @@ public:
 public: // Engine / Character Overrides
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
+	virtual void OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker) override;
 	virtual void Jump() override;
 	virtual void Landed(const FHitResult& Hit) override;
 	virtual void HandleGameplayEventNotify(FGameplayTag EventTag) override;
@@ -132,7 +144,8 @@ public: // External Gameplay API
 		float DamageAmount,
 		AActor* DamageCauser,
 		const FVector& SwingDirection,
-		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData());
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData(),
+		bool bCanBuildAttackerPostureOnParry = true);
 	void AddCameraLookInput(const FVector2D& Input);
 	void ToggleLockOn();
 	bool TryCancelJumpAttackEndIntoMove();
@@ -154,6 +167,8 @@ public: // External Gameplay API
 	void BeginDodgeChainWindow();
 	void EndDodgeChainWindow();
 	bool TryStartExecution();
+	bool TryChooseFakeDeathDie();
+	bool TryChooseFakeDeathRevive();
 
 public: // Query / State API
 	bool GetPlayerIsFalling();
@@ -185,6 +200,8 @@ public: // Query / State API
 	float GetDesiredMaxWalkSpeed() const;
 	bool ShouldUseRunningAnim() const;
 	bool IsExecuting() const;
+	bool IsInDeathSequence() const;
+	bool IsWaitingForFakeDeathChoice() const;
 	float GetCurrentPosture() const { return CurrentPosture; }
 	float GetMaxPosture() const { return MaxPosture; }
 
@@ -302,6 +319,25 @@ protected: // Execution
 	UFUNCTION()
 	void OnExecutionMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
+protected: // Death
+	void EnterFakeDeath();
+	void EnterRealDeath();
+	void ConfirmRealDeathFromFakeDeath();
+	void TriggerPendingDeathPresentation();
+	void StartFakeDeathRevive();
+	void FinishFakeDeathRevive();
+	void UpdateDeathState(float DeltaTime);
+	void ApplyDeathControlLock();
+	void ClearDeathControlLock();
+	void NotifyBossPlayerFakeDeathStarted();
+	void NotifyBossPlayerRevivedFromFakeDeath();
+	void NotifyBossPlayerRealDeathStarted();
+	void ResetBossesAfterPlayerRealDeath();
+	void RespawnAtPlayerStart();
+
+	UFUNCTION()
+	void OnFakeDeathGetUpMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
 protected: // Hit
 	EJunPlayerHitResolveResult ResolveIncomingHitResult(EHitReactType IncomingHitType) const;
 	bool CanBeInterruptedBy(EHitReactType IncomingHitType) const;
@@ -373,6 +409,10 @@ protected: // Jump / Movement Helpers
 	void CacheDefaultMovementBrakingSettings();
 	void RestoreDefaultMovementBrakingSettings();
 	void TryInitializeCameraRotationFromController();
+	void ResetCameraToSpawnView(const FRotator& SpawnRotation);
+	void SnapCameraToCurrentFreeView();
+	void StartCameraHardSnap(int32 FrameCount = 2);
+	void UpdateCameraHardSnap();
 	void ValidateLockOnTarget();
 	void UpdateMovementSpeed(float DeltaTime);
 	void UpdateCharacterRotationForCurrentCameraMode(float DeltaTime);
@@ -396,6 +436,7 @@ private:
 	void SpawnAndAttachScabbard();
 
 protected: // Target / Facing
+	class AJunCharacter* FindBestLockOnTarget();
 	class AJunCharacter* FindBestAttackTarget();
 	void UpdateAttackFacing(float DeltaTime);
 
@@ -416,6 +457,9 @@ protected: // Camera
 	void AdvanceExecutionCameraStage();
 	void AdvanceExecutionFinishCameraPullInStage();
 	void UpdateExecutionCamera(float DeltaTime);
+	void StartDeathCamera();
+	void EndDeathCamera();
+	void UpdateDeathCamera(float DeltaTime);
 	FVector GetCurrentExecutionCameraSocketOffset() const;
 	float GetCurrentExecutionCameraFOV() const;
 	float GetCurrentExecutionCameraArmLength() const;
@@ -483,6 +527,12 @@ protected: // Runtime Camera State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
 	bool bCameraRotationInitialized = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
+	int32 CameraHardSnapRemainFrames = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
+	bool bSavedCameraLagEnabledForHardSnap = true;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
 	bool bLockOnActive = false;
@@ -827,6 +877,27 @@ protected: // Runtime Combat / Defense State
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Posture")
 	float GuardBreakVulnerableRemainTime = 0.f;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Death")
+	EJunPlayerDeathState DeathState = EJunPlayerDeathState::Alive;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Death")
+	int32 CurrentReviveCount = 1;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Death")
+	float RealDeathHoldRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Death")
+	float RealDeathFullBlackHoldRemainTime = -1.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Death")
+	bool bRealDeathBlackFadeStarted = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Death")
+	bool bPendingDeathPresentationIsRealDeath = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Death")
+	bool bDeathPresentationStarted = false;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	float PlayerHitControlLockRemainTime = 0.f;
 
@@ -986,6 +1057,9 @@ protected: // Camera Tuning
 	float MaxCameraPitch = 40.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Free")
+	float SpawnCameraPitch = -15.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Free")
 	float MovingLookInputScale = 0.9f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Free")
@@ -1042,6 +1116,21 @@ protected: // Camera Tuning
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
 	float ExecutionFinishCameraPitchOffset = -10.f;
 
+	UPROPERTY(EditDefaultsOnly, Category = "Camera|Death")
+	FVector DeathCameraSocketOffset = FVector(0.f, 25.f, 10.f);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Death")
+	float DeathCameraArmLength = 420.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Death")
+	float DeathCameraRotationInterpSpeed = 4.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Death")
+	float DeathCameraPitchOffset = -12.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Death")
+	float DeathCameraTargetHeight = 45.f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
     float LockOnRotationInterpSpeed = 7.5f;
 
@@ -1091,6 +1180,12 @@ protected: // Camera Tuning
 	float LockOnTurnCancelBlendOutTime = 0.12f;
 
 protected: // Attack / Defense Tuning
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Attack|Facing")
+	float FreeAttackFacingAcquireDistance = 500.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Attack|Facing", meta = (ClampMin = "0.0", ClampMax = "180.0"))
+	float FreeAttackFacingAcquireAngle = 45.f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
 	float GuardStartPlayRate = 1.3f;
 
@@ -1201,6 +1296,21 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture")
 	float GuardBreakDamageMultiplier = 2.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death")
+	int32 MaxReviveCount = 1;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death", meta = (ClampMin = "0", ClampMax = "1"))
+	float FakeDeathReviveHealthRatio = 0.6f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death", meta = (ClampMin = "0"))
+	float RealDeathUIHoldDuration = 2.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death", meta = (ClampMin = "0"))
+	float RealDeathFullBlackHoldDuration = 0.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death")
+	FName DeathLoopSectionName = TEXT("Death");
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Recovery", meta = (ClampMin = "0"))
 	float PostureRecoveryDelay = 1.f;
@@ -1521,6 +1631,15 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution")
 	TObjectPtr<class UAnimMontage> ExecutionFinishMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death")
+	TObjectPtr<class UAnimMontage> FakeDeathMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death")
+	TObjectPtr<class UAnimMontage> FakeDeathGetUpMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death")
+	TObjectPtr<class UAnimMontage> DeathMontage;
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|LockOn")
 	TObjectPtr<class UAnimMontage> LockOnDodgeRightMontage;
