@@ -4,6 +4,7 @@
 #include "Character/JunMonster.h"
 #include "Character/JunPlayer.h"
 #include "DrawDebugHelpers.h"
+#include "NiagaraComponent.h"
 
 // Sets default values
 AWeaponActor::AWeaponActor()
@@ -28,6 +29,12 @@ AWeaponActor::AWeaponActor()
 	TraceEndPoint = CreateDefaultSubobject<USceneComponent>(TEXT("TraceEndPoint"));
 	TraceEndPoint->SetupAttachment(WeaponMesh);
 
+	TrailStartPoint = CreateDefaultSubobject<USceneComponent>(TEXT("Trail_Start"));
+	TrailStartPoint->SetupAttachment(WeaponMesh);
+
+	TrailEndPoint = CreateDefaultSubobject<USceneComponent>(TEXT("Trail_End"));
+	TrailEndPoint->SetupAttachment(WeaponMesh);
+
 	// 충돌 프리셋
 	WeaponMesh->SetCollisionProfileName(TEXT("WeaponAttachment"));
 
@@ -37,7 +44,9 @@ AWeaponActor::AWeaponActor()
 void AWeaponActor::BeginPlay()
 {
 	Super::BeginPlay();
-	
+
+	CacheWeaponNiagaraComponents();
+	DeactivateAllWeaponNiagara();
 }
 
 // Called every frame
@@ -59,19 +68,31 @@ void AWeaponActor::Tick(float DeltaTime)
 	}
 }
 
-void AWeaponActor::StartAttackTrace()
+void AWeaponActor::StartAttackTrace(EJunWeaponNiagaraComponent NiagaraComponent)
 {
 	bTraceActive = true;
 	HitActors.Empty();
+	ActiveAttackTraceNiagaraComponent = NiagaraComponent;
 
 	PrevTraceStart = TraceStartPoint->GetComponentLocation();
 	PrevTraceEnd = TraceEndPoint->GetComponentLocation();
+
+	if (bActivateTrailWithAttackTrace)
+	{
+		ActivateWeaponNiagara(NiagaraComponent);
+	}
 }
 
-void AWeaponActor::EndAttackTrace()
+void AWeaponActor::EndAttackTrace(EJunWeaponNiagaraComponent NiagaraComponent)
 {
 	bTraceActive = false;
 	HitActors.Empty();
+	ActiveAttackTraceNiagaraComponent = NiagaraComponent;
+
+	if (bActivateTrailWithAttackTrace)
+	{
+		DeactivateWeaponNiagara(NiagaraComponent);
+	}
 }
 
 void AWeaponActor::StopAttackTrace()
@@ -83,6 +104,11 @@ void AWeaponActor::StopAttackTrace()
 
 	bTraceActive = false;
 	HitActors.Empty();
+
+	if (bActivateTrailWithAttackTrace)
+	{
+		DeactivateWeaponNiagara(ActiveAttackTraceNiagaraComponent);
+	}
 }
 
 void AWeaponActor::SetTraceSampleCount(const int32 NewTraceSampleCount)
@@ -103,6 +129,53 @@ void AWeaponActor::SetAttackDamageData(const FJunAttackDamageData& NewDamageData
 void AWeaponActor::SetAttackDefenseKnockbackData(const FJunAttackDefenseKnockbackData& NewDefenseKnockbackData)
 {
 	AttackDefenseKnockbackData = NewDefenseKnockbackData;
+}
+
+void AWeaponActor::ActivateWeaponNiagara(EJunWeaponNiagaraComponent ComponentType)
+{
+	if (ComponentType == EJunWeaponNiagaraComponent::None)
+	{
+		return;
+	}
+
+	if (!bWeaponEffectsEnabled)
+	{
+		return;
+	}
+
+	if (UNiagaraComponent* NiagaraComponent = GetWeaponNiagaraComponent(ComponentType))
+	{
+		NiagaraComponent->Activate(true);
+	}
+}
+
+void AWeaponActor::DeactivateWeaponNiagara(EJunWeaponNiagaraComponent ComponentType)
+{
+	if (ComponentType == EJunWeaponNiagaraComponent::None)
+	{
+		return;
+	}
+
+	if (UNiagaraComponent* NiagaraComponent = GetWeaponNiagaraComponent(ComponentType))
+	{
+		NiagaraComponent->Deactivate();
+	}
+}
+
+void AWeaponActor::DeactivateAllWeaponNiagara()
+{
+	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::Trail);
+	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::SpecialTrail);
+	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::Aura);
+}
+
+void AWeaponActor::SetWeaponEffectsEnabled(bool bEnabled)
+{
+	bWeaponEffectsEnabled = bEnabled;
+	if (!bWeaponEffectsEnabled)
+	{
+		DeactivateAllWeaponNiagara();
+	}
 }
 
 void AWeaponActor::UpdateAttackTrace()
@@ -185,6 +258,61 @@ void AWeaponActor::UpdateAttackTrace()
 	PrevTraceEnd = CurrentTraceEnd;
 
 
+}
+
+UNiagaraComponent* AWeaponActor::GetWeaponNiagaraComponent(EJunWeaponNiagaraComponent ComponentType) const
+{
+	switch (ComponentType)
+	{
+	case EJunWeaponNiagaraComponent::Trail:
+		if (!CachedTrailNiagaraComponent)
+		{
+			CachedTrailNiagaraComponent = FindNiagaraComponentByName(TrailNiagaraComponentName);
+		}
+		return CachedTrailNiagaraComponent;
+	case EJunWeaponNiagaraComponent::SpecialTrail:
+		if (!CachedSpecialTrailNiagaraComponent)
+		{
+			CachedSpecialTrailNiagaraComponent = FindNiagaraComponentByName(SpecialTrailNiagaraComponentName);
+		}
+		return CachedSpecialTrailNiagaraComponent;
+	case EJunWeaponNiagaraComponent::Aura:
+		if (!CachedAuraNiagaraComponent)
+		{
+			CachedAuraNiagaraComponent = FindNiagaraComponentByName(AuraNiagaraComponentName);
+		}
+		return CachedAuraNiagaraComponent;
+	default:
+		return nullptr;
+	}
+}
+
+UNiagaraComponent* AWeaponActor::FindNiagaraComponentByName(FName ComponentName) const
+{
+	if (ComponentName.IsNone())
+	{
+		return nullptr;
+	}
+
+	TArray<UNiagaraComponent*> NiagaraComponents;
+	GetComponents<UNiagaraComponent>(NiagaraComponents);
+
+	for (UNiagaraComponent* NiagaraComponent : NiagaraComponents)
+	{
+		if (NiagaraComponent && NiagaraComponent->GetFName() == ComponentName)
+		{
+			return NiagaraComponent;
+		}
+	}
+
+	return nullptr;
+}
+
+void AWeaponActor::CacheWeaponNiagaraComponents()
+{
+	CachedTrailNiagaraComponent = FindNiagaraComponentByName(TrailNiagaraComponentName);
+	CachedSpecialTrailNiagaraComponent = FindNiagaraComponentByName(SpecialTrailNiagaraComponentName);
+	CachedAuraNiagaraComponent = FindNiagaraComponentByName(AuraNiagaraComponentName);
 }
 
 void AWeaponActor::DrawAttackTraceDebug(const FVector& TraceStart, const FVector& TraceEnd, const bool bSweepDebug, const FVector& PrevStart, const FVector& PrevEnd) const

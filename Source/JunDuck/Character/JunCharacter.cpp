@@ -4,6 +4,8 @@
 #include "Character/JunCharacter.h"
 #include "JunDefine.h"
 #include "JunGameplayTags.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 
 // Sets default values
 AJunCharacter::AJunCharacter()
@@ -59,11 +61,18 @@ void AJunCharacter::HandleGameplayEventNotify(FGameplayTag EventTag)
 	// 상속 클래스에서 구현
 }
 
-void AJunCharacter::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
+void AJunCharacter::HandleDefenseSoundNotify()
+{
+	PlayDefenseSoundByType(PendingDefenseSoundType);
+
+	PendingDefenseSoundType = EJunDefenseSoundType::None;
+}
+
+void AJunCharacter::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData, EJunWeaponNiagaraComponent NiagaraComponent)
 {
 }
 
-void AJunCharacter::EndAttackTraceWindow()
+void AJunCharacter::EndAttackTraceWindow(EJunWeaponNiagaraComponent NiagaraComponent)
 {
 }
 
@@ -72,6 +81,14 @@ void AJunCharacter::BeginKickAttackTraceWindow(EHitReactType HitReactType, const
 }
 
 void AJunCharacter::EndKickAttackTraceWindow()
+{
+}
+
+void AJunCharacter::BeginWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType)
+{
+}
+
+void AJunCharacter::EndWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType)
 {
 }
 
@@ -161,6 +178,56 @@ void AJunCharacter::SetTeamTag(FGameplayTag NewTeamTag)
 	RemoveGameplayTag(JunGameplayTags::Team_Neutral);
 
 	AddGameplayTag(NewTeamTag);
+}
+
+void AJunCharacter::SetPendingDefenseSoundType(EJunDefenseSoundType NewSoundType, bool bPlayImmediately)
+{
+	PendingDefenseSoundType = NewSoundType;
+
+	if (bPlayImmediately)
+	{
+		PlayDefenseSoundByType(PendingDefenseSoundType);
+		PendingDefenseSoundType = EJunDefenseSoundType::None;
+	}
+}
+
+void AJunCharacter::PlayDefenseSoundByType(EJunDefenseSoundType SoundType) const
+{
+	switch (SoundType)
+	{
+	case EJunDefenseSoundType::PerfectParry:
+		PlayRandomDefenseSound(PerfectParrySounds);
+		break;
+	case EJunDefenseSoundType::NormalParry:
+		PlayRandomDefenseSound(NormalParrySounds);
+		break;
+	case EJunDefenseSoundType::GuardHit:
+		PlayRandomDefenseSound(GuardHitSounds);
+		break;
+	case EJunDefenseSoundType::None:
+	default:
+		break;
+	}
+}
+
+void AJunCharacter::PlayRandomDefenseSound(const TArray<TObjectPtr<USoundBase>>& Sounds) const
+{
+	TArray<USoundBase*> ValidSounds;
+	for (USoundBase* Sound : Sounds)
+	{
+		if (Sound)
+		{
+			ValidSounds.Add(Sound);
+		}
+	}
+
+	if (ValidSounds.Num() <= 0)
+	{
+		return;
+	}
+
+	USoundBase* SoundToPlay = ValidSounds[FMath::RandRange(0, ValidSounds.Num() - 1)];
+	UGameplayStatics::PlaySoundAtLocation(this, SoundToPlay, GetActorLocation());
 }
 
 

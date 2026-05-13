@@ -7,6 +7,7 @@
 #include "Interface/HighLightInterface.h"
 #include "GameplayTagContainer.h"
 #include "JunDefine.h"
+#include "Weapon/JunWeaponEffectTypes.h"
 #include "JunCharacter.generated.h"
 
 UENUM(BlueprintType)
@@ -51,6 +52,15 @@ enum class ECharacterKnockbackDirection : uint8
 	Backward,
 	Left,
 	Right
+};
+
+UENUM(BlueprintType)
+enum class EJunDefenseSoundType : uint8
+{
+	None,
+	PerfectParry,
+	NormalParry,
+	GuardHit
 };
 
 USTRUCT(BlueprintType)
@@ -140,13 +150,16 @@ public:
 
 	virtual void HandleGameplayEventNotify(FGameplayTag EventTag);
 
+	void HandleDefenseSoundNotify();
+
 public:
 	virtual void BeginAttackTraceWindow(
 		EHitReactType HitReactType = EHitReactType::LightHit,
 		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
-		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData());
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData(),
+		EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail);
 
-	virtual void EndAttackTraceWindow();
+	virtual void EndAttackTraceWindow(EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail);
 
 	virtual void BeginKickAttackTraceWindow(
 		EHitReactType HitReactType = EHitReactType::LightHit,
@@ -154,6 +167,9 @@ public:
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData());
 
 	virtual void EndKickAttackTraceWindow();
+
+	virtual void BeginWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType);
+	virtual void EndWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType);
 
 	virtual FVector GetLockOnTargetPoint() const;
 
@@ -182,6 +198,7 @@ protected:
 	void RemoveGameplayTag(FGameplayTag Tag);
 
 	void SetTeamTag(FGameplayTag NewTeamTag);
+	void SetPendingDefenseSoundType(EJunDefenseSoundType NewSoundType, bool bPlayImmediately = false);
 
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "State")
@@ -200,6 +217,24 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	int32 FinalDamage = 1;
 
+protected:
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sound|Defense")
+	TArray<TObjectPtr<class USoundBase>> PerfectParrySounds;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sound|Defense")
+	TArray<TObjectPtr<class USoundBase>> NormalParrySounds;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sound|Defense")
+	TArray<TObjectPtr<class USoundBase>> GuardHitSounds;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sound|Defense")
+	EJunDefenseSoundType PendingDefenseSoundType = EJunDefenseSoundType::None;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sound|Defense")
+	bool bPlayDefenseSoundImmediately = false;
+
+	void PlayRandomDefenseSound(const TArray<TObjectPtr<class USoundBase>>& Sounds) const;
+	void PlayDefenseSoundByType(EJunDefenseSoundType SoundType) const;
 
 
 };

@@ -25,6 +25,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace")
 	FJunAttackDefenseKnockbackData DefenseKnockbackData;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace|VFX")
+	EJunWeaponNiagaraComponent AttackTraceNiagaraComponent = EJunWeaponNiagaraComponent::Trail;
+
 	virtual FString GetNotifyName_Implementation() const override;
 
 	virtual void NotifyBegin(

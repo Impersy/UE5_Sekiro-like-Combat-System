@@ -90,7 +90,6 @@ enum class EWukongNormalAttackType : uint8
 	JumpAttack,
 	ChargeAttack,
 	DodgeAttack,
-	Ambush,
 	NinjaA,
 	NinjaB,
 	Execution,
@@ -300,6 +299,13 @@ public:
 	void BeginAttackSuperArmorWindow();
 	void EndAttackSuperArmorWindow();
 	void HandleComboDecisionPoint();
+	bool TryStartNormalAttackLinkFromNotify(
+		EWukongNormalAttackType NextAttackType,
+		float TriggerChance,
+		float BlendOutTime,
+		float BlendInTime,
+		bool bRequireRange,
+		bool bUseTestFilter);
 	void HandleHitTurnDecisionPoint();
 	virtual void NotifyAttackParriedBy(class AJunPlayer* Parrier, float PostureScale = 1.f) override;
 
@@ -423,6 +429,8 @@ protected:
 	UAnimMontage* GetParrySuccessMontage(const FVector& SwingDirection);
 	UAnimMontage* GetParryCounterMontage() const;
 	UAnimMontage* GetParryCounterFollowUpMontage() const;
+	class UNiagaraComponent* FindNiagaraComponentByName(FName ComponentName) const;
+	void PlayParryParticle();
 	void StartParrySuccessAgainstIncomingHit(
 		AActor* DamageCauser,
 		const FVector& SwingDirection,
@@ -473,9 +481,6 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack")
 	FWukongNormalAttackData DodgeAttack;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack")
-	FWukongNormalAttackData AmbushAttack;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack")
 	FWukongNormalAttackData NinjaAAttack;
@@ -615,6 +620,18 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
 	float ParrySuccessFallbackDuration = 0.45f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry|VFX")
+	FName ParryParticleComponentName = TEXT("Parry_Particle");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry|VFX")
+	bool bAutoDeactivateParryParticle = true;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry|VFX", meta = (ClampMin = "0"))
+	float ParryParticleAutoDeactivateDelay = 0.1f;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UNiagaraComponent> CachedParryParticleComponent = nullptr;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
 	TObjectPtr<class UAnimMontage> CurrentParrySuccessMontage = nullptr;
 
@@ -713,9 +730,6 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableDodgeAttack = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
-	bool bTestEnableAmbush = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableNinjaA = true;
@@ -895,6 +909,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
 	bool bPostBowCloseRangeApproachInProgress = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Bow")
+	bool bBowAttackPresentationActive = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|AttackMotion")
 	bool bPendingCodeDrivenAttackMove = false;

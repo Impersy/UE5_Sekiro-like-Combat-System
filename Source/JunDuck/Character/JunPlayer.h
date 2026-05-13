@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Animation/AnimNotifyState_AttackComboAdvance.h"
 #include "Character/JunCharacter.h"
 #include "JunPlayer.generated.h"
 
@@ -128,8 +129,11 @@ public: // Engine / Character Overrides
 	virtual void BeginAttackTraceWindow(
 		EHitReactType HitReactType = EHitReactType::LightHit,
 		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
-		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData()) override;
-	virtual void EndAttackTraceWindow() override;
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData(),
+		EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail) override;
+	virtual void EndAttackTraceWindow(EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail) override;
+	virtual void BeginWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType) override;
+	virtual void EndWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType) override;
 
 public: // External Gameplay API
 	void BasicAttack();
@@ -206,11 +210,14 @@ public: // Query / State API
 	float GetMaxPosture() const { return MaxPosture; }
 
 	void ToggleWalkingState();
+	void SetWalkRequested(bool bNewWalkRequested);
 	void SetDesiredMoveAxes(float NewForward, float NewRight);
 	void OnMoveInputReleased();
 	void BufferBasicAttackRecoveryAction(EJunBufferedRecoveryAction Action);
 	void BufferDefenseTransitionCancelAction(EJunBufferedDefenseCancelAction Action);
 	void BufferParrySuccessCancelAction(EJunBufferedParrySuccessCancelAction Action);
+	void OnAttackComboAdvanceStateBegin(EJunAttackComboType ComboType);
+	void OnAttackComboAdvanceStateEnd(EJunAttackComboType ComboType);
 	void OnBasicAttackComboAdvanceStateBegin();
 	void OnBasicAttackComboAdvanceStateEnd();
 	bool TryCancelBasicAttackIntoMove();
@@ -237,6 +244,10 @@ protected: // BasicAttack
 	void OnBasicAttackMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
 protected: // HeavyAttack
+	void OnHeavyAttackComboWindowBegin();
+	void OnHeavyAttackComboAdvanceStateBegin();
+	void OnHeavyAttackComboAdvanceStateEnd();
+	void TryAdvanceHeavyAttackCombo();
 	void UpdateHeavyAttackInput(float DeltaTime);
 	bool CanStartHeavyAttack() const;
 	void ResetHeavyAttackChargeInput();
@@ -253,6 +264,8 @@ protected: // HeavyAttack
 	bool CanCancelHeavyAttackIntoMove() const;
 	bool TryCancelHeavyAttackIntoMove();
 	bool CanCancelHeavyAttackIntoBasicAttack() const;
+	bool CanCancelHeavyAttackIntoHeavyAttack() const;
+	bool TryCancelHeavyAttackIntoHeavyAttack();
 
 	UFUNCTION()
 	void OnHeavyAttackMontageEnded(UAnimMontage* Montage, bool bInterrupted);
@@ -327,6 +340,10 @@ protected: // Death
 	void StartFakeDeathRevive();
 	void FinishFakeDeathRevive();
 	void UpdateDeathState(float DeltaTime);
+	void StartFakeDeathSound();
+	void StopFakeDeathSound(bool bReleaseBGMDuck = true);
+	void StartRealDeathSound();
+	void StopRealDeathSound();
 	void ApplyDeathControlLock();
 	void ClearDeathControlLock();
 	void NotifyBossPlayerFakeDeathStarted();
@@ -434,6 +451,9 @@ private:
 
 	void SpawnAndAttachWeapon();
 	void SpawnAndAttachScabbard();
+	void CacheDefenseEffectComponents();
+	class UNiagaraComponent* FindNiagaraComponentByName(FName ComponentName) const;
+	void PlayDefenseEffect(TObjectPtr<class UNiagaraComponent>& CachedComponent, FName ComponentName);
 
 protected: // Target / Facing
 	class AJunCharacter* FindBestLockOnTarget();
@@ -483,6 +503,36 @@ protected: // Components
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
 	TObjectPtr<class UCameraComponent> Camera;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
+	TObjectPtr<class UAudioComponent> FakeDeathAudioComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
+	TObjectPtr<class UAudioComponent> RealDeathAudioComponent;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX|Defense")
+	FName ParryParticleComponentName = TEXT("Parry_Particle");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX|Defense")
+	FName DeflectParticleComponentName = TEXT("Deflect_Particle");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX|Defense")
+	FName GuardBreakParticleComponentName = TEXT("Brake_Particle");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX|Defense")
+	bool bAutoDeactivateDefenseParticles = true;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX|Defense", meta = (ClampMin = "0"))
+	float DefenseParticleAutoDeactivateDelay = 0.1f;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UNiagaraComponent> CachedParryParticleComponent = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UNiagaraComponent> CachedDeflectParticleComponent = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UNiagaraComponent> CachedGuardBreakParticleComponent = nullptr;
 
 protected: // External References
 	UPROPERTY(BlueprintReadOnly)
@@ -600,6 +650,24 @@ protected: // Runtime Combat / Defense State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HeavyAttack")
 	EJunBufferedRecoveryAction BufferedHeavyAttackRecoveryAction = EJunBufferedRecoveryAction::None;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HeavyAttack")
+	int32 HeavyAttackComboIndex = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HeavyAttack")
+	bool bCanBufferHeavyAttackComboInput = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HeavyAttack")
+	bool bBufferedHeavyAttackComboInput = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HeavyAttack")
+	bool bBufferedHeavyAttackInput = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HeavyAttack")
+	bool bHeavyAttackComboAdvanceStateActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HeavyAttack")
+	bool bCanRestartHeavyAttackAfterComboAdvance = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpAttack")
 	bool bIsJumpAttacking = false;
@@ -1256,6 +1324,9 @@ protected: // Attack / Defense Tuning
 	float ParrySuccessMoveCancelOpenTime = 0.7f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	float ParrySuccessDefenseCancelOpenTime = 0.1f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float ParrySuccessBasicAttackCancelBlendOutTime = 0.15f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
@@ -1269,6 +1340,9 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float ParrySuccessMoveCancelBlendOutTime = 0.25f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	float ParrySuccessDefenseCancelBlendOutTime = 0.15f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float GuardBlockDuration = 0.3f;
@@ -1311,6 +1385,30 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death")
 	FName DeathLoopSectionName = TEXT("Death");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death|Sound")
+	TObjectPtr<class USoundBase> FakeDeathSound = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death|Sound")
+	TObjectPtr<class USoundBase> RealDeathSound = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death|Sound", meta = (ClampMin = "0"))
+	float FakeDeathSoundVolume = 1.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death|Sound", meta = (ClampMin = "0"))
+	float RealDeathSoundVolume = 1.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death|Sound", meta = (ClampMin = "0"))
+	float FakeDeathSoundFadeInTime = 0.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death|Sound", meta = (ClampMin = "0"))
+	float FakeDeathSoundFadeOutTime = 0.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death|Sound", meta = (ClampMin = "0"))
+	float RealDeathSoundFadeInTime = 0.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death|Sound", meta = (ClampMin = "0"))
+	float RealDeathSoundFadeOutTime = 1.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Recovery", meta = (ClampMin = "0"))
 	float PostureRecoveryDelay = 1.f;
@@ -1394,7 +1492,7 @@ protected: // Attack / Defense Tuning
 	float PostBasicAttackDefenseBufferDuration = 0.3f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
-	float HeavyAttackChargeThreshold = 0.15f;
+	float HeavyAttackChargeThreshold = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack", meta = (ClampMin = "0.1"))
 	float HeavyAttackTapPlayRate = 1.f;
@@ -1403,7 +1501,7 @@ protected: // Attack / Defense Tuning
 	float HeavyAttackChargePlayRate = 1.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
-	float HeavyAttackChargeLoopMaxDuration = 0.3f;
+	float HeavyAttackChargeLoopMaxDuration = 0.15f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
 	float HeavyAttackChargeFullDashThresholdRatio = 0.5f;
@@ -1425,6 +1523,12 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
 	FName HeavyAttackChargeEndSectionName = TEXT("End");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
+	FName HeavyAttackTapFirstSectionName = TEXT("1");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
+	FName HeavyAttackTapSecondSectionName = TEXT("2");
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
 	float HeavyAttackTapDodgeCancelOpenTime = 1.3f;
@@ -1470,6 +1574,9 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
 	float HeavyAttackBasicAttackCancelBlendOutTime = 0.12f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
+	float HeavyAttackRestartBlendOutTime = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack", meta = (ClampMin = "0.1"))
 	float JumpAttackPlayRate = 1.f;

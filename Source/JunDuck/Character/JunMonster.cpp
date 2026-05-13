@@ -2,6 +2,7 @@
 #include "AI/JunAIController.h"
 #include "Animation/AnimMontage.h"
 #include "Character/JunPlayer.h"
+#include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/Engine.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -10,6 +11,7 @@
 #include "Navigation/PathFollowingComponent.h"
 #include "NavigationSystem.h"
 #include "Player/JunPlayerController.h"
+#include "System/JunBGMManager.h"
 #include "Weapon/ArrowProjectile.h"
 #include "Weapon/WeaponActor.h"
 
@@ -17,6 +19,32 @@
 
 namespace
 {
+	bool IsInvalidCombatTarget(const AActor* Target)
+	{
+		if (!Target)
+		{
+			return true;
+		}
+
+		if (const AJunCharacter* TargetCharacter = Cast<AJunCharacter>(Target))
+		{
+			if (TargetCharacter->Is_Dead())
+			{
+				return true;
+			}
+		}
+
+		if (const AJunPlayer* TargetPlayer = Cast<AJunPlayer>(Target))
+		{
+			if (TargetPlayer->IsInDeathSequence())
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	bool IsHeavyHitType(const EHitReactType HitType)
 	{
 		return HitType == EHitReactType::HeavyHit_A
@@ -133,6 +161,10 @@ AJunMonster::AJunMonster()
 	// 메쉬 기본 위치 및 회전 조정
 	GetMesh()->SetRelativeLocationAndRotation(FVector(0.f, 0.f, -88.f), FRotator(0.f, -90.f, 0.f));
 
+	CombatBGMComponent = CreateDefaultSubobject<UAudioComponent>(TEXT("CombatBGMComponent"));
+	CombatBGMComponent->SetupAttachment(RootComponent);
+	CombatBGMComponent->bAutoActivate = false;
+
 	AIControllerClass = AJunAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 
@@ -231,9 +263,20 @@ void AJunMonster::HandleGameplayEventNotify(FGameplayTag EventTag)
 {
 	Super::HandleGameplayEventNotify(EventTag);
 
+	if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Boss_StopCombatBGM))
+	{
+		StopCombatBGM();
+		return;
+	}
+
 	if (!EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Boss_Clear))
 	{
 		return;
+	}
+
+	if (BossClearSound)
+	{
+		UGameplayStatics::PlaySound2D(this, BossClearSound, BossClearSoundVolume);
 	}
 
 	if (AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(UGameplayStatics::GetPlayerController(this, 0)))
@@ -705,7 +748,59 @@ void AJunMonster::SetDesiredMoveAxes(float NewForward, float NewRight)
 	DesiredMoveRight = FMath::Clamp(NewRight, -1.f, 1.f);
 }
 
-void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
+void AJunMonster::StartCombatBGM()
+{
+	if (AJunBGMManager* BGMManager = AJunBGMManager::Get(this))
+	{
+		BGMManager->PlayCombatBGM(CombatBGM);
+		return;
+	}
+
+	if (!CombatBGM || !CombatBGMComponent)
+	{
+		return;
+	}
+
+	if (CombatBGMComponent->IsPlaying())
+	{
+		return;
+	}
+
+	CombatBGMComponent->SetSound(CombatBGM);
+	if (CombatBGMFadeInTime > 0.f)
+	{
+		CombatBGMComponent->FadeIn(CombatBGMFadeInTime);
+	}
+	else
+	{
+		CombatBGMComponent->Play();
+	}
+}
+
+void AJunMonster::StopCombatBGM()
+{
+	if (AJunBGMManager* BGMManager = AJunBGMManager::Get(this))
+	{
+		BGMManager->ReturnToMapBGM();
+		return;
+	}
+
+	if (!CombatBGMComponent || !CombatBGMComponent->IsPlaying())
+	{
+		return;
+	}
+
+	if (CombatBGMFadeOutTime > 0.f)
+	{
+		CombatBGMComponent->FadeOut(CombatBGMFadeOutTime, 0.f);
+	}
+	else
+	{
+		CombatBGMComponent->Stop();
+	}
+}
+
+void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData, EJunWeaponNiagaraComponent NiagaraComponent)
 {
 	if (!EquippedWeapon)
 	{
@@ -715,17 +810,17 @@ void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunA
 	EquippedWeapon->SetAttackHitReactType(HitReactType);
 	EquippedWeapon->SetAttackDamageData(DamageData);
 	EquippedWeapon->SetAttackDefenseKnockbackData(DefenseKnockbackData);
-	EquippedWeapon->StartAttackTrace();
+	EquippedWeapon->StartAttackTrace(NiagaraComponent);
 }
 
-void AJunMonster::EndAttackTraceWindow()
+void AJunMonster::EndAttackTraceWindow(EJunWeaponNiagaraComponent NiagaraComponent)
 {
 	if (!EquippedWeapon)
 	{
 		return;
 	}
 
-	EquippedWeapon->EndAttackTrace();
+	EquippedWeapon->EndAttackTrace(NiagaraComponent);
 }
 
 void AJunMonster::BeginKickAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
@@ -757,6 +852,22 @@ void AJunMonster::EndKickAttackTraceWindow()
 	if (EquippedKickWeaponRight)
 	{
 		EquippedKickWeaponRight->EndAttackTrace();
+	}
+}
+
+void AJunMonster::BeginWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType)
+{
+	if (EquippedWeapon)
+	{
+		EquippedWeapon->ActivateWeaponNiagara(ComponentType);
+	}
+}
+
+void AJunMonster::EndWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType)
+{
+	if (EquippedWeapon)
+	{
+		EquippedWeapon->DeactivateWeaponNiagara(ComponentType);
 	}
 }
 
@@ -812,7 +923,6 @@ void AJunMonster::EnterPlayerDeathWait()
 	StopAllAttackTraces();
 	CancelCombatTurn();
 	ResetCombatTurnState();
-	ResetCurrentAttackRuntimeState();
 	EndHitReact();
 	bIsAttacking = false;
 	bRunLocomotionRequested = false;
@@ -848,6 +958,7 @@ void AJunMonster::ResetAfterPlayerRealDeath()
 	ResetCombatTurnState();
 	ResetCurrentAttackRuntimeState();
 	ResetExecutionRuntimeState();
+	StopCombatBGM();
 	EndHitReact();
 	RemoveGameplayTag(JunGameplayTags::State_Condition_Dead);
 	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
@@ -977,6 +1088,7 @@ void AJunMonster::EnterCombatState()
 	ResetCombatTurnState();
 	GetCharacterMovement()->bOrientRotationToMovement = false;
 	StopAIMovement();
+	StartCombatBGM();
 }
 
 void AJunMonster::EnterDeadState()
@@ -1624,13 +1736,7 @@ bool AJunMonster::CanDetectTarget(AActor* Target) const
 
 bool AJunMonster::CanKeepTarget(AActor* Target) const
 {
-	if (!Target)
-	{
-		return false;
-	}
-
-	const AJunCharacter* TargetCharacter = Cast<AJunCharacter>(Target);
-	if (TargetCharacter && TargetCharacter->Is_Dead())
+	if (IsInvalidCombatTarget(Target))
 	{
 		return false;
 	}
@@ -1641,13 +1747,7 @@ bool AJunMonster::CanKeepTarget(AActor* Target) const
 
 bool AJunMonster::CanRemainInCombat(AActor* Target) const
 {
-	if (!Target)
-	{
-		return false;
-	}
-
-	const AJunCharacter* TargetCharacter = Cast<AJunCharacter>(Target);
-	if (TargetCharacter && TargetCharacter->Is_Dead())
+	if (IsInvalidCombatTarget(Target))
 	{
 		return false;
 	}
@@ -1664,7 +1764,7 @@ bool AJunMonster::CanAttackTarget() const
 	}
 
 	const FMonsterAttackSelection AttackSelection = ChooseNextAttackSelection();
-	if (!CurrentTarget || !AttackSelection.Montage)
+	if (IsInvalidCombatTarget(CurrentTarget) || !AttackSelection.Montage)
 	{
 		return false;
 	}
@@ -2254,6 +2354,10 @@ void AJunMonster::AttachWeaponToSocket(FName SocketName)
 		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
 		SocketName
 	);
+
+	const bool bAttachedToHand = SocketName == WeaponSocketName;
+	bWeaponAttachedToHand = bAttachedToHand;
+	EquippedWeapon->SetWeaponEffectsEnabled(bWeaponAttachedToHand && !EquippedWeapon->IsHidden());
 }
 
 void AJunMonster::AttachWeaponToHandSocket()
@@ -2271,6 +2375,7 @@ void AJunMonster::SetWeaponVisible(bool bVisible)
 	if (EquippedWeapon)
 	{
 		EquippedWeapon->SetActorHiddenInGame(!bVisible);
+		EquippedWeapon->SetWeaponEffectsEnabled(bVisible && bWeaponAttachedToHand);
 	}
 }
 

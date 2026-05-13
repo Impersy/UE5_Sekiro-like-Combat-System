@@ -3,6 +3,7 @@
 #include "Camera/JunSpringArmComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Character/JunMonster.h"
+#include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -11,12 +12,14 @@
 #include "JunGameplayTags.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
+#include "NiagaraComponent.h"
 #include "Engine/World.h"
 #include "Engine/Engine.h"
 #include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/PlayerStart.h"
+#include "System/JunBGMManager.h"
 #include "UObject/UnrealType.h"
 
 namespace
@@ -34,6 +37,14 @@ AJunPlayer::AJunPlayer()
 	SetupMeshAndCollision();
 	SetupCameraComponents();
 	SetupMovementDefaults();
+
+	FakeDeathAudioComponent = CreateDefaultSubobject<UAudioComponent>(TEXT("FakeDeathAudioComponent"));
+	FakeDeathAudioComponent->SetupAttachment(RootComponent);
+	FakeDeathAudioComponent->bAutoActivate = false;
+
+	RealDeathAudioComponent = CreateDefaultSubobject<UAudioComponent>(TEXT("RealDeathAudioComponent"));
+	RealDeathAudioComponent->SetupAttachment(RootComponent);
+	RealDeathAudioComponent->bAutoActivate = false;
 }
 
 void AJunPlayer::SetupMeshAndCollision()
@@ -99,6 +110,7 @@ void AJunPlayer::BeginPlay()
 	SpawnAndAttachWeapon();
 	SpawnAndAttachScabbard();
 	GetPlayerAnimInstance();
+	CacheDefenseEffectComponents();
 	CacheDefaultMovementBrakingSettings();
 	ResetCameraToSpawnView(GetActorRotation());
 	StartCameraHardSnap();
@@ -106,6 +118,64 @@ void AJunPlayer::BeginPlay()
 	if (CameraAnchor)
 	{
 		CameraAnchor->SetWorldLocation(GetCapsuleComponent()->GetComponentLocation());
+	}
+}
+
+void AJunPlayer::CacheDefenseEffectComponents()
+{
+	CachedParryParticleComponent = FindNiagaraComponentByName(ParryParticleComponentName);
+	CachedDeflectParticleComponent = FindNiagaraComponentByName(DeflectParticleComponentName);
+	CachedGuardBreakParticleComponent = FindNiagaraComponentByName(GuardBreakParticleComponentName);
+}
+
+UNiagaraComponent* AJunPlayer::FindNiagaraComponentByName(FName ComponentName) const
+{
+	if (ComponentName.IsNone())
+	{
+		return nullptr;
+	}
+
+	TArray<UNiagaraComponent*> NiagaraComponents;
+	GetComponents<UNiagaraComponent>(NiagaraComponents);
+
+	for (UNiagaraComponent* NiagaraComponent : NiagaraComponents)
+	{
+		if (NiagaraComponent && NiagaraComponent->GetFName() == ComponentName)
+		{
+			return NiagaraComponent;
+		}
+	}
+
+	return nullptr;
+}
+
+void AJunPlayer::PlayDefenseEffect(TObjectPtr<UNiagaraComponent>& CachedComponent, FName ComponentName)
+{
+	if (!CachedComponent)
+	{
+		CachedComponent = FindNiagaraComponentByName(ComponentName);
+	}
+
+	if (CachedComponent)
+	{
+		CachedComponent->Activate(true);
+		if (bAutoDeactivateDefenseParticles && GetWorld())
+		{
+			TWeakObjectPtr<UNiagaraComponent> WeakComponent = CachedComponent;
+			FTimerHandle DeactivateTimerHandle;
+			GetWorldTimerManager().SetTimer(
+				DeactivateTimerHandle,
+				[WeakComponent]()
+				{
+					if (UNiagaraComponent* NiagaraComponent = WeakComponent.Get())
+					{
+						NiagaraComponent->Deactivate();
+					}
+				},
+				DefenseParticleAutoDeactivateDelay,
+				false
+			);
+		}
 	}
 }
 
@@ -697,6 +767,10 @@ void AJunPlayer::HandleGameplayEventNotify(FGameplayTag EventTag)
 	{
 		OnBasicAttackComboWindowBegin();
 	}
+	else if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_HeavyAttack_ComboWindow))
+	{
+		OnHeavyAttackComboWindowBegin();
+	}
 	else if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Dodge_Start))
 	{
 	}
@@ -746,7 +820,7 @@ void AJunPlayer::HandleGameplayEventNotify(FGameplayTag EventTag)
 	}
 }
 
-void AJunPlayer::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
+void AJunPlayer::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData, EJunWeaponNiagaraComponent NiagaraComponent)
 {
 	if (!EquippedWeapon)
 	{
@@ -756,17 +830,33 @@ void AJunPlayer::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAt
 	EquippedWeapon->SetAttackHitReactType(HitReactType);
 	EquippedWeapon->SetAttackDamageData(DamageData);
 	EquippedWeapon->SetAttackDefenseKnockbackData(DefenseKnockbackData);
-	EquippedWeapon->StartAttackTrace();
+	EquippedWeapon->StartAttackTrace(NiagaraComponent);
 }
 
-void AJunPlayer::EndAttackTraceWindow()
+void AJunPlayer::EndAttackTraceWindow(EJunWeaponNiagaraComponent NiagaraComponent)
 {
 	if (!EquippedWeapon)
 	{
 		return;
 	}
 
-	EquippedWeapon->EndAttackTrace();
+	EquippedWeapon->EndAttackTrace(NiagaraComponent);
+}
+
+void AJunPlayer::BeginWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType)
+{
+	if (EquippedWeapon)
+	{
+		EquippedWeapon->ActivateWeaponNiagara(ComponentType);
+	}
+}
+
+void AJunPlayer::EndWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType)
+{
+	if (EquippedWeapon)
+	{
+		EquippedWeapon->DeactivateWeaponNiagara(ComponentType);
+	}
 }
 
 void AJunPlayer::BasicAttack()
@@ -867,7 +957,42 @@ void AJunPlayer::OnHeavyAttackStarted()
 		return;
 	}
 
-	if (bHeavyAttackInputHeld || bIsHeavyAttacking)
+	if (bIsHeavyAttacking)
+	{
+		if (HeavyAttackState == EJunHeavyAttackState::Tap)
+		{
+			if (bHeavyAttackComboAdvanceStateActive)
+			{
+				bBufferedHeavyAttackComboInput = true;
+				TryAdvanceHeavyAttackCombo();
+				return;
+			}
+
+			if (bCanBufferHeavyAttackComboInput)
+			{
+				bBufferedHeavyAttackComboInput = true;
+				return;
+			}
+
+			if (bCanRestartHeavyAttackAfterComboAdvance)
+			{
+				CancelHeavyAttackForRecoveryTransition(HeavyAttackRestartBlendOutTime);
+				StartHeavyAttackTap();
+				return;
+			}
+
+			bBufferedHeavyAttackInput = true;
+			return;
+		}
+
+		if (TryCancelHeavyAttackIntoHeavyAttack())
+		{
+			StartHeavyAttackTap();
+		}
+		return;
+	}
+
+	if (bHeavyAttackInputHeld)
 	{
 		return;
 	}
@@ -1055,6 +1180,15 @@ void AJunPlayer::OnDefenseStarted()
 			bHoldRequestedForCurrentDeflect = true;
 			bParryWindowOpen = true;
 			ParryWindowRemainTime = DefaultParryWindowDuration;
+			return;
+		}
+
+		if (ParrySuccessElapsedTime >= ParrySuccessDefenseCancelOpenTime)
+		{
+			bDefenseButtonHeld = true;
+			bHoldRequestedForCurrentDeflect = true;
+			CancelParrySuccessForCancelTransition(ParrySuccessDefenseCancelBlendOutTime);
+			StartDefenseSequence();
 		}
 		return;
 	}
@@ -1305,7 +1439,7 @@ bool AJunPlayer::IsBasicAttacking() const
 
 bool AJunPlayer::IsWalking() const
 {
-	return GetMoveState() == EJunMoveState::Walk;
+	return GetMoveState() != EJunMoveState::Run;
 }
 
 bool AJunPlayer::IsSprinting() const
@@ -1331,7 +1465,13 @@ EJunMoveState AJunPlayer::GetMoveState() const
 		return EJunMoveState::Guard;
 	}
 
-	if (bWalkRequested)
+	const bool bHasMoveInput =
+		!FMath::IsNearlyZero(DesiredMoveForward) ||
+		!FMath::IsNearlyZero(DesiredMoveRight) ||
+		!FMath::IsNearlyZero(PendingMoveForward) ||
+		!FMath::IsNearlyZero(PendingMoveRight);
+
+	if (bWalkRequested && bHasMoveInput)
 	{
 		return EJunMoveState::Walk;
 	}
@@ -1502,18 +1642,12 @@ bool AJunPlayer::ShouldUseRunningAnim() const
 
 void AJunPlayer::ToggleWalkingState()
 {
-	if (DefenseState == EJunDefenseState::Guarding)
-	{
-		return;
-	}
+	SetWalkRequested(!bWalkRequested);
+}
 
-	bWalkRequested = !bWalkRequested;
-
-	if (bWalkRequested)
-	{
-		bSprintRequested = false;
-	}
-
+void AJunPlayer::SetWalkRequested(bool bNewWalkRequested)
+{
+	bWalkRequested = bNewWalkRequested;
 	TargetMaxWalkSpeed = GetDesiredMaxWalkSpeed();
 	ApplyRunningStateToAnimInstance(ShouldUseRunningAnim());
 }
@@ -1642,6 +1776,7 @@ void AJunPlayer::ReceiveHit(
 	case EJunPlayerHitResolveResult::Ignored:
 		return;
 	case EJunPlayerHitResolveResult::PerfectParrySuccess:
+		SetPendingDefenseSoundType(EJunDefenseSoundType::PerfectParry, bPlayDefenseSoundImmediately);
 		AddPosture(PerfectParryPostureGain);
 		if (bCanBuildAttackerPostureOnParry)
 		{
@@ -1653,6 +1788,7 @@ void AJunPlayer::ReceiveHit(
 		StartParrySuccess();
 		return;
 	case EJunPlayerHitResolveResult::NormalParrySuccess:
+		SetPendingDefenseSoundType(EJunDefenseSoundType::NormalParry, bPlayDefenseSoundImmediately);
 		if (IsPostureFull())
 		{
 			StartGuardBreak();
@@ -1669,6 +1805,7 @@ void AJunPlayer::ReceiveHit(
 		StartParrySuccess();
 		return;
 	case EJunPlayerHitResolveResult::GuardBlock:
+		SetPendingDefenseSoundType(EJunDefenseSoundType::GuardHit, bPlayDefenseSoundImmediately);
 		if (IsPostureFull())
 		{
 			StartGuardBreak();
@@ -1708,6 +1845,28 @@ void AJunPlayer::OnBasicAttackComboWindowBegin()
 	}
 }
 
+void AJunPlayer::OnAttackComboAdvanceStateBegin(EJunAttackComboType ComboType)
+{
+	if (ComboType == EJunAttackComboType::HeavyAttack)
+	{
+		OnHeavyAttackComboAdvanceStateBegin();
+		return;
+	}
+
+	OnBasicAttackComboAdvanceStateBegin();
+}
+
+void AJunPlayer::OnAttackComboAdvanceStateEnd(EJunAttackComboType ComboType)
+{
+	if (ComboType == EJunAttackComboType::HeavyAttack)
+	{
+		OnHeavyAttackComboAdvanceStateEnd();
+		return;
+	}
+
+	OnBasicAttackComboAdvanceStateEnd();
+}
+
 void AJunPlayer::OnBasicAttackComboAdvanceStateBegin()
 {
 	bBasicAttackComboAdvanceStateActive = true;
@@ -1726,6 +1885,50 @@ void AJunPlayer::OnBasicAttackComboAdvanceStateEnd()
 	bBasicAttackComboAdvanceStateActive = false;
 	bBufferedBasicAttackComboInput = false;
 	bCanRestartBasicAttackAfterComboAdvance = bWasComboAdvanceStateActive && bIsBasicAttacking;
+}
+
+void AJunPlayer::OnHeavyAttackComboWindowBegin()
+{
+	if (HeavyAttackState != EJunHeavyAttackState::Tap)
+	{
+		return;
+	}
+
+	bCanBufferHeavyAttackComboInput = true;
+
+	if (bBufferedHeavyAttackInput)
+	{
+		bBufferedHeavyAttackComboInput = true;
+		bBufferedHeavyAttackInput = false;
+	}
+}
+
+void AJunPlayer::OnHeavyAttackComboAdvanceStateBegin()
+{
+	if (HeavyAttackState != EJunHeavyAttackState::Tap)
+	{
+		return;
+	}
+
+	bHeavyAttackComboAdvanceStateActive = true;
+	bCanBufferHeavyAttackComboInput = false;
+	bCanRestartHeavyAttackAfterComboAdvance = false;
+
+	if (bBufferedHeavyAttackComboInput)
+	{
+		TryAdvanceHeavyAttackCombo();
+	}
+}
+
+void AJunPlayer::OnHeavyAttackComboAdvanceStateEnd()
+{
+	const bool bWasComboAdvanceStateActive = bHeavyAttackComboAdvanceStateActive;
+	bHeavyAttackComboAdvanceStateActive = false;
+	bBufferedHeavyAttackComboInput = false;
+	bCanRestartHeavyAttackAfterComboAdvance =
+		bWasComboAdvanceStateActive &&
+		bIsHeavyAttacking &&
+		HeavyAttackState == EJunHeavyAttackState::Tap;
 }
 
 void AJunPlayer::UpdateDodgeState(float DeltaTime)
@@ -2123,10 +2326,17 @@ void AJunPlayer::StartHeavyAttackTap()
 	HeavyAttackChargeLoopElapsedTime = 0.f;
 	HeavyAttackSectionElapsedTime = 0.f;
 	BufferedHeavyAttackRecoveryAction = EJunBufferedRecoveryAction::None;
+	HeavyAttackComboIndex = 1;
+	bCanBufferHeavyAttackComboInput = false;
+	bBufferedHeavyAttackComboInput = false;
+	bBufferedHeavyAttackInput = false;
+	bHeavyAttackComboAdvanceStateActive = false;
+	bCanRestartHeavyAttackAfterComboAdvance = false;
 
 	AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnHeavyAttackMontageEnded);
 	AnimInstance->OnMontageEnded.AddDynamic(this, &AJunPlayer::OnHeavyAttackMontageEnded);
 	AnimInstance->Montage_Play(HeavyAttackTapMontage, CurrentHeavyAttackPlayRate);
+	AnimInstance->Montage_JumpToSection(HeavyAttackTapFirstSectionName, HeavyAttackTapMontage);
 
 	ResetHeavyAttackChargeInput();
 }
@@ -2167,6 +2377,12 @@ void AJunPlayer::StartHeavyAttackCharge()
 	HeavyAttackSectionElapsedTime = 0.f;
 	bHeavyAttackChargeEndDashExecuted = false;
 	BufferedHeavyAttackRecoveryAction = EJunBufferedRecoveryAction::None;
+	HeavyAttackComboIndex = 0;
+	bCanBufferHeavyAttackComboInput = false;
+	bBufferedHeavyAttackComboInput = false;
+	bBufferedHeavyAttackInput = false;
+	bHeavyAttackComboAdvanceStateActive = false;
+	bCanRestartHeavyAttackAfterComboAdvance = false;
 
 	AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnHeavyAttackMontageEnded);
 	AnimInstance->OnMontageEnded.AddDynamic(this, &AJunPlayer::OnHeavyAttackMontageEnded);
@@ -2205,6 +2421,12 @@ void AJunPlayer::StartHeavyAttackChargeEnd()
 	CurrentHeavyAttackPlayRate = FMath::Max(HeavyAttackChargePlayRate, KINDA_SMALL_NUMBER);
 	HeavyAttackChargeStartRemainTime = 0.f;
 	HeavyAttackSectionElapsedTime = 0.f;
+	HeavyAttackComboIndex = 0;
+	bCanBufferHeavyAttackComboInput = false;
+	bBufferedHeavyAttackComboInput = false;
+	bBufferedHeavyAttackInput = false;
+	bHeavyAttackComboAdvanceStateActive = false;
+	bCanRestartHeavyAttackAfterComboAdvance = false;
 
 	AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnHeavyAttackMontageEnded);
 	AnimInstance->OnMontageEnded.AddDynamic(this, &AJunPlayer::OnHeavyAttackMontageEnded);
@@ -2279,6 +2501,12 @@ void AJunPlayer::FinishHeavyAttack()
 	HeavyAttackSectionElapsedTime = 0.f;
 	bHeavyAttackChargeEndDashExecuted = false;
 	BufferedHeavyAttackRecoveryAction = EJunBufferedRecoveryAction::None;
+	HeavyAttackComboIndex = 0;
+	bCanBufferHeavyAttackComboInput = false;
+	bBufferedHeavyAttackComboInput = false;
+	bBufferedHeavyAttackInput = false;
+	bHeavyAttackComboAdvanceStateActive = false;
+	bCanRestartHeavyAttackAfterComboAdvance = false;
 	ResetHeavyAttackChargeInput();
 }
 
@@ -2438,6 +2666,37 @@ bool AJunPlayer::TryCancelHeavyAttackIntoBasicAttack()
 
 	CancelHeavyAttackForRecoveryTransition(HeavyAttackBasicAttackCancelBlendOutTime);
 	BasicAttack();
+	return true;
+}
+
+bool AJunPlayer::CanCancelHeavyAttackIntoHeavyAttack() const
+{
+	if (!bIsHeavyAttacking)
+	{
+		return false;
+	}
+
+	if (HeavyAttackState != EJunHeavyAttackState::Tap &&
+		HeavyAttackState != EJunHeavyAttackState::ChargeEnd)
+	{
+		return false;
+	}
+
+	const float HeavyAttackCancelOpenTime = HeavyAttackState == EJunHeavyAttackState::Tap
+		? HeavyAttackTapBasicAttackCancelOpenTime
+		: HeavyAttackChargeEndBasicAttackCancelOpenTime;
+
+	return HeavyAttackSectionElapsedTime >= HeavyAttackCancelOpenTime;
+}
+
+bool AJunPlayer::TryCancelHeavyAttackIntoHeavyAttack()
+{
+	if (!CanCancelHeavyAttackIntoHeavyAttack())
+	{
+		return false;
+	}
+
+	CancelHeavyAttackForRecoveryTransition(HeavyAttackBasicAttackCancelBlendOutTime);
 	return true;
 }
 
@@ -3492,6 +3751,43 @@ void AJunPlayer::TryAdvanceBasicAttackCombo()
 	AnimInstance->Montage_JumpToSection(NextSectionName, BasicAttackMontage);
 }
 
+void AJunPlayer::TryAdvanceHeavyAttackCombo()
+{
+	if (!bIsHeavyAttacking ||
+		!bBufferedHeavyAttackComboInput ||
+		!HeavyAttackTapMontage ||
+		HeavyAttackState != EJunHeavyAttackState::Tap)
+	{
+		return;
+	}
+
+	if (!AnimInstance)
+	{
+		return;
+	}
+
+	if (HeavyAttackComboIndex <= 1)
+	{
+		bBufferedHeavyAttackComboInput = false;
+		bCanBufferHeavyAttackComboInput = false;
+		bHeavyAttackComboAdvanceStateActive = false;
+		bCanRestartHeavyAttackAfterComboAdvance = false;
+		HeavyAttackComboIndex = 2;
+		HeavyAttackSectionElapsedTime = 0.f;
+
+		TargetActor = LockOnTarget ? LockOnTarget.Get() : FindBestAttackTarget();
+		AnimInstance->Montage_JumpToSection(HeavyAttackTapSecondSectionName, HeavyAttackTapMontage);
+		return;
+	}
+
+	bBufferedHeavyAttackComboInput = false;
+	bCanBufferHeavyAttackComboInput = false;
+	bHeavyAttackComboAdvanceStateActive = false;
+	bCanRestartHeavyAttackAfterComboAdvance = false;
+	CancelHeavyAttackForRecoveryTransition(HeavyAttackRestartBlendOutTime);
+	StartHeavyAttackTap();
+}
+
 void AJunPlayer::CancelBasicAttackIntoDefense()
 {
 	CancelBasicAttackForRecoveryTransition();
@@ -3829,6 +4125,7 @@ void AJunPlayer::EnterRealDeath()
 	AddGameplayTag(JunGameplayTags::State_Condition_Dead);
 	ApplyDeathControlLock();
 	NotifyBossPlayerRealDeathStarted();
+	StopFakeDeathSound(false);
 
 	if (DeathMontage)
 	{
@@ -3849,6 +4146,7 @@ void AJunPlayer::ConfirmRealDeathFromFakeDeath()
 	AddGameplayTag(JunGameplayTags::State_Condition_Dead);
 	ApplyDeathControlLock();
 	NotifyBossPlayerRealDeathStarted();
+	StopFakeDeathSound(false);
 
 	// Already lying in FakeDeath's Death loop, so there is no new death-section notify to wait for.
 	TriggerPendingDeathPresentation();
@@ -3875,10 +4173,12 @@ void AJunPlayer::TriggerPendingDeathPresentation()
 		if (bPendingDeathPresentationIsRealDeath)
 		{
 			RealDeathHoldRemainTime = RealDeathUIHoldDuration;
+			StartRealDeathSound();
 			JunPlayerController->ShowRealDeathUI();
 		}
 		else
 		{
+			StartFakeDeathSound();
 			JunPlayerController->ShowFakeDeathUI();
 		}
 	}
@@ -3889,6 +4189,7 @@ void AJunPlayer::StartFakeDeathRevive()
 	DeathState = EJunPlayerDeathState::FakeDeathReviving;
 	CurrentReviveCount = FMath::Max(0, CurrentReviveCount - 1);
 	bDeathPresentationStarted = false;
+	StopFakeDeathSound();
 
 	if (AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(GetController()))
 	{
@@ -3951,6 +4252,7 @@ void AJunPlayer::UpdateDeathState(float DeltaTime)
 	if (!bRealDeathBlackFadeStarted)
 	{
 		bRealDeathBlackFadeStarted = true;
+		StopRealDeathSound();
 		if (JunPlayerController)
 		{
 			JunPlayerController->StartDeathFullBlackFadeIn();
@@ -3974,7 +4276,117 @@ void AJunPlayer::UpdateDeathState(float DeltaTime)
 
 		DeathState = EJunPlayerDeathState::Respawning;
 		ResetBossesAfterPlayerRealDeath();
+		if (AJunBGMManager* BGMManager = AJunBGMManager::Get(this))
+		{
+			BGMManager->SetBGMDucked(false);
+			BGMManager->ReturnToMapBGM();
+		}
 		RespawnAtPlayerStart();
+	}
+}
+
+void AJunPlayer::StartFakeDeathSound()
+{
+	if (AJunBGMManager* BGMManager = AJunBGMManager::Get(this))
+	{
+		BGMManager->SetBGMDucked(true);
+	}
+
+	if (!FakeDeathSound || !FakeDeathAudioComponent)
+	{
+		return;
+	}
+
+	if (FakeDeathAudioComponent->IsPlaying())
+	{
+		return;
+	}
+
+	FakeDeathAudioComponent->SetSound(FakeDeathSound);
+	if (FakeDeathSoundFadeInTime > 0.f)
+	{
+		FakeDeathAudioComponent->FadeIn(FakeDeathSoundFadeInTime, FakeDeathSoundVolume);
+	}
+	else
+	{
+		FakeDeathAudioComponent->SetVolumeMultiplier(FakeDeathSoundVolume);
+		FakeDeathAudioComponent->Play();
+	}
+}
+
+void AJunPlayer::StopFakeDeathSound(bool bReleaseBGMDuck)
+{
+	if (bReleaseBGMDuck)
+	{
+		if (AJunBGMManager* BGMManager = AJunBGMManager::Get(this))
+		{
+			BGMManager->SetBGMDucked(false);
+		}
+	}
+
+	if (!FakeDeathAudioComponent || !FakeDeathAudioComponent->IsPlaying())
+	{
+		return;
+	}
+
+	if (FakeDeathSoundFadeOutTime > 0.f)
+	{
+		FakeDeathAudioComponent->FadeOut(FakeDeathSoundFadeOutTime, 0.f);
+	}
+	else
+	{
+		FakeDeathAudioComponent->Stop();
+	}
+}
+
+void AJunPlayer::StartRealDeathSound()
+{
+	if (AJunBGMManager* BGMManager = AJunBGMManager::Get(this))
+	{
+		BGMManager->SetBGMDucked(true);
+	}
+
+	if (!RealDeathSound || !RealDeathAudioComponent)
+	{
+		return;
+	}
+
+	if (RealDeathAudioComponent->IsPlaying())
+	{
+		return;
+	}
+
+	RealDeathAudioComponent->SetSound(RealDeathSound);
+	if (RealDeathSoundFadeInTime > 0.f)
+	{
+		RealDeathAudioComponent->FadeIn(RealDeathSoundFadeInTime, RealDeathSoundVolume);
+	}
+	else
+	{
+		RealDeathAudioComponent->SetVolumeMultiplier(RealDeathSoundVolume);
+		RealDeathAudioComponent->Play();
+	}
+}
+
+void AJunPlayer::StopRealDeathSound()
+{
+	if (AJunBGMManager* BGMManager = AJunBGMManager::Get(this))
+	{
+		BGMManager->SetBGMDucked(false);
+	}
+
+	if (!RealDeathAudioComponent || !RealDeathAudioComponent->IsPlaying())
+	{
+		return;
+	}
+
+	if (RealDeathSoundFadeOutTime > 0.f)
+	{
+		RealDeathAudioComponent->FadeOut(RealDeathSoundFadeOutTime, 0.f);
+	}
+	else
+	{
+		RealDeathAudioComponent->Stop();
 	}
 }
 
@@ -4045,6 +4457,9 @@ void AJunPlayer::ResetBossesAfterPlayerRealDeath()
 
 void AJunPlayer::RespawnAtPlayerStart()
 {
+	StopFakeDeathSound();
+	StopRealDeathSound();
+
 	if (UAnimInstance* PlayerAnimInstance = GetPlayerAnimInstance())
 	{
 		if (FakeDeathMontage)
@@ -4589,12 +5004,13 @@ bool AJunPlayer::CanRecoverPosture() const
 		return false;
 	}
 
-	return true;
+	return GetMoveState() != EJunMoveState::Run;
 }
 
 void AJunPlayer::StartParrySuccess()
 {
 	InterruptActionsForHitReaction();
+	PlayDefenseEffect(CachedParryParticleComponent, ParryParticleComponentName);
 
 	CurrentHitState = EJunPlayerHitState::ParrySuccess;
 	ChainParryWindowRemainTime = ChainParryWindowDuration;
@@ -4630,6 +5046,8 @@ void AJunPlayer::StartParrySuccess()
 
 void AJunPlayer::StartGuardBlock()
 {
+	PlayDefenseEffect(CachedDeflectParticleComponent, DeflectParticleComponentName);
+
 	CurrentHitState = EJunPlayerHitState::GuardBlock;
 	PlayerHitStateRemainTime = GuardBlockMontage ? GuardBlockMontage->GetPlayLength() : GuardBlockDuration;
 	AddGameplayTag(JunGameplayTags::State_Block_Move);
@@ -4659,6 +5077,7 @@ void AJunPlayer::StartGuardBlock()
 void AJunPlayer::StartGuardBreak()
 {
 	InterruptActionsForHitReaction();
+	PlayDefenseEffect(CachedGuardBreakParticleComponent, GuardBreakParticleComponentName);
 
 	CurrentPosture = 0.f;
 	CurrentHitState = EJunPlayerHitState::GuardBreak;

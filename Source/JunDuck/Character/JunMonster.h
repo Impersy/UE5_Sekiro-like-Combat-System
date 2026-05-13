@@ -144,17 +144,21 @@ public:
 	float GetDesiredMoveRight() const;
 	float GetDesiredMaxWalkSpeed() const;
 	void SetDesiredMoveAxes(float NewForward, float NewRight);
+	void StopCombatBGM();
 
 	virtual void BeginAttackTraceWindow(
 		EHitReactType HitReactType = EHitReactType::LightHit,
 		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
-		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData()) override;
-	virtual void EndAttackTraceWindow() override;
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData(),
+		EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail) override;
+	virtual void EndAttackTraceWindow(EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail) override;
 	virtual void BeginKickAttackTraceWindow(
 		EHitReactType HitReactType = EHitReactType::LightHit,
 		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData()) override;
 	virtual void EndKickAttackTraceWindow() override;
+	virtual void BeginWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType) override;
+	virtual void EndWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType) override;
 	void BeginAttackFacingWindow(float InterpSpeed);
 	void EndAttackFacingWindow();
 	virtual void HandleGameplayEventNotify(FGameplayTag EventTag) override;
@@ -237,6 +241,7 @@ protected:
 	void AttachWeaponToSheathedSocket();
 	void SetWeaponVisible(bool bVisible);
 	void SetBowVisible(bool bVisible);
+	void StartCombatBGM();
 
 public:
 	void SpawnAttachedArrow();
@@ -355,6 +360,27 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
 	TObjectPtr<class AArrowProjectile> AttachedArrow = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
+	bool bWeaponAttachedToHand = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
+	TObjectPtr<class UAudioComponent> CombatBGMComponent = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio|BGM", meta = (ToolTip = "Assign a looping BGM asset for boss combat."))
+	TObjectPtr<class USoundBase> CombatBGM = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio|BGM", meta = (ClampMin = "0"))
+	float CombatBGMFadeInTime = 0.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio|BGM", meta = (ClampMin = "0"))
+	float CombatBGMFadeOutTime = 1.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio|SFX")
+	TObjectPtr<class USoundBase> BossClearSound = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio|SFX", meta = (ClampMin = "0"))
+	float BossClearSoundVolume = 1.0f;
 
 protected:
 	// Patrol / return runtime data.

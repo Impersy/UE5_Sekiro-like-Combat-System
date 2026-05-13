@@ -652,13 +652,7 @@ void AJunPlayerController::Input_RunStarted(const FInputActionValue& InputValue)
 		return;
 	}
 
-	if (JunPlayer->IsGuardPoseActive() || JunPlayer->IsGuardOn())
-	{
-
-		return;
-	}
-
-
+	JunPlayer->SetWalkRequested(true);
 }
 
 void AJunPlayerController::Input_RunReleased(const FInputActionValue& InputValue)
@@ -668,6 +662,7 @@ void AJunPlayerController::Input_RunReleased(const FInputActionValue& InputValue
 		return;
 	}
 
+	JunPlayer->SetWalkRequested(false);
 }
 
 void AJunPlayerController::Input_WalkToggle(const FInputActionValue& InputValue)

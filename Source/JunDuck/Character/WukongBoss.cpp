@@ -2,9 +2,11 @@
 
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Character/JunPlayer.h"
 #include "Engine/Engine.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "JunGameplayTags.h"
+#include "NiagaraComponent.h"
 #include "Weapon/ArrowProjectile.h"
 
 namespace
@@ -106,8 +108,6 @@ namespace
 			return TEXT("ChargeAttack");
 		case EWukongNormalAttackType::DodgeAttack:
 			return TEXT("DodgeAttack");
-		case EWukongNormalAttackType::Ambush:
-			return TEXT("Ambush");
 		case EWukongNormalAttackType::NinjaA:
 			return TEXT("NinjaA");
 		case EWukongNormalAttackType::NinjaB:
@@ -170,7 +170,6 @@ namespace
 		EWukongNormalAttackType::JumpAttack,
 		EWukongNormalAttackType::ChargeAttack,
 		EWukongNormalAttackType::DodgeAttack,
-		EWukongNormalAttackType::Ambush,
 		EWukongNormalAttackType::NinjaA,
 		EWukongNormalAttackType::NinjaB,
 		EWukongNormalAttackType::Execution,
@@ -242,8 +241,8 @@ AWukongBoss::AWukongBoss()
 	NinjaBAttack.CodeMoveStopDistance = 120.f;
 	NinjaBAttack.CodeMoveMaxDistance = 500.f;
 
-	BowBackDashAttack.MinRange = 180.f;
-	BowBackDashAttack.MaxRange = 650.f;
+	BowBackDashAttack.MinRange = 100.f;
+	BowBackDashAttack.MaxRange = 500.f;
 	BowBackDashAttack.CandidateMaxRange = 800.f;
 	BowBackDashAttack.bFaceTargetDuringAttack = true;
 	BowBackDashAttack.FacingDuration = 0.35f;
@@ -252,7 +251,7 @@ AWukongBoss::AWukongBoss()
 	BowBackDashAttack.bTryTurnAfterAttack = true;
 	BowBackDashAttack.PostAttackTurnStartAngle = 45.f;
 
-	Bow4ComboAttack.MinRange = 700.f;
+	Bow4ComboAttack.MinRange = 500.f;
 	Bow4ComboAttack.MaxRange = 1600.f;
 	Bow4ComboAttack.CandidateMaxRange = 1800.f;
 	Bow4ComboAttack.bFaceTargetDuringAttack = true;
@@ -262,7 +261,7 @@ AWukongBoss::AWukongBoss()
 	Bow4ComboAttack.bTryTurnAfterAttack = true;
 	Bow4ComboAttack.PostAttackTurnStartAngle = 45.f;
 
-	BowHeavyAttack.MinRange = 700.f;
+	BowHeavyAttack.MinRange = 100.f;
 	BowHeavyAttack.MaxRange = 1600.f;
 	BowHeavyAttack.CandidateMaxRange = 1800.f;
 	BowHeavyAttack.bFaceTargetDuringAttack = true;
@@ -298,6 +297,10 @@ void AWukongBoss::HandleGameplayEventNotify(FGameplayTag EventTag)
 	else if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Wukong_ParryCounterFollowUpDecision))
 	{
 		TryStartParryCounterFollowUp();
+	}
+	else if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Wukong_BowAttackRestoreWeapon))
+	{
+		EndBowAttackPresentation();
 	}
 }
 
@@ -1125,6 +1128,13 @@ void AWukongBoss::UpdateRepositionState(float DeltaTime)
 
 void AWukongBoss::UpdateNonAttackActionState(float DeltaTime)
 {
+	if (PlannedNonAttackType == EWukongPlannedNonAttackType::Hold)
+	{
+		BeginNoAttackCandidateApproach();
+		SetWukongCombatState(EWukongCombatState::Approach);
+		return;
+	}
+
 	StopAIMovement();
 	GetCharacterMovement()->StopMovementImmediately();
 	SetDesiredMoveAxes(0.f, 0.f);
@@ -1217,7 +1227,6 @@ bool AWukongBoss::HasAnyAttackCandidateForCurrentDistance() const
 		EWukongNormalAttackType::JumpAttack,
 		EWukongNormalAttackType::ChargeAttack,
 		EWukongNormalAttackType::DodgeAttack,
-		EWukongNormalAttackType::Ambush,
 		EWukongNormalAttackType::NinjaA,
 		EWukongNormalAttackType::NinjaB,
 		EWukongNormalAttackType::Execution,
@@ -1345,7 +1354,7 @@ bool AWukongBoss::HasValidPlannedMovement() const
 
 	if (PlannedNonAttackType == EWukongPlannedNonAttackType::Hold)
 	{
-		return PlannedMovementDuration > 0.f;
+		return false;
 	}
 
 	if (IsMobilityNonAttackType(PlannedNonAttackType))
@@ -1397,8 +1406,6 @@ bool AWukongBoss::IsNormalAttackEnabledByTestFilter(EWukongNormalAttackType Norm
 		return bTestEnableChargeAttack;
 	case EWukongNormalAttackType::DodgeAttack:
 		return bTestEnableDodgeAttack;
-	case EWukongNormalAttackType::Ambush:
-		return bTestEnableAmbush;
 	case EWukongNormalAttackType::NinjaA:
 		return bTestEnableNinjaA;
 	case EWukongNormalAttackType::NinjaB:
@@ -1649,8 +1656,6 @@ const FWukongNormalAttackData* AWukongBoss::GetNormalAttackData(EWukongNormalAtt
 		return &ChargeAttack;
 	case EWukongNormalAttackType::DodgeAttack:
 		return &DodgeAttack;
-	case EWukongNormalAttackType::Ambush:
-		return &AmbushAttack;
 	case EWukongNormalAttackType::NinjaA:
 		return &NinjaAAttack;
 	case EWukongNormalAttackType::NinjaB:
@@ -1784,6 +1789,147 @@ void AWukongBoss::HandleComboDecisionPoint()
 	CurrentAttackComboLength = NextComboLength;
 	PlannedComboLength = NextComboLength;
 	AnimInstance->Montage_JumpToSection(NextSectionName, ComboMontage);
+}
+
+bool AWukongBoss::TryStartNormalAttackLinkFromNotify(
+	EWukongNormalAttackType NextAttackType,
+	float TriggerChance,
+	float BlendOutTime,
+	float BlendInTime,
+	bool bRequireRange,
+	bool bUseTestFilter)
+{
+	if (TriggerChance <= 0.f || FMath::FRand() > FMath::Clamp(TriggerChance, 0.f, 1.f))
+	{
+		return false;
+	}
+
+	if (!CurrentTarget)
+	{
+		return false;
+	}
+
+	if (const AJunCharacter* TargetCharacter = Cast<AJunCharacter>(CurrentTarget))
+	{
+		if (TargetCharacter->Is_Dead())
+		{
+			return false;
+		}
+	}
+
+	if (const AJunPlayer* TargetPlayer = Cast<AJunPlayer>(CurrentTarget))
+	{
+		if (TargetPlayer->IsInDeathSequence())
+		{
+			return false;
+		}
+	}
+
+	const bool bCanLinkFromCurrentState =
+		CurrentCombatSubState == EWukongCombatState::Attack ||
+		CurrentCombatSubState == EWukongCombatState::Recovery;
+
+	if (CurrentState != EMonsterState::Combat ||
+		!bCanLinkFromCurrentState ||
+		IsInHitReact() ||
+		NextAttackType == EWukongNormalAttackType::None ||
+		(bUseTestFilter && !IsNormalAttackEnabledByTestFilter(NextAttackType)))
+	{
+		return false;
+	}
+
+	const FWukongNormalAttackData* NextAttackData = GetNormalAttackData(NextAttackType);
+	UAnimMontage* NextMontage = NextAttackData ? NextAttackData->Montage.Get() : nullptr;
+	UAnimInstance* CurrentAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+	if (!NextAttackData || !NextMontage || !CurrentAnimInstance)
+	{
+		return false;
+	}
+
+	const float TargetDistance = GetTargetDistance2D();
+	if (bRequireRange &&
+		(TargetDistance < NextAttackData->MinRange || TargetDistance > NextAttackData->MaxRange))
+	{
+		return false;
+	}
+
+	const bool bNextAttackIsBow = IsBowNormalAttackType(NextAttackType);
+	if (!bNextAttackIsBow && IsBowNormalAttackType(CurrentAttackNormalAttackType))
+	{
+		EndBowAttackPresentation();
+	}
+
+	if (CurrentAttackMontage)
+	{
+		CurrentAnimInstance->Montage_Stop(FMath::Max(0.f, BlendOutTime), CurrentAttackMontage);
+	}
+
+	StopAllAttackTraces();
+	ResetPendingAttackMotionState();
+	RestoreAttackGroundMotionOverride();
+	ClearTimedMontageSuperArmor();
+
+	CurrentCombatSubState = EWukongCombatState::Attack;
+	CombatSubStateElapsedTime = 0.f;
+	CurrentAttackActionType = EWukongActionType::NormalAttack;
+	CurrentAttackComboSet = EWukongComboSet::None;
+	CurrentAttackComboLength = 0;
+	CurrentAttackNormalAttackType = NextAttackType;
+	PlannedAttackType = EWukongPlannedAttackType::NormalAttack;
+	PlannedNormalAttackType = NextAttackType;
+
+	CurrentAttackSelection.Montage = NextMontage;
+	CurrentAttackSelection.AttackRange = NextAttackData->MaxRange;
+	CurrentAttackSelection.bFaceTargetDuringAttack = NextAttackData->bFaceTargetDuringAttack;
+	CurrentAttackSelection.FacingDuration = NextAttackData->bUseAnimNotifyTiming ? 0.f : NextAttackData->FacingDuration;
+	CurrentAttackSelection.FacingInterpSpeed = NextAttackData->FacingInterpSpeed;
+	CurrentAttackSelection.PlayRate = NextAttackData->PlayRate;
+	CurrentAttackSelection.bTryTurnAfterAttack = NextAttackData->bTryTurnAfterAttack;
+	CurrentAttackSelection.PostAttackTurnStartAngle = NextAttackData->PostAttackTurnStartAngle;
+	CurrentAttackMontage = NextMontage;
+
+	bIsAttacking = true;
+	bAttackInterruptedByHitReact = false;
+	AttackTime = NextMontage->GetPlayLength() / FMath::Max(NextAttackData->PlayRate, KINDA_SMALL_NUMBER);
+	AttackFacingRemainTime = CurrentAttackSelection.FacingDuration;
+	CombatMoveInput = FVector2D::ZeroVector;
+	InitiativeState = EWukongInitiativeState::BossPattern;
+
+	AddGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	AddGameplayTag(JunGameplayTags::State_Block_Move);
+
+	StopAIMovement();
+	SetDesiredMoveAxes(0.f, 0.f);
+
+	if (bNextAttackIsBow)
+	{
+		BeginBowAttackPresentation();
+		bPostBowCloseRangeApproachInProgress = bForceApproachAfterBowAttack;
+	}
+	else
+	{
+		bPostBowCloseRangeApproachInProgress = false;
+	}
+
+	if (!NextAttackData->bUseAnimNotifyTiming)
+	{
+		if (NextAttackData->MoveSpeed > 0.f)
+		{
+			const float MoveStartTime = NextAttackData->MoveStartTimeAtPlayRateOne;
+			QueueCodeDrivenAttackMove(NextAttackType, MoveStartTime / FMath::Max(NextAttackData->PlayRate, KINDA_SMALL_NUMBER));
+		}
+
+		ApplyTimedMontageSuperArmor(AttackTime);
+	}
+
+	const FMontageBlendSettings BlendInSettings(FMath::Max(0.f, BlendInTime));
+	if (CurrentAnimInstance->Montage_PlayWithBlendSettings(NextMontage, BlendInSettings, NextAttackData->PlayRate) <= 0.f)
+	{
+		FinishAttack();
+		return false;
+	}
+
+	return true;
 }
 
 UAnimMontage* AWukongBoss::GetMobilityNonAttackMontage(EWukongPlannedNonAttackType NonAttackType, EWukongMovementDirection MovementDirection) const
@@ -2078,6 +2224,7 @@ bool AWukongBoss::IsBowNormalAttackType(EWukongNormalAttackType AttackType) cons
 
 void AWukongBoss::BeginBowAttackPresentation()
 {
+	bBowAttackPresentationActive = true;
 	SetWeaponVisible(false);
 	SetBowVisible(true);
 }
@@ -2092,6 +2239,7 @@ void AWukongBoss::EndBowAttackPresentation()
 
 	SetBowVisible(false);
 	SetWeaponVisible(true);
+	bBowAttackPresentationActive = false;
 }
 
 void AWukongBoss::ApplyTimedMontageSuperArmor(float MontageDuration, float DurationScale)
@@ -2238,6 +2386,13 @@ bool AWukongBoss::TryEnterPlannedNonAttackStateFromIdle()
 	if (!HasValidPlannedMovement())
 	{
 		ResetPlannedCombatPlan();
+		return true;
+	}
+
+	if (PlannedNonAttackType == EWukongPlannedNonAttackType::Hold)
+	{
+		BeginNoAttackCandidateApproach();
+		SetWukongCombatState(EWukongCombatState::Approach);
 		return true;
 	}
 
@@ -2423,11 +2578,67 @@ UAnimMontage* AWukongBoss::GetParryCounterFollowUpMontage() const
 		: ParryCounterFollowUpLeftMontage.Get();
 }
 
+UNiagaraComponent* AWukongBoss::FindNiagaraComponentByName(FName ComponentName) const
+{
+	if (ComponentName.IsNone())
+	{
+		return nullptr;
+	}
+
+	TArray<UNiagaraComponent*> NiagaraComponents;
+	GetComponents<UNiagaraComponent>(NiagaraComponents);
+
+	for (UNiagaraComponent* NiagaraComponent : NiagaraComponents)
+	{
+		if (NiagaraComponent && NiagaraComponent->GetFName() == ComponentName)
+		{
+			return NiagaraComponent;
+		}
+	}
+
+	return nullptr;
+}
+
+void AWukongBoss::PlayParryParticle()
+{
+	if (!CachedParryParticleComponent)
+	{
+		CachedParryParticleComponent = FindNiagaraComponentByName(ParryParticleComponentName);
+	}
+
+	if (!CachedParryParticleComponent)
+	{
+		return;
+	}
+
+	CachedParryParticleComponent->Activate(true);
+
+	if (bAutoDeactivateParryParticle && GetWorld())
+	{
+		TWeakObjectPtr<UNiagaraComponent> WeakComponent = CachedParryParticleComponent;
+		FTimerHandle DeactivateTimerHandle;
+		GetWorldTimerManager().SetTimer(
+			DeactivateTimerHandle,
+			[WeakComponent]()
+			{
+				if (UNiagaraComponent* NiagaraComponent = WeakComponent.Get())
+				{
+					NiagaraComponent->Deactivate();
+				}
+			},
+			ParryParticleAutoDeactivateDelay,
+			false
+		);
+	}
+}
+
 void AWukongBoss::StartParrySuccessAgainstIncomingHit(
 	AActor* DamageCauser,
 	const FVector& SwingDirection,
 	const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
 {
+	PlayParryParticle();
+
 	bParryCounterStarted = false;
 	bCurrentParryCounterPerfectParried = false;
 	bParryCounterFollowUpStarted = false;
@@ -2703,12 +2914,14 @@ bool AWukongBoss::TryHandleIncomingHitBeforeDamage(
 
 	if (Roll <= PerfectChance)
 	{
+		SetPendingDefenseSoundType(EJunDefenseSoundType::PerfectParry, bPlayDefenseSoundImmediately);
 		StartParrySuccessAgainstIncomingHit(DamageCauser, SwingDirection, DefenseKnockbackData);
 		return true;
 	}
 
 	if (Roll <= PerfectChance + NormalChance)
 	{
+		SetPendingDefenseSoundType(EJunDefenseSoundType::NormalParry, bPlayDefenseSoundImmediately);
 		AddPosture(NormalParryPostureGain);
 		const EWukongInitiativeState SavedInitiativeState = InitiativeState;
 		StartParrySuccessAgainstIncomingHit(DamageCauser, SwingDirection, DefenseKnockbackData);
@@ -2768,6 +2981,7 @@ float AWukongBoss::GetHitReactControlLockDuration(EHitReactType HitType) const
 void AWukongBoss::OnHitReactStarted(EHitReactType NewHitReact, ECharacterHitReactDirection NewHitDirection)
 {
 	Super::OnHitReactStarted(NewHitReact, NewHitDirection);
+	EndBowAttackPresentation();
 	LastHitReactDirectionForTurn = NewHitDirection;
 
 	if (CurrentState == EMonsterState::Combat)
@@ -3508,12 +3722,12 @@ void AWukongBoss::RefreshNoAttackFallbackMovementType()
 
 	TArray<EWukongPlannedNonAttackType> NonAttackCandidates;
 	NonAttackCandidates.Add(EWukongPlannedNonAttackType::Strafe);
-	NonAttackCandidates.Add(EWukongPlannedNonAttackType::Hold);
 
 	if (NonAttackCandidates.Num() <= 0)
 	{
-		PlannedNonAttackType = EWukongPlannedNonAttackType::Hold;
-		PlannedMovementDuration = NoAttackHoldDuration;
+		BeginNoAttackCandidateApproach();
+		PlannedNonAttackType = EWukongPlannedNonAttackType::None;
+		PlannedMovementDuration = 0.f;
 		return;
 	}
 
@@ -3526,20 +3740,15 @@ void AWukongBoss::RefreshNoAttackFallbackMovementType()
 		return;
 	}
 
-	if (PlannedNonAttackType == EWukongPlannedNonAttackType::Hold)
-	{
-		PlannedMovementDuration = NoAttackHoldDuration;
-		return;
-	}
-
 	if (UAnimMontage* NonAttackMontage = GetPlannedNonAttackMontage())
 	{
 		PlannedMovementDuration = NonAttackMontage->GetPlayLength();
 		return;
 	}
 
-	PlannedNonAttackType = EWukongPlannedNonAttackType::Hold;
-	PlannedMovementDuration = NoAttackHoldDuration;
+	BeginNoAttackCandidateApproach();
+	PlannedNonAttackType = EWukongPlannedNonAttackType::None;
+	PlannedMovementDuration = 0.f;
 }
 
 bool AWukongBoss::TryPlanReactiveBackwardEvade()

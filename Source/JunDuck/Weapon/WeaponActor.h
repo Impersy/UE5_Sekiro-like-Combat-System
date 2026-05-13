@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Character/JunCharacter.h"
 #include "GameFramework/Actor.h"
+#include "Weapon/JunWeaponEffectTypes.h"
 #include "WeaponActor.generated.h"
 
 UCLASS()
@@ -29,10 +30,10 @@ public:
 
 public:
 	UFUNCTION(BlueprintCallable)
-	void StartAttackTrace();
+	void StartAttackTrace(EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail);
 
 	UFUNCTION(BlueprintCallable)
-	void EndAttackTrace();
+	void EndAttackTrace(EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail);
 
 	UFUNCTION(BlueprintCallable)
 	void StopAttackTrace();
@@ -49,11 +50,26 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void SetAttackDefenseKnockbackData(const FJunAttackDefenseKnockbackData& NewDefenseKnockbackData);
 
+	UFUNCTION(BlueprintCallable)
+	void ActivateWeaponNiagara(EJunWeaponNiagaraComponent ComponentType);
+
+	UFUNCTION(BlueprintCallable)
+	void DeactivateWeaponNiagara(EJunWeaponNiagaraComponent ComponentType);
+
+	UFUNCTION(BlueprintCallable)
+	void DeactivateAllWeaponNiagara();
+
+	UFUNCTION(BlueprintCallable)
+	void SetWeaponEffectsEnabled(bool bEnabled);
+
 protected:
 	void UpdateAttackTrace();
 	void DrawAttackTraceDebug(const FVector& TraceStart, const FVector& TraceEnd, bool bSweepDebug, const FVector& PrevStart = FVector::ZeroVector, const FVector& PrevEnd = FVector::ZeroVector) const;
 
 	void ApplyDamageToHitCharacter(AActor* HitActor, const FVector& SwingDirection);
+	class UNiagaraComponent* GetWeaponNiagaraComponent(EJunWeaponNiagaraComponent ComponentType) const;
+	class UNiagaraComponent* FindNiagaraComponentByName(FName ComponentName) const;
+	void CacheWeaponNiagaraComponents();
 
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
@@ -67,6 +83,21 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trace")
 	USceneComponent* TraceEndPoint;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trail")
+	TObjectPtr<USceneComponent> TrailStartPoint;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trail")
+	TObjectPtr<USceneComponent> TrailEndPoint;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX")
+	FName TrailNiagaraComponentName = TEXT("NS_Trail");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX")
+	FName SpecialTrailNiagaraComponentName = TEXT("NS_SP_Trail");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX")
+	FName AuraNiagaraComponentName = TEXT("NS_Aura");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace")
 	float TraceRadius = 10.f;
@@ -83,6 +114,17 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace")
 	bool bShowAttackTraceSweepDebug = true;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
+	bool bActivateTrailWithAttackTrace = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX", meta = (ToolTip = "Fallback component used by direct StartAttackTrace calls. AnimNotifyState_AttackTrace can override this per notify."))
+	EJunWeaponNiagaraComponent AttackTraceNiagaraComponent = EJunWeaponNiagaraComponent::Trail;
+
+	EJunWeaponNiagaraComponent ActiveAttackTraceNiagaraComponent = EJunWeaponNiagaraComponent::Trail;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VFX")
+	bool bWeaponEffectsEnabled = true;
+
 	bool bTraceActive = false;
 
 	EHitReactType AttackHitReactType = EHitReactType::LightHit;
@@ -95,5 +137,14 @@ protected:
 	FVector PrevTraceEnd = FVector::ZeroVector;
 
 	TSet<AActor*> HitActors;
+
+	UPROPERTY(Transient)
+	mutable TObjectPtr<class UNiagaraComponent> CachedTrailNiagaraComponent = nullptr;
+
+	UPROPERTY(Transient)
+	mutable TObjectPtr<class UNiagaraComponent> CachedSpecialTrailNiagaraComponent = nullptr;
+
+	UPROPERTY(Transient)
+	mutable TObjectPtr<class UNiagaraComponent> CachedAuraNiagaraComponent = nullptr;
 
 };

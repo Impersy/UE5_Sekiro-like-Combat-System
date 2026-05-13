@@ -18,6 +18,7 @@ UE_DEFINE_GAMEPLAY_TAG(Input_Action_Defense, "Input.Action.Defense");
 
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_BasicAttack_ComboWindow, "Event.Notify.BasicAttack.ComboWindow");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_BasicAttack_ComboAdvance, "Event.Notify.BasicAttack.ComboAdvance");
+UE_DEFINE_GAMEPLAY_TAG(Event_Notify_HeavyAttack_ComboWindow, "Event.Notify.HeavyAttack.ComboWindow");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_BasicAttack_DefenseCancelOpen, "Event.Notify.BasicAttack.DefenseCancelOpen");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_BasicAttack_RecoveryOpen, "Event.Notify.BasicAttack.RecoveryOpen");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Dodge_Start, "Event.Notify.Dodge.Start");
@@ -31,8 +32,10 @@ UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Execution_FinishCameraPullIn, "Event.Notify.
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Execution_CameraRestore, "Event.Notify.Execution.CameraRestore");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Death_Present, "Event.Notify.Death.Present");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Boss_Clear, "Event.Notify.Boss.Clear");
+UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Boss_StopCombatBGM, "Event.Notify.Boss.StopCombatBGM");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Wukong_ParryCounter, "Event.Notify.Wukong.ParryCounter");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Wukong_ParryCounterFollowUpDecision, "Event.Notify.Wukong.ParryCounterFollowUpDecision");
+UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Wukong_BowAttackRestoreWeapon, "Event.Notify.Wukong.BowAttackRestoreWeapon");
 
 UE_DEFINE_GAMEPLAY_TAG(State_Action_Attack, "State.Action.Attack");
 UE_DEFINE_GAMEPLAY_TAG(State_Action_Dodge, "State.Action.Dodge");
