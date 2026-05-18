@@ -1,4 +1,5 @@
 #include "Character/JunPlayer.h"
+#include "AlphaBlend.h"
 #include "Animation/AnimMontage.h"
 #include "Camera/JunSpringArmComponent.h"
 #include "Camera/CameraComponent.h"
@@ -6,6 +7,7 @@
 #include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
+#include "Equipment/HatActor.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Player/JunPlayerController.h"
 #include "Weapon/WeaponActor.h"
@@ -109,6 +111,7 @@ void AJunPlayer::BeginPlay()
 	CurrentReviveCount = FMath::Max(0, MaxReviveCount);
 	SpawnAndAttachWeapon();
 	SpawnAndAttachScabbard();
+	SpawnAndAttachDefaultHat();
 	GetPlayerAnimInstance();
 	CacheDefenseEffectComponents();
 	CacheDefaultMovementBrakingSettings();
@@ -1407,6 +1410,58 @@ void AJunPlayer::SpawnAndAttachScabbard()
 	}
 }
 
+void AJunPlayer::SpawnAndAttachDefaultHat()
+{
+	if (DefaultHatClass)
+	{
+		EquipHat(DefaultHatClass);
+	}
+}
+
+void AJunPlayer::EquipHat(TSubclassOf<AHatActor> NewHatClass)
+{
+	UnequipHat();
+
+	UWorld* World = GetWorld();
+	if (!World || !NewHatClass || !GetMesh() || HatSocketName.IsNone())
+	{
+		return;
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = this;
+	SpawnParams.Instigator = this;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	EquippedHat = World->SpawnActor<AHatActor>(
+		NewHatClass,
+		FVector::ZeroVector,
+		FRotator::ZeroRotator,
+		SpawnParams
+	);
+
+	if (!EquippedHat)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Failed to spawn hat."));
+		return;
+	}
+
+	EquippedHat->AttachToComponent(
+		GetMesh(),
+		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+		HatSocketName
+	);
+}
+
+void AJunPlayer::UnequipHat()
+{
+	if (EquippedHat)
+	{
+		EquippedHat->Destroy();
+		EquippedHat = nullptr;
+	}
+}
+
 bool AJunPlayer::GetPlayerIsFalling()
 {
 	return GetMovementComponent()->IsFalling();
@@ -1637,6 +1692,11 @@ float AJunPlayer::GetDesiredMaxWalkSpeed() const
 
 bool AJunPlayer::ShouldUseRunningAnim() const
 {
+	if (bWalkRequested)
+	{
+		return false;
+	}
+
 	return GetMoveState() == EJunMoveState::Run;
 }
 
@@ -3776,6 +3836,31 @@ void AJunPlayer::TryAdvanceHeavyAttackCombo()
 		HeavyAttackSectionElapsedTime = 0.f;
 
 		TargetActor = LockOnTarget ? LockOnTarget.Get() : FindBestAttackTarget();
+
+		const int32 SecondSectionIndex = HeavyAttackTapMontage->GetSectionIndex(HeavyAttackTapSecondSectionName);
+		if (SecondSectionIndex != INDEX_NONE)
+		{
+			float SectionStartTime = 0.f;
+			float SectionEndTime = 0.f;
+			HeavyAttackTapMontage->GetSectionStartAndEndTime(SecondSectionIndex, SectionStartTime, SectionEndTime);
+
+			AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnHeavyAttackMontageEnded);
+			const float MontagePlayResult = AnimInstance->Montage_PlayWithBlendIn(
+				HeavyAttackTapMontage,
+				FAlphaBlendArgs(FMath::Max(0.f, HeavyAttackComboBlendInTime)),
+				CurrentHeavyAttackPlayRate,
+				EMontagePlayReturnType::MontageLength,
+				SectionStartTime,
+				true
+			);
+			AnimInstance->OnMontageEnded.AddDynamic(this, &AJunPlayer::OnHeavyAttackMontageEnded);
+
+			if (MontagePlayResult > 0.f)
+			{
+				return;
+			}
+		}
+
 		AnimInstance->Montage_JumpToSection(HeavyAttackTapSecondSectionName, HeavyAttackTapMontage);
 		return;
 	}
@@ -5794,6 +5879,11 @@ void AJunPlayer::ApplyRunningStateToAnimInstance(bool bNewIsRunning)
 	}
 
 	if (FBoolProperty* BoolProp = FindFProperty<FBoolProperty>(AnimInstance->GetClass(), TEXT("bIsRunning")))
+	{
+		BoolProp->SetPropertyValue_InContainer(AnimInstance, bNewIsRunning);
+	}
+
+	if (FBoolProperty* BoolProp = FindFProperty<FBoolProperty>(AnimInstance->GetClass(), TEXT("bUseRunLocomotion")))
 	{
 		BoolProp->SetPropertyValue_InContainer(AnimInstance, bNewIsRunning);
 	}

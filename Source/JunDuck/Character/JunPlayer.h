@@ -173,6 +173,10 @@ public: // External Gameplay API
 	bool TryStartExecution();
 	bool TryChooseFakeDeathDie();
 	bool TryChooseFakeDeathRevive();
+	UFUNCTION(BlueprintCallable, Category = "Equipment|Hat")
+	void EquipHat(TSubclassOf<class AHatActor> NewHatClass);
+	UFUNCTION(BlueprintCallable, Category = "Equipment|Hat")
+	void UnequipHat();
 
 public: // Query / State API
 	bool GetPlayerIsFalling();
@@ -451,6 +455,7 @@ private:
 
 	void SpawnAndAttachWeapon();
 	void SpawnAndAttachScabbard();
+	void SpawnAndAttachDefaultHat();
 	void CacheDefenseEffectComponents();
 	class UNiagaraComponent* FindNiagaraComponentByName(FName ComponentName) const;
 	void PlayDefenseEffect(TObjectPtr<class UNiagaraComponent>& CachedComponent, FName ComponentName);
@@ -549,6 +554,9 @@ protected: // External References
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
 	class AWeaponActor* EquippedScabbard = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Equipment|Hat")
+	TObjectPtr<class AHatActor> EquippedHat = nullptr;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dodge")
 	TObjectPtr<class UAnimMontage> CurrentDodgeMontage;
@@ -1578,6 +1586,9 @@ protected: // Attack / Defense Tuning
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
 	float HeavyAttackRestartBlendOutTime = 0.2f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
+	float HeavyAttackComboBlendInTime = 0.2f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack", meta = (ClampMin = "0.1"))
 	float JumpAttackPlayRate = 1.f;
 
@@ -1856,4 +1867,11 @@ protected: // Weapon Assets
 
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
 	FName ScabbardSocketName = TEXT("ScabSocket");
+
+protected: // Hat Assets
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Equipment|Hat")
+	TSubclassOf<class AHatActor> DefaultHatClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Equipment|Hat")
+	FName HatSocketName = TEXT("HatSocket");
 };
