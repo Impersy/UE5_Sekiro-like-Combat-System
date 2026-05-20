@@ -67,6 +67,7 @@ enum class EJunBufferedParrySuccessCancelAction : uint8
 	None,
 	BasicAttack,
 	HeavyAttack,
+	Jigen,
 	Jump,
 	Dodge,
 	Move
@@ -127,10 +128,11 @@ public: // Engine / Character Overrides
 	virtual void Landed(const FHitResult& Hit) override;
 	virtual void HandleGameplayEventNotify(FGameplayTag EventTag) override;
 	virtual void BeginAttackTraceWindow(
-		EHitReactType HitReactType = EHitReactType::LightHit,
-		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
-		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData(),
-		EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail) override;
+	EHitReactType HitReactType = EHitReactType::LightHit,
+	const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
+	const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData(),
+	EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail,
+	const FJunAttackTraceOverrideData& TraceOverrideData = FJunAttackTraceOverrideData()) override;
 	virtual void EndAttackTraceWindow(EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail) override;
 	virtual void BeginWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType) override;
 	virtual void EndWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType) override;
@@ -144,26 +146,29 @@ public: // External Gameplay API
 	void OnDefenseStarted();
 	void OnDefenseReleased();
 	void ReceiveHit(
-		EHitReactType HitType,
-		float DamageAmount,
-		AActor* DamageCauser,
-		const FVector& SwingDirection,
-		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData(),
-		bool bCanBuildAttackerPostureOnParry = true);
+	EHitReactType HitType,
+	float DamageAmount,
+	AActor* DamageCauser,
+	const FVector& SwingDirection,
+	const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData(),
+	bool bCanBuildAttackerPostureOnParry = true);
 	void AddCameraLookInput(const FVector2D& Input);
 	void ToggleLockOn();
 	bool TryCancelJumpAttackEndIntoMove();
 	bool TryCancelJumpAttackEndIntoDodge();
 	bool TryCancelJumpAttackEndIntoBasicAttack();
 	bool TryCancelJumpAttackEndIntoHeavyAttack();
+	bool TryCancelJumpAttackEndIntoJigen();
 	bool TryStartDodgeAttack();
 	bool TryCancelDodgeAttackIntoMove();
 	bool TryCancelDodgeAttackIntoDodge();
 	bool TryCancelDodgeAttackIntoBasicAttack();
 	bool TryCancelDodgeAttackIntoHeavyAttack();
+	bool TryCancelDodgeAttackIntoJigen();
 	bool TryCancelHeavyAttackIntoBasicAttack();
 	bool TryCancelDodgeIntoBasicAttack();
 	bool TryCancelDodgeIntoHeavyAttack();
+	bool TryCancelDodgeIntoJigen();
 	bool TryCancelDodgeIntoJump();
 	bool TryCancelDodgeIntoDefense();
 	void BeginDodgeAttackWindow();
@@ -173,6 +178,7 @@ public: // External Gameplay API
 	bool TryStartExecution();
 	bool TryChooseFakeDeathDie();
 	bool TryChooseFakeDeathRevive();
+	bool TryStartJigen();
 	UFUNCTION(BlueprintCallable, Category = "Equipment|Hat")
 	void EquipHat(TSubclassOf<class AHatActor> NewHatClass);
 	UFUNCTION(BlueprintCallable, Category = "Equipment|Hat")
@@ -227,6 +233,8 @@ public: // Query / State API
 	bool TryCancelBasicAttackIntoMove();
 	void BeginAttackFacingWindow(float FacingInterpSpeed);
 	void EndAttackFacingWindow();
+	void BeginHitReactFacingWindow(float FacingInterpSpeed);
+	void EndHitReactFacingWindow();
 
 protected: // BasicAttack
 	void OnBasicAttackComboWindowBegin();
@@ -243,6 +251,8 @@ protected: // BasicAttack
 	void CancelBasicAttackIntoDefense();
 	bool CanCancelBasicAttackIntoHeavyAttack() const;
 	bool TryCancelBasicAttackIntoHeavyAttack();
+	bool CanCancelBasicAttackIntoJigen() const;
+	bool TryCancelBasicAttackIntoJigen();
 
 	UFUNCTION()
 	void OnBasicAttackMontageEnded(UAnimMontage* Montage, bool bInterrupted);
@@ -270,9 +280,32 @@ protected: // HeavyAttack
 	bool CanCancelHeavyAttackIntoBasicAttack() const;
 	bool CanCancelHeavyAttackIntoHeavyAttack() const;
 	bool TryCancelHeavyAttackIntoHeavyAttack();
+	bool CanCancelHeavyAttackIntoJigen() const;
+	bool TryCancelHeavyAttackIntoJigen();
 
 	UFUNCTION()
 	void OnHeavyAttackMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+protected: // Jigen
+	void OnJigenComboWindowBegin();
+	void OnJigenComboAdvanceStateBegin();
+	void OnJigenComboAdvanceStateEnd();
+	void StartJigen();
+	void TryAdvanceJigenCombo();
+	void FinishJigen();
+	void CancelJigen(float BlendOutTime = 0.12f);
+	bool CanCancelJigenIntoRecoveryAction(EJunBufferedRecoveryAction Action) const;
+	void BufferJigenRecoveryAction(EJunBufferedRecoveryAction Action);
+	void TryExecuteBufferedJigenRecoveryAction();
+	void CancelJigenForRecoveryTransition(float BlendOutTime = 0.15f);
+	bool CanCancelJigenIntoMove() const;
+	bool TryCancelJigenIntoMove();
+	bool CanCancelJigenIntoBasicAttack() const;
+	bool TryCancelJigenIntoBasicAttack();
+	bool CanCancelJigenIntoHeavyAttack() const;
+
+	UFUNCTION()
+	void OnJigenMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
 protected: // JumpAttack
 	void UpdateJumpAttackState(float DeltaTime);
@@ -289,6 +322,7 @@ protected: // JumpAttack
 	bool TryCancelJumpAttackEndIntoDefense();
 	bool CanCancelJumpAttackEndIntoBasicAttack() const;
 	bool CanCancelJumpAttackEndIntoHeavyAttack() const;
+	bool CanCancelJumpAttackEndIntoJigen() const;
 	void CancelJumpAttackForRecoveryTransition(float BlendOutTime = 0.1f);
 
 	UFUNCTION()
@@ -310,6 +344,7 @@ protected: // Dodge
 	bool CanCancelDodgeAttackIntoDodge() const;
 	bool CanCancelDodgeAttackIntoBasicAttack() const;
 	bool CanCancelDodgeAttackIntoHeavyAttack() const;
+	bool CanCancelDodgeAttackIntoJigen() const;
 	bool CanCancelDodgeAttackIntoDefense() const;
 	bool TryCancelDodgeAttackIntoDefense();
 	void CancelDodgeAttackForRecoveryTransition(float BlendOutTime = 0.1f);
@@ -360,8 +395,9 @@ protected: // Death
 	void OnFakeDeathGetUpMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
 protected: // Hit
-	EJunPlayerHitResolveResult ResolveIncomingHitResult(EHitReactType IncomingHitType) const;
+	EJunPlayerHitResolveResult ResolveIncomingHitResult(EHitReactType IncomingHitType, const AActor* DamageCauser) const;
 	bool CanBeInterruptedBy(EHitReactType IncomingHitType) const;
+	bool IsDamageCauserInDefenseAngle(const AActor* DamageCauser) const;
 	ECharacterHitReactDirection DetermineHitReactDirection(const AActor* DamageCauser, const FVector& SwingDirection) const;
 	ECharacterKnockbackDirection DetermineKnockbackDirectionFromDamageCauser(const AActor* DamageCauser) const;
 	UAnimMontage* GetHitReactMontage(EHitReactType HitType, ECharacterHitReactDirection HitDirection) const;
@@ -388,6 +424,7 @@ protected: // Hit
 	void InterruptActionsForHitReaction();
 	void UpdatePlayerHitState(float DeltaTime);
 	void UpdateGuardBreakVulnerability(float DeltaTime);
+	bool CanUseHitReactFacingWindow() const;
 	void ReleaseHitReactControlLock();
 	bool TryCancelHitReactIntoMove();
 	void FinishPlayerHitState();
@@ -436,6 +473,7 @@ protected: // Jump / Movement Helpers
 	void UpdateCameraHardSnap();
 	void ValidateLockOnTarget();
 	void UpdateMovementSpeed(float DeltaTime);
+	void UpdateFreeRunRotationRate();
 	void UpdateCharacterRotationForCurrentCameraMode(float DeltaTime);
 	void UpdateJumpStartAnimTrigger(float DeltaTime);
 	void TryStartLockOnTurn();
@@ -464,6 +502,7 @@ protected: // Target / Facing
 	class AJunCharacter* FindBestLockOnTarget();
 	class AJunCharacter* FindBestAttackTarget();
 	void UpdateAttackFacing(float DeltaTime);
+	void UpdateHitReactFacing(float DeltaTime);
 
 protected: // Camera
 	void UpdateJunCamera(float DeltaTime);
@@ -676,6 +715,30 @@ protected: // Runtime Combat / Defense State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HeavyAttack")
 	bool bCanRestartHeavyAttackAfterComboAdvance = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Jigen")
+	bool bIsJigenAttacking = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Jigen")
+	int32 JigenComboIndex = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Jigen")
+	bool bCanBufferJigenComboInput = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Jigen")
+	bool bBufferedJigenComboInput = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Jigen")
+	bool bBufferedJigenInput = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Jigen")
+	bool bJigenComboAdvanceStateActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Jigen")
+	float JigenSectionElapsedTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Jigen")
+	EJunBufferedRecoveryAction BufferedJigenRecoveryAction = EJunBufferedRecoveryAction::None;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpAttack")
 	bool bIsJumpAttacking = false;
@@ -1068,6 +1131,15 @@ protected: // Runtime Movement / Jump State
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Target")
 	float AttackFacingWindowInterpSpeed = 0.f;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	bool bHitReactFacingWindowActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float HitReactFacingWindowInterpSpeed = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<AActor> HitReactFacingTarget = nullptr;
+
 protected: // Camera Tuning
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
 	float CameraAnchorInterpSpeed = 14.f;
@@ -1282,6 +1354,9 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
 	float PerfectParryWindowDuration = 0.15f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard", meta = (ClampMin = "0.0", ClampMax = "360.0"))
+	float DefenseFrontAngle = 120.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
 	float DefaultDeflectResolveTime = 0.156f;
@@ -1589,6 +1664,84 @@ protected: // Attack / Defense Tuning
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
 	float HeavyAttackComboBlendInTime = 0.2f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen", meta = (ClampMin = "0.1"))
+	float JigenPlayRate = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	FName JigenFirstSectionName = TEXT("1");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	FName JigenSecondSectionName = TEXT("2");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float JigenComboBlendInTime = 0.2f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float JigenDodgeCancelOpenTime = 1.4f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float JigenJumpCancelOpenTime = 1.4f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float JigenDefenseCancelOpenTime = 1.7f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float JigenMoveCancelOpenTime = 1.8f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float JigenBasicAttackCancelOpenTime = 1.4f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float JigenHeavyAttackCancelOpenTime = 1.4f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float JigenDodgeCancelBlendOutTime = 0.12f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float JigenJumpCancelBlendOutTime = 0.12f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float JigenDefenseCancelBlendOutTime = 0.15f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float JigenMoveCancelBlendOutTime = 0.25f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float JigenBasicAttackCancelBlendOutTime = 0.2f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float JigenHeavyAttackCancelBlendOutTime = 0.2f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float BasicAttackJigenCancelBlendOutTime = 0.12f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	TArray<float> BasicAttackJigenCancelOpenTimes = { 0.5f, 0.5f, 0.6f, 0.6f };
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float HeavyAttackTapJigenCancelOpenTime = 1.3f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float HeavyAttackChargeEndJigenCancelOpenTime = 0.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float HeavyAttackJigenCancelBlendOutTime = 0.12f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float JumpAttackEndJigenCancelOpenTime = 0.4f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float JumpAttackEndJigenCancelBlendOutTime = 0.25f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float DodgeAttackJigenCancelOpenTime = 0.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float DodgeAttackJigenCancelBlendOutTime = 0.2f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float DodgeJigenCancelBlendOutTime = 0.2f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack", meta = (ClampMin = "0.1"))
 	float JumpAttackPlayRate = 1.f;
 
@@ -1698,6 +1851,15 @@ protected: // Movement / Jump Tuning
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement")
 	float FreeRunMoveSpeed = 700.f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Rotation", meta = (ClampMin = "0.0"))
+	float FreeRunMinTurnRotationRate = 100.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Rotation", meta = (ClampMin = "0.0"))
+	float FreeRunMaxTurnRotationRate = 900.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Rotation", meta = (ClampMin = "0.01"))
+	float FreeRunTurnAngleExponent = 1.f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement")
 	float LockOnRunMoveSpeed = 500.f;
 
@@ -1731,6 +1893,9 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
 	TObjectPtr<class UAnimMontage> HeavyAttackChargeMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	TObjectPtr<class UAnimMontage> JigenMontage;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack")
 	TObjectPtr<class UAnimMontage> JumpAttackMontage;

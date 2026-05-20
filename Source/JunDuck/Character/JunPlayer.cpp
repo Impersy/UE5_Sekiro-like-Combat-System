@@ -95,7 +95,7 @@ void AJunPlayer::SetupMovementDefaults()
 	}
 
 	MovementComponent->bOrientRotationToMovement = true;
-	MovementComponent->RotationRate = FRotator(0.f, 700.f, 0.f);
+	MovementComponent->RotationRate = FRotator(0.f, FreeRunMaxTurnRotationRate, 0.f);
 	MovementComponent->JumpZVelocity = 900.f;
 	MovementComponent->GravityScale = 2.4f;
 	MovementComponent->AirControl = 0.25f;
@@ -200,6 +200,7 @@ void AJunPlayer::Tick(float DeltaTime)
 	ValidateLockOnTarget();
 
 	UpdateCharacterRotationForCurrentCameraMode(DeltaTime);
+	UpdateHitReactFacing(DeltaTime);
 
 	UpdateMovementSpeed(DeltaTime);
 
@@ -209,6 +210,11 @@ void AJunPlayer::Tick(float DeltaTime)
 
 	UpdateBasicAttackRecoveryBuffer(DeltaTime);
 	UpdateHeavyAttackInput(DeltaTime);
+	if (bIsJigenAttacking)
+	{
+		JigenSectionElapsedTime += DeltaTime * FMath::Max(JigenPlayRate, KINDA_SMALL_NUMBER);
+		TryExecuteBufferedJigenRecoveryAction();
+	}
 	UpdateJumpAttackState(DeltaTime);
 	if (bIsDodgeAttacking)
 	{
@@ -465,6 +471,7 @@ void AJunPlayer::UpdateMovementSpeed(float DeltaTime)
 	}
 
 	UpdateMovementBraking(DeltaTime);
+	UpdateFreeRunRotationRate();
 
 	TargetMaxWalkSpeed = GetDesiredMaxWalkSpeed();
 	MovementComponent->MaxWalkSpeed = FMath::FInterpTo(
@@ -473,6 +480,61 @@ void AJunPlayer::UpdateMovementSpeed(float DeltaTime)
 		DeltaTime,
 		MoveSpeedInterpRate
 	);
+}
+
+void AJunPlayer::UpdateFreeRunRotationRate()
+{
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent)
+	{
+		return;
+	}
+
+	const float MaxTurnRate = FMath::Max(0.f, FreeRunMaxTurnRotationRate);
+	if (CameraMode != EJunCameraMode::Free ||
+		bLockOnActive ||
+		!MovementComponent->bOrientRotationToMovement ||
+		!Controller)
+	{
+		MovementComponent->RotationRate = FRotator(0.f, MaxTurnRate, 0.f);
+		return;
+	}
+
+	FVector2D MoveInput(DesiredMoveForward, DesiredMoveRight);
+	if (MoveInput.IsNearlyZero())
+	{
+		MoveInput = FVector2D(PendingMoveForward, PendingMoveRight);
+	}
+
+	if (MoveInput.IsNearlyZero())
+	{
+		MovementComponent->RotationRate = FRotator(0.f, MaxTurnRate, 0.f);
+		return;
+	}
+
+	FRotator ControlRotation = Controller->GetControlRotation();
+	ControlRotation.Pitch = 0.f;
+	ControlRotation.Roll = 0.f;
+
+	const FVector ForwardDirection = UKismetMathLibrary::GetForwardVector(ControlRotation);
+	const FVector RightDirection = UKismetMathLibrary::GetRightVector(ControlRotation);
+	const FVector DesiredWorldDirection = ((ForwardDirection * MoveInput.X) + (RightDirection * MoveInput.Y)).GetSafeNormal2D();
+	if (DesiredWorldDirection.IsNearlyZero())
+	{
+		MovementComponent->RotationRate = FRotator(0.f, MaxTurnRate, 0.f);
+		return;
+	}
+
+	const float TurnAngle = FMath::Abs(FMath::FindDeltaAngleDegrees(GetActorRotation().Yaw, DesiredWorldDirection.Rotation().Yaw));
+	const float AngleAlpha = FMath::Clamp(TurnAngle / 180.f, 0.f, 1.f);
+	const float CurvedAlpha = FMath::Pow(AngleAlpha, FMath::Max(0.01f, FreeRunTurnAngleExponent));
+	const float TurnRate = FMath::Lerp(
+		FMath::Max(0.f, FreeRunMinTurnRotationRate),
+		MaxTurnRate,
+		CurvedAlpha
+	);
+
+	MovementComponent->RotationRate = FRotator(0.f, TurnRate, 0.f);
 }
 
 void AJunPlayer::ValidateLockOnTarget()
@@ -739,6 +801,17 @@ void AJunPlayer::Jump()
 		CancelHeavyAttackForRecoveryTransition(HeavyAttackJumpCancelBlendOutTime);
 	}
 
+	if (bIsJigenAttacking)
+	{
+		if (!CanCancelJigenIntoRecoveryAction(EJunBufferedRecoveryAction::Jump))
+		{
+			BufferJigenRecoveryAction(EJunBufferedRecoveryAction::Jump);
+			return;
+		}
+
+		CancelJigenForRecoveryTransition(JigenJumpCancelBlendOutTime);
+	}
+
 	if (!CanJump())
 	{
 		return;
@@ -773,6 +846,10 @@ void AJunPlayer::HandleGameplayEventNotify(FGameplayTag EventTag)
 	else if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_HeavyAttack_ComboWindow))
 	{
 		OnHeavyAttackComboWindowBegin();
+	}
+	else if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Jigen_ComboWindow))
+	{
+		OnJigenComboWindowBegin();
 	}
 	else if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Dodge_Start))
 	{
@@ -823,7 +900,7 @@ void AJunPlayer::HandleGameplayEventNotify(FGameplayTag EventTag)
 	}
 }
 
-void AJunPlayer::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData, EJunWeaponNiagaraComponent NiagaraComponent)
+void AJunPlayer::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData, EJunWeaponNiagaraComponent NiagaraComponent, const FJunAttackTraceOverrideData& TraceOverrideData)
 {
 	if (!EquippedWeapon)
 	{
@@ -833,6 +910,7 @@ void AJunPlayer::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAt
 	EquippedWeapon->SetAttackHitReactType(HitReactType);
 	EquippedWeapon->SetAttackDamageData(DamageData);
 	EquippedWeapon->SetAttackDefenseKnockbackData(DefenseKnockbackData);
+	EquippedWeapon->ApplyAttackTraceOverride(TraceOverrideData);
 	EquippedWeapon->StartAttackTrace(NiagaraComponent);
 }
 
@@ -995,6 +1073,18 @@ void AJunPlayer::OnHeavyAttackStarted()
 		return;
 	}
 
+	if (bIsJigenAttacking)
+	{
+		if (!CanCancelJigenIntoHeavyAttack())
+		{
+			return;
+		}
+
+		CancelJigenForRecoveryTransition(JigenHeavyAttackCancelBlendOutTime);
+		StartHeavyAttackTap();
+		return;
+	}
+
 	if (bHeavyAttackInputHeld)
 	{
 		return;
@@ -1069,6 +1159,17 @@ void AJunPlayer::StartDodgeInternal(bool bIgnoreDodgeBlockAndReleaseGate)
 		}
 
 		CancelHeavyAttackForRecoveryTransition(HeavyAttackDodgeCancelBlendOutTime);
+	}
+
+	if (bIsJigenAttacking)
+	{
+		if (!CanCancelJigenIntoRecoveryAction(EJunBufferedRecoveryAction::Dodge))
+		{
+			BufferJigenRecoveryAction(EJunBufferedRecoveryAction::Dodge);
+			return;
+		}
+
+		CancelJigenForRecoveryTransition(JigenDodgeCancelBlendOutTime);
 	}
 
 	CancelLockOnTurn();
@@ -1201,6 +1302,13 @@ void AJunPlayer::OnDefenseStarted()
 		bDefenseButtonHeld = true;
 		bHoldRequestedForCurrentDeflect = true;
 		BufferHeavyAttackRecoveryAction(EJunBufferedRecoveryAction::Defense);
+		return;
+	}
+
+	if (bIsJigenAttacking)
+	{
+		bDefenseButtonHeld = true;
+		bHoldRequestedForCurrentDeflect = true;
 		return;
 	}
 
@@ -1600,6 +1708,32 @@ bool AJunPlayer::TryCancelBasicAttackIntoHeavyAttack()
 	return true;
 }
 
+bool AJunPlayer::CanCancelBasicAttackIntoJigen() const
+{
+	if (!bIsBasicAttacking)
+	{
+		return false;
+	}
+
+	const int32 ComboArrayIndex = FMath::Max(0, BasicAttackComboIndex - 1);
+	const float JigenCancelOpenTime = BasicAttackJigenCancelOpenTimes.IsValidIndex(ComboArrayIndex)
+		? BasicAttackJigenCancelOpenTimes[ComboArrayIndex]
+		: 0.f;
+
+	return BasicAttackSectionElapsedTime >= JigenCancelOpenTime;
+}
+
+bool AJunPlayer::TryCancelBasicAttackIntoJigen()
+{
+	if (!CanCancelBasicAttackIntoJigen())
+	{
+		return false;
+	}
+
+	CancelBasicAttackForRecoveryTransition(BasicAttackJigenCancelBlendOutTime);
+	return true;
+}
+
 bool AJunPlayer::CanBufferDefenseTransitionCancel() const
 {
 	return DefenseState == EJunDefenseState::Starting ||
@@ -1625,6 +1759,8 @@ bool AJunPlayer::CanBufferParrySuccessCancel(EJunBufferedParrySuccessCancelActio
 	case EJunBufferedParrySuccessCancelAction::BasicAttack:
 		return ParrySuccessElapsedTime >= ParrySuccessBasicAttackCancelOpenTime;
 	case EJunBufferedParrySuccessCancelAction::HeavyAttack:
+		return ParrySuccessElapsedTime >= ParrySuccessHeavyAttackCancelOpenTime;
+	case EJunBufferedParrySuccessCancelAction::Jigen:
 		return ParrySuccessElapsedTime >= ParrySuccessHeavyAttackCancelOpenTime;
 	case EJunBufferedParrySuccessCancelAction::Jump:
 		return ParrySuccessElapsedTime >= ParrySuccessJumpCancelOpenTime;
@@ -1750,6 +1886,15 @@ void AJunPlayer::SetDesiredMoveAxes(float NewForward, float NewRight)
 		return;
 	}
 
+	if (bHasMoveInput &&
+		bIsJigenAttacking &&
+		TryCancelJigenIntoMove())
+	{
+		DesiredMoveForward = PendingMoveForward;
+		DesiredMoveRight = PendingMoveRight;
+		return;
+	}
+
 	if (bDeferGuardMoveInput)
 	{
 		return;
@@ -1827,8 +1972,9 @@ void AJunPlayer::ReceiveHit(
 	LastIncomingSwingDirection = SwingDirection;
 	LastIncomingKnockbackDirection = DetermineKnockbackDirectionFromDamageCauser(DamageCauser);
 	LastIncomingDefenseKnockbackData = DefenseKnockbackData;
+	HitReactFacingTarget = DamageCauser;
 
-	const EJunPlayerHitResolveResult ResolveResult = ResolveIncomingHitResult(HitType);
+	const EJunPlayerHitResolveResult ResolveResult = ResolveIncomingHitResult(HitType, DamageCauser);
 	AJunCharacter* AttackerCharacter = Cast<AJunCharacter>(DamageCauser);
 
 	switch (ResolveResult)
@@ -1907,6 +2053,12 @@ void AJunPlayer::OnBasicAttackComboWindowBegin()
 
 void AJunPlayer::OnAttackComboAdvanceStateBegin(EJunAttackComboType ComboType)
 {
+	if (ComboType == EJunAttackComboType::Jigen)
+	{
+		OnJigenComboAdvanceStateBegin();
+		return;
+	}
+
 	if (ComboType == EJunAttackComboType::HeavyAttack)
 	{
 		OnHeavyAttackComboAdvanceStateBegin();
@@ -1918,6 +2070,12 @@ void AJunPlayer::OnAttackComboAdvanceStateBegin(EJunAttackComboType ComboType)
 
 void AJunPlayer::OnAttackComboAdvanceStateEnd(EJunAttackComboType ComboType)
 {
+	if (ComboType == EJunAttackComboType::Jigen)
+	{
+		OnJigenComboAdvanceStateEnd();
+		return;
+	}
+
 	if (ComboType == EJunAttackComboType::HeavyAttack)
 	{
 		OnHeavyAttackComboAdvanceStateEnd();
@@ -1989,6 +2147,22 @@ void AJunPlayer::OnHeavyAttackComboAdvanceStateEnd()
 		bWasComboAdvanceStateActive &&
 		bIsHeavyAttacking &&
 		HeavyAttackState == EJunHeavyAttackState::Tap;
+}
+
+void AJunPlayer::OnJigenComboWindowBegin()
+{
+	if (!bIsJigenAttacking)
+	{
+		return;
+	}
+
+	bCanBufferJigenComboInput = true;
+
+	if (bBufferedJigenInput)
+	{
+		bBufferedJigenComboInput = true;
+		bBufferedJigenInput = false;
+	}
 }
 
 void AJunPlayer::UpdateDodgeState(float DeltaTime)
@@ -2116,6 +2290,17 @@ bool AJunPlayer::TryCancelDodgeIntoHeavyAttack()
 	}
 
 	CancelDodgeForRecoveryTransition(DodgeRecoveryCancelBlendOutTime);
+	return true;
+}
+
+bool AJunPlayer::TryCancelDodgeIntoJigen()
+{
+	if (!CanCancelDodgeIntoRecoveryAction())
+	{
+		return false;
+	}
+
+	CancelDodgeForRecoveryTransition(DodgeJigenCancelBlendOutTime);
 	return true;
 }
 
@@ -2760,6 +2945,37 @@ bool AJunPlayer::TryCancelHeavyAttackIntoHeavyAttack()
 	return true;
 }
 
+bool AJunPlayer::CanCancelHeavyAttackIntoJigen() const
+{
+	if (!bIsHeavyAttacking)
+	{
+		return false;
+	}
+
+	if (HeavyAttackState != EJunHeavyAttackState::Tap &&
+		HeavyAttackState != EJunHeavyAttackState::ChargeEnd)
+	{
+		return false;
+	}
+
+	const float JigenCancelOpenTime = HeavyAttackState == EJunHeavyAttackState::Tap
+		? HeavyAttackTapJigenCancelOpenTime
+		: HeavyAttackChargeEndJigenCancelOpenTime;
+
+	return HeavyAttackSectionElapsedTime >= JigenCancelOpenTime;
+}
+
+bool AJunPlayer::TryCancelHeavyAttackIntoJigen()
+{
+	if (!CanCancelHeavyAttackIntoJigen())
+	{
+		return false;
+	}
+
+	CancelHeavyAttackForRecoveryTransition(HeavyAttackJigenCancelBlendOutTime);
+	return true;
+}
+
 void AJunPlayer::UpdateJumpAttackState(float DeltaTime)
 {
 	if (!bIsJumpAttacking)
@@ -3015,6 +3231,13 @@ bool AJunPlayer::CanCancelJumpAttackEndIntoHeavyAttack() const
 		JumpAttackSectionElapsedTime >= JumpAttackEndHeavyAttackCancelOpenTime;
 }
 
+bool AJunPlayer::CanCancelJumpAttackEndIntoJigen() const
+{
+	return bIsJumpAttacking &&
+		JumpAttackState == EJunJumpAttackState::End &&
+		JumpAttackSectionElapsedTime >= JumpAttackEndJigenCancelOpenTime;
+}
+
 bool AJunPlayer::TryCancelJumpAttackEndIntoDefense()
 {
 	if (!CanCancelJumpAttackEndIntoDefense())
@@ -3047,6 +3270,17 @@ bool AJunPlayer::TryCancelJumpAttackEndIntoHeavyAttack()
 	}
 
 	CancelJumpAttackForRecoveryTransition(JumpAttackEndHeavyAttackCancelBlendOutTime);
+	return true;
+}
+
+bool AJunPlayer::TryCancelJumpAttackEndIntoJigen()
+{
+	if (!CanCancelJumpAttackEndIntoJigen())
+	{
+		return false;
+	}
+
+	CancelJumpAttackForRecoveryTransition(JumpAttackEndJigenCancelBlendOutTime);
 	return true;
 }
 
@@ -3252,6 +3486,10 @@ void AJunPlayer::ExecuteBufferedParrySuccessCancelAction()
 		CancelParrySuccessForCancelTransition(ParrySuccessHeavyAttackCancelBlendOutTime);
 		StartHeavyAttackTap();
 		break;
+	case EJunBufferedParrySuccessCancelAction::Jigen:
+		CancelParrySuccessForCancelTransition(ParrySuccessHeavyAttackCancelBlendOutTime);
+		StartJigen();
+		break;
 	case EJunBufferedParrySuccessCancelAction::Jump:
 		CancelParrySuccessForCancelTransition(ParrySuccessJumpCancelBlendOutTime);
 		Jump();
@@ -3401,6 +3639,11 @@ bool AJunPlayer::CanCancelDodgeAttackIntoHeavyAttack() const
 	return bIsDodgeAttacking && DodgeAttackElapsedTime >= DodgeAttackHeavyAttackCancelOpenTime;
 }
 
+bool AJunPlayer::CanCancelDodgeAttackIntoJigen() const
+{
+	return bIsDodgeAttacking && DodgeAttackElapsedTime >= DodgeAttackJigenCancelOpenTime;
+}
+
 bool AJunPlayer::TryCancelDodgeAttackIntoHeavyAttack()
 {
 	if (!CanCancelDodgeAttackIntoHeavyAttack())
@@ -3409,6 +3652,17 @@ bool AJunPlayer::TryCancelDodgeAttackIntoHeavyAttack()
 	}
 
 	CancelDodgeAttackForRecoveryTransition(DodgeAttackHeavyAttackCancelBlendOutTime);
+	return true;
+}
+
+bool AJunPlayer::TryCancelDodgeAttackIntoJigen()
+{
+	if (!CanCancelDodgeAttackIntoJigen())
+	{
+		return false;
+	}
+
+	CancelDodgeAttackForRecoveryTransition(DodgeAttackJigenCancelBlendOutTime);
 	return true;
 }
 
@@ -3873,6 +4127,399 @@ void AJunPlayer::TryAdvanceHeavyAttackCombo()
 	StartHeavyAttackTap();
 }
 
+void AJunPlayer::OnJigenComboAdvanceStateBegin()
+{
+	if (!bIsJigenAttacking)
+	{
+		return;
+	}
+
+	bJigenComboAdvanceStateActive = true;
+	bCanBufferJigenComboInput = false;
+
+	if (bBufferedJigenComboInput)
+	{
+		TryAdvanceJigenCombo();
+	}
+}
+
+void AJunPlayer::OnJigenComboAdvanceStateEnd()
+{
+	bJigenComboAdvanceStateActive = false;
+	bBufferedJigenComboInput = false;
+}
+
+bool AJunPlayer::TryStartJigen()
+{
+	if (bIsJigenAttacking)
+	{
+		const bool bCanAcceptJigenComboInput = bDefenseButtonHeld || JigenComboIndex <= 1;
+
+		if (bCanAcceptJigenComboInput && bJigenComboAdvanceStateActive)
+		{
+			bBufferedJigenComboInput = true;
+			TryAdvanceJigenCombo();
+			return true;
+		}
+
+		if (bCanAcceptJigenComboInput && bCanBufferJigenComboInput)
+		{
+			bBufferedJigenComboInput = true;
+			return true;
+		}
+
+		if (!bDefenseButtonHeld)
+		{
+			if (JigenComboIndex <= 1)
+			{
+				bBufferedJigenInput = true;
+				return true;
+			}
+
+			if (TryCancelJigenIntoBasicAttack())
+			{
+				return true;
+			}
+
+			return true;
+		}
+
+		bBufferedJigenInput = true;
+		return true;
+	}
+
+	if (!bDefenseButtonHeld)
+	{
+		return false;
+	}
+
+	if (CurrentHitState == EJunPlayerHitState::ParrySuccess)
+	{
+		BufferedParrySuccessCancelAction = EJunBufferedParrySuccessCancelAction::Jigen;
+		TryExecuteBufferedParrySuccessCancelAction();
+		return true;
+	}
+
+	if (TryChooseFakeDeathDie())
+	{
+		return true;
+	}
+
+	if (!AnimInstance || !JigenMontage)
+	{
+		return false;
+	}
+
+	if (bIsBasicAttacking)
+	{
+		if (!TryCancelBasicAttackIntoJigen())
+		{
+			return false;
+		}
+	}
+
+	if (bIsHeavyAttacking)
+	{
+		if (!TryCancelHeavyAttackIntoJigen())
+		{
+			return false;
+		}
+	}
+
+	if (bIsJumpAttacking)
+	{
+		if (!TryCancelJumpAttackEndIntoJigen())
+		{
+			return false;
+		}
+	}
+
+	if (bIsDodgeAttacking)
+	{
+		if (!TryCancelDodgeAttackIntoJigen())
+		{
+			return false;
+		}
+	}
+
+	if (HasGameplayTag(JunGameplayTags::State_Action_Dodge))
+	{
+		if (!TryCancelDodgeIntoJigen())
+		{
+			return false;
+		}
+	}
+
+	if (CurrentHitState != EJunPlayerHitState::None)
+	{
+		return false;
+	}
+
+	if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
+	{
+		return false;
+	}
+
+	if (HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
+	{
+		return false;
+	}
+
+	if (DefenseState != EJunDefenseState::None)
+	{
+		FinishDefenseForCancel();
+	}
+
+	StartJigen();
+	return true;
+}
+
+void AJunPlayer::StartJigen()
+{
+	if (!AnimInstance || !JigenMontage)
+	{
+		return;
+	}
+
+	CancelLockOnTurn();
+	TargetActor = LockOnTarget ? LockOnTarget.Get() : FindBestAttackTarget();
+
+	AddGameplayTag(JunGameplayTags::State_Action_Attack);
+	AddGameplayTag(JunGameplayTags::State_Block_Move);
+	AddGameplayTag(JunGameplayTags::State_Block_Jump);
+	AddGameplayTag(JunGameplayTags::State_Block_Attack);
+	AddGameplayTag(JunGameplayTags::State_Block_Dodge);
+
+	bIsJigenAttacking = true;
+	JigenComboIndex = 1;
+	bCanBufferJigenComboInput = false;
+	bBufferedJigenComboInput = false;
+	bBufferedJigenInput = false;
+	bJigenComboAdvanceStateActive = false;
+	JigenSectionElapsedTime = 0.f;
+
+	AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnJigenMontageEnded);
+	AnimInstance->OnMontageEnded.AddDynamic(this, &AJunPlayer::OnJigenMontageEnded);
+	AnimInstance->Montage_Play(JigenMontage, FMath::Max(JigenPlayRate, KINDA_SMALL_NUMBER));
+	AnimInstance->Montage_JumpToSection(JigenFirstSectionName, JigenMontage);
+}
+
+void AJunPlayer::TryAdvanceJigenCombo()
+{
+	if (!bIsJigenAttacking || !bBufferedJigenComboInput || !JigenMontage || !AnimInstance)
+	{
+		return;
+	}
+
+	if (JigenComboIndex <= 1)
+	{
+		bBufferedJigenComboInput = false;
+		bCanBufferJigenComboInput = false;
+		bJigenComboAdvanceStateActive = false;
+		JigenComboIndex = 2;
+		JigenSectionElapsedTime = 0.f;
+
+		TargetActor = LockOnTarget ? LockOnTarget.Get() : FindBestAttackTarget();
+
+		const int32 SecondSectionIndex = JigenMontage->GetSectionIndex(JigenSecondSectionName);
+		if (SecondSectionIndex != INDEX_NONE)
+		{
+			float SectionStartTime = 0.f;
+			float SectionEndTime = 0.f;
+			JigenMontage->GetSectionStartAndEndTime(SecondSectionIndex, SectionStartTime, SectionEndTime);
+
+			AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnJigenMontageEnded);
+			const float MontagePlayResult = AnimInstance->Montage_PlayWithBlendIn(
+				JigenMontage,
+				FAlphaBlendArgs(FMath::Max(0.f, JigenComboBlendInTime)),
+				FMath::Max(JigenPlayRate, KINDA_SMALL_NUMBER),
+				EMontagePlayReturnType::MontageLength,
+				SectionStartTime,
+				true
+			);
+			AnimInstance->OnMontageEnded.AddDynamic(this, &AJunPlayer::OnJigenMontageEnded);
+
+			if (MontagePlayResult > 0.f)
+			{
+				return;
+			}
+		}
+
+		AnimInstance->Montage_JumpToSection(JigenSecondSectionName, JigenMontage);
+		return;
+	}
+
+	bBufferedJigenComboInput = false;
+	bCanBufferJigenComboInput = false;
+	bJigenComboAdvanceStateActive = false;
+}
+
+void AJunPlayer::FinishJigen()
+{
+	EndAttackFacingWindow();
+
+	RemoveGameplayTag(JunGameplayTags::State_Action_Attack);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Jump);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Attack);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Dodge);
+
+	bIsJigenAttacking = false;
+	JigenComboIndex = 0;
+	bCanBufferJigenComboInput = false;
+	bBufferedJigenComboInput = false;
+	bBufferedJigenInput = false;
+	bJigenComboAdvanceStateActive = false;
+	JigenSectionElapsedTime = 0.f;
+	BufferedJigenRecoveryAction = EJunBufferedRecoveryAction::None;
+
+	if (EquippedWeapon)
+	{
+		EquippedWeapon->StopAttackTrace();
+	}
+}
+
+bool AJunPlayer::CanCancelJigenIntoRecoveryAction(EJunBufferedRecoveryAction Action) const
+{
+	if (!bIsJigenAttacking)
+	{
+		return false;
+	}
+
+	float CancelOpenTime = 0.f;
+	switch (Action)
+	{
+	case EJunBufferedRecoveryAction::Dodge:
+		CancelOpenTime = JigenDodgeCancelOpenTime;
+		break;
+	case EJunBufferedRecoveryAction::Jump:
+		CancelOpenTime = JigenJumpCancelOpenTime;
+		break;
+	case EJunBufferedRecoveryAction::Defense:
+		CancelOpenTime = JigenDefenseCancelOpenTime;
+		break;
+	default:
+		return false;
+	}
+
+	return JigenSectionElapsedTime >= CancelOpenTime;
+}
+
+void AJunPlayer::BufferJigenRecoveryAction(EJunBufferedRecoveryAction Action)
+{
+	BufferedJigenRecoveryAction = Action;
+	TryExecuteBufferedJigenRecoveryAction();
+}
+
+void AJunPlayer::TryExecuteBufferedJigenRecoveryAction()
+{
+	if (BufferedJigenRecoveryAction == EJunBufferedRecoveryAction::None ||
+		!CanCancelJigenIntoRecoveryAction(BufferedJigenRecoveryAction))
+	{
+		return;
+	}
+
+	const EJunBufferedRecoveryAction PendingAction = BufferedJigenRecoveryAction;
+	BufferedJigenRecoveryAction = EJunBufferedRecoveryAction::None;
+
+	switch (PendingAction)
+	{
+	case EJunBufferedRecoveryAction::Dodge:
+		CancelJigenForRecoveryTransition(JigenDodgeCancelBlendOutTime);
+		StartDodge();
+		break;
+	case EJunBufferedRecoveryAction::Jump:
+		CancelJigenForRecoveryTransition(JigenJumpCancelBlendOutTime);
+		Jump();
+		break;
+	case EJunBufferedRecoveryAction::Defense:
+		CancelJigenForRecoveryTransition(JigenDefenseCancelBlendOutTime);
+		BeginDefenseFromBufferedInput();
+		break;
+	default:
+		break;
+	}
+}
+
+void AJunPlayer::CancelJigenForRecoveryTransition(float BlendOutTime)
+{
+	CancelJigen(BlendOutTime);
+}
+
+bool AJunPlayer::CanCancelJigenIntoMove() const
+{
+	return bIsJigenAttacking && JigenSectionElapsedTime >= JigenMoveCancelOpenTime;
+}
+
+bool AJunPlayer::TryCancelJigenIntoMove()
+{
+	if (!CanCancelJigenIntoMove())
+	{
+		return false;
+	}
+
+	CancelJigenForRecoveryTransition(JigenMoveCancelBlendOutTime);
+	return true;
+}
+
+bool AJunPlayer::CanCancelJigenIntoBasicAttack() const
+{
+	return bIsJigenAttacking && JigenSectionElapsedTime >= JigenBasicAttackCancelOpenTime;
+}
+
+bool AJunPlayer::TryCancelJigenIntoBasicAttack()
+{
+	if (!CanCancelJigenIntoBasicAttack())
+	{
+		return false;
+	}
+
+	CancelJigenForRecoveryTransition(JigenBasicAttackCancelBlendOutTime);
+	BasicAttack();
+	return true;
+}
+
+bool AJunPlayer::CanCancelJigenIntoHeavyAttack() const
+{
+	return bIsJigenAttacking && JigenSectionElapsedTime >= JigenHeavyAttackCancelOpenTime;
+}
+
+void AJunPlayer::CancelJigen(float BlendOutTime)
+{
+	if (!bIsJigenAttacking)
+	{
+		return;
+	}
+
+	if (EquippedWeapon)
+	{
+		EquippedWeapon->StopAttackTrace();
+	}
+
+	if (AnimInstance && JigenMontage)
+	{
+		AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnJigenMontageEnded);
+		AnimInstance->Montage_Stop(BlendOutTime, JigenMontage);
+	}
+
+	FinishJigen();
+}
+
+void AJunPlayer::OnJigenMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	if (Montage != JigenMontage)
+	{
+		return;
+	}
+
+	if (bInterrupted && AnimInstance && AnimInstance->Montage_IsPlaying(JigenMontage))
+	{
+		return;
+	}
+
+	FinishJigen();
+}
+
 void AJunPlayer::CancelBasicAttackIntoDefense()
 {
 	CancelBasicAttackForRecoveryTransition();
@@ -4311,6 +4958,7 @@ void AJunPlayer::FinishFakeDeathRevive()
 	if (AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(GetController()))
 	{
 		JunPlayerController->SetLockOnMarkerSuppressed(false);
+		JunPlayerController->ResetPlayerPostureVisibilityState();
 		JunPlayerController->HideDeathUI();
 	}
 }
@@ -4606,6 +5254,7 @@ void AJunPlayer::RespawnAtPlayerStart()
 	if (AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(GetController()))
 	{
 		JunPlayerController->SetLockOnMarkerSuppressed(false);
+		JunPlayerController->ResetPlayerPostureVisibilityState();
 		JunPlayerController->HideDeathUI();
 	}
 }
@@ -4730,14 +5379,16 @@ void AJunPlayer::UpdateDefenseInput(float DeltaTime)
 
 }
 
-EJunPlayerHitResolveResult AJunPlayer::ResolveIncomingHitResult(EHitReactType IncomingHitType) const
+EJunPlayerHitResolveResult AJunPlayer::ResolveIncomingHitResult(EHitReactType IncomingHitType, const AActor* DamageCauser) const
 {
 	if (HasGameplayTag(JunGameplayTags::State_Action_Dodge))
 	{
 		return EJunPlayerHitResolveResult::Ignored;
 	}
 
-	if (bParryWindowOpen)
+	const bool bCanDefendFromIncomingAngle = IsDamageCauserInDefenseAngle(DamageCauser);
+
+	if (bParryWindowOpen && bCanDefendFromIncomingAngle)
 	{
 		const float PerfectParryRemainThreshold =
 			FMath::Max(0.f, DefaultParryWindowDuration - PerfectParryWindowDuration);
@@ -4746,7 +5397,7 @@ EJunPlayerHitResolveResult AJunPlayer::ResolveIncomingHitResult(EHitReactType In
 			: EJunPlayerHitResolveResult::NormalParrySuccess;
 	}
 
-	if (DefenseState == EJunDefenseState::Guarding)
+	if (DefenseState == EJunDefenseState::Guarding && bCanDefendFromIncomingAngle)
 	{
 		return EJunPlayerHitResolveResult::GuardBlock;
 	}
@@ -4757,6 +5408,26 @@ EJunPlayerHitResolveResult AJunPlayer::ResolveIncomingHitResult(EHitReactType In
 	}
 
 	return EJunPlayerHitResolveResult::HitReact;
+}
+
+bool AJunPlayer::IsDamageCauserInDefenseAngle(const AActor* DamageCauser) const
+{
+	if (!DamageCauser)
+	{
+		return true;
+	}
+
+	const FVector ToDamageCauser = (DamageCauser->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
+	if (ToDamageCauser.IsNearlyZero())
+	{
+		return true;
+	}
+
+	const FVector Forward = GetActorForwardVector().GetSafeNormal2D();
+	const float Dot = FVector::DotProduct(Forward, ToDamageCauser);
+	const float HalfAngle = FMath::Clamp(DefenseFrontAngle * 0.5f, 0.f, 180.f);
+	const float MinDot = FMath::Cos(FMath::DegreesToRadians(HalfAngle));
+	return Dot >= MinDot;
 }
 
 bool AJunPlayer::CanBeInterruptedBy(EHitReactType IncomingHitType) const
@@ -5012,18 +5683,13 @@ UAnimMontage* AJunPlayer::GetParrySuccessMontage(const FVector& SwingDirection)
 
 	const bool bUseLeft = bNextParrySuccessUsesLeftSide;
 	bNextParrySuccessUsesLeftSide = !bNextParrySuccessUsesLeftSide;
-	const bool bUseUp = FMath::RandBool();
 
 	if (bUseLeft)
 	{
-		return bUseUp
-			? (ParrySuccessL_UpMontage ? ParrySuccessL_UpMontage : ParrySuccessL_DownMontage)
-			: (ParrySuccessL_DownMontage ? ParrySuccessL_DownMontage : ParrySuccessL_UpMontage);
+		return ParrySuccessL_UpMontage ? ParrySuccessL_UpMontage : ParrySuccessR_UpMontage;
 	}
 
-	return bUseUp
-		? (ParrySuccessR_UpMontage ? ParrySuccessR_UpMontage : ParrySuccessR_DownMontage)
-		: (ParrySuccessR_DownMontage ? ParrySuccessR_DownMontage : ParrySuccessR_UpMontage);
+	return ParrySuccessR_UpMontage ? ParrySuccessR_UpMontage : ParrySuccessL_UpMontage;
 }
 
 bool AJunPlayer::AddPosture(float Amount)
@@ -5079,7 +5745,7 @@ bool AJunPlayer::CanRecoverPosture() const
 		return false;
 	}
 
-	if (bIsBasicAttacking || bIsHeavyAttacking || bIsJumpAttacking || bIsDodgeAttacking)
+	if (bIsBasicAttacking || bIsHeavyAttacking || bIsJigenAttacking || bIsJumpAttacking || bIsDodgeAttacking)
 	{
 		return false;
 	}
@@ -5384,6 +6050,17 @@ void AJunPlayer::InterruptActionsForHitReaction()
 		FinishHeavyAttack();
 	}
 
+	if (bIsJigenAttacking)
+	{
+		if (AnimInstance && JigenMontage)
+		{
+			AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnJigenMontageEnded);
+			AnimInstance->Montage_Stop(0.05f, JigenMontage);
+		}
+
+		FinishJigen();
+	}
+
 	if (bIsJumpAttacking)
 	{
 		if (AnimInstance && JumpAttackMontage)
@@ -5533,6 +6210,8 @@ bool AJunPlayer::TryCancelHitReactIntoMove()
 	ChainParryWindowRemainTime = 0.f;
 	CurrentHitReactType = EHitReactType::None;
 	CurrentHitReactDirection = ECharacterHitReactDirection::Front_F;
+	HitReactFacingTarget = nullptr;
+	EndHitReactFacingWindow();
 
 	if (GetCharacterMovement())
 	{
@@ -5557,6 +6236,8 @@ void AJunPlayer::FinishPlayerHitState()
 	ParrySuccessElapsedTime = 0.f;
 	CurrentHitReactType = EHitReactType::None;
 	CurrentHitReactDirection = ECharacterHitReactDirection::Front_F;
+	HitReactFacingTarget = nullptr;
+	EndHitReactFacingWindow();
 	BufferedParrySuccessCancelAction = EJunBufferedParrySuccessCancelAction::None;
 	CurrentParrySuccessMontage = nullptr;
 
@@ -6127,6 +6808,60 @@ void AJunPlayer::EndAttackFacingWindow()
 {
 	bAttackFacingWindowActive = false;
 	AttackFacingWindowInterpSpeed = 0.f;
+}
+
+void AJunPlayer::BeginHitReactFacingWindow(float FacingInterpSpeed)
+{
+	if (!CanUseHitReactFacingWindow() || !HitReactFacingTarget)
+	{
+		bHitReactFacingWindowActive = false;
+		HitReactFacingWindowInterpSpeed = 0.f;
+		return;
+	}
+
+	bHitReactFacingWindowActive = true;
+	HitReactFacingWindowInterpSpeed = FMath::Max(FacingInterpSpeed, 0.f);
+}
+
+void AJunPlayer::EndHitReactFacingWindow()
+{
+	bHitReactFacingWindowActive = false;
+	HitReactFacingWindowInterpSpeed = 0.f;
+}
+
+void AJunPlayer::UpdateHitReactFacing(float DeltaTime)
+{
+	if (!bHitReactFacingWindowActive)
+	{
+		return;
+	}
+
+	if (!CanUseHitReactFacingWindow() || !HitReactFacingTarget)
+	{
+		EndHitReactFacingWindow();
+		return;
+	}
+
+	FVector Direction = HitReactFacingTarget->GetActorLocation() - GetActorLocation();
+	Direction.Z = 0.f;
+	if (Direction.IsNearlyZero())
+	{
+		return;
+	}
+
+	const float ResolvedInterpSpeed = HitReactFacingWindowInterpSpeed > 0.f ? HitReactFacingWindowInterpSpeed : 30.f;
+	SetActorRotation(FMath::RInterpTo(
+		GetActorRotation(),
+		Direction.Rotation(),
+		DeltaTime,
+		ResolvedInterpSpeed
+	));
+}
+
+bool AJunPlayer::CanUseHitReactFacingWindow() const
+{
+	return CurrentHitState == EJunPlayerHitState::HitReact ||
+		CurrentHitState == EJunPlayerHitState::GuardBreak;
 }
 
 void AJunPlayer::UpdateJunCamera(float DeltaTime)

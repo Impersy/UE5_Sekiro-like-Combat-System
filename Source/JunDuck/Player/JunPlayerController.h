@@ -28,6 +28,8 @@ public:
 	void HideDeathUI();
 	bool IsDeathFullBlackOpaque() const;
 	void SetLockOnMarkerSuppressed(bool bSuppressed);
+	void ResetPlayerPostureVisibilityState();
+	void PlayDangerMarkerOnPlayer();
 
 protected:
 	virtual void BeginPlay() override;
@@ -37,6 +39,7 @@ protected:
 private:
 	void InitializeCombatWidgets();
 	void UpdateCombatWidgets();
+	void UpdateDangerMarkerWidget();
 	class AJunMonster* FindActiveCombatBoss() const;
 	void UpdateLockOnMarkerWidget(class AJunCharacter* CurrentLockOnTarget);
 
@@ -65,11 +68,17 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI")
 	TSubclassOf<class UJunLockOnMarkerWidget> LockOnMarkerWidgetClass;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI")
+	TSubclassOf<class UJunDangerMarkerWidget> DangerMarkerWidgetClass;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI")
 	TObjectPtr<class UJunCombatHUDWidget> CombatHUDWidget;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI")
 	TObjectPtr<class UJunLockOnMarkerWidget> LockOnMarkerWidget;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI")
+	TObjectPtr<class UJunDangerMarkerWidget> DangerMarkerWidget;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|LockOn")
 	float LockOnMarkerShowDelay = 0.15f;
@@ -82,4 +91,7 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI|LockOn")
 	bool bLockOnMarkerSuppressed = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Danger")
+	FVector DangerMarkerPlayerWorldOffset = FVector(0.f, 0.f, 120.f);
 };

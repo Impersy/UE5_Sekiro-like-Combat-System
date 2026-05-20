@@ -31,6 +31,9 @@ public:
 	void SetPlayerPosture(float CurrentPosture, float MaxPosture);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
+	void ResetPlayerPostureVisibilityState();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
 	void SetBossPosture(float CurrentPosture, float MaxPosture);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
@@ -116,6 +119,7 @@ private:
 	void UpdateRedGlowEffects(float DeltaTime);
 	void UpdateRedGlowEffect(float DeltaTime, UWidget* RootWidget, float& ElapsedTime);
 	void StartRedGlowEffect(UWidget* RootWidget, float& ElapsedTime);
+	void UpdatePostureVisibility(float DeltaTime);
 	void UpdateBossClearUI(float DeltaTime);
 	void UpdateDeathUI(float DeltaTime);
 	void ApplyWidgetOpacity(UWidget* Widget, float Opacity, bool bHideWhenZero = true) const;
@@ -125,6 +129,8 @@ private:
 	void ApplyPostureBars();
 	void ApplyPostureFill(USizeBox* FillCenter, float Percent, float MaxWidth) const;
 	void ApplyPostureTint(UImage* FillImage, float Percent) const;
+	void ApplyPlayerPostureVisibility(bool bVisible);
+	void ApplyBossPostureVisibility(bool bVisible);
 	void ApplyBossHealthVisibility();
 	void ApplyBossLifeWidgets();
 	void ApplyBossLifeWidget(int32 LifeIndex, UWidget* RootWidget, UWidget* GrayWidget, UWidget* RedWidget) const;
@@ -189,6 +195,9 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Posture", meta = (AllowPrivateAccess = "true"))
 	FLinearColor PostureWarningTint = FLinearColor(1.f, 0.529412f, 0.364706f, 1.f);
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Posture", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float PostureHideDelay = 3.f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|PostureGlow", meta = (AllowPrivateAccess = "true", ClampMin = "0.01"))
 	float RedGlowDuration = 1.15f;
 
@@ -205,6 +214,10 @@ private:
 	float BossDelayedHealthDelayRemainTime = 0.f;
 	float PlayerRedGlowElapsedTime = -1.f;
 	float BossRedGlowElapsedTime = -1.f;
+	float PlayerZeroPostureElapsedTime = 0.f;
+	float BossZeroPostureElapsedTime = 0.f;
+	bool bPlayerPostureEverShown = false;
+	bool bBossPostureEverShown = false;
 	float DimBlackOpacity = 0.f;
 	float FullBlackOpacity = 0.f;
 	float FakeDeathOpacity = 0.f;
@@ -240,6 +253,9 @@ private:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> BossPostureRoot;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> PlayerPostureRoot;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UProgressBar> PlayerHealthBar;

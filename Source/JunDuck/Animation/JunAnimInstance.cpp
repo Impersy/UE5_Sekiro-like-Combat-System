@@ -45,10 +45,34 @@ void UJunAnimInstance::UpdateMovementData(float DeltaSeconds)
 {
 	Velocity = MovementComponent->Velocity;
 	GroundSpeed = Velocity.Size2D();
+	BlendSpaceSpeed = GroundSpeed;
 
-	if (Cast<AJunMonster>(Character))
+	if (const AJunMonster* Monster = Cast<AJunMonster>(Character))
 	{
-		bShouldMove = (GroundSpeed > 3.f);
+		const bool bHasDesiredMoveInput =
+			!FMath::IsNearlyZero(Monster->GetDesiredMoveForward()) ||
+			!FMath::IsNearlyZero(Monster->GetDesiredMoveRight());
+
+		if (bHasDesiredMoveInput)
+		{
+			BlendSpaceSpeed = FMath::Max(GroundSpeed, Monster->GetDesiredMaxWalkSpeed());
+		}
+
+		bShouldMove = bHasDesiredMoveInput || (GroundSpeed > 3.f);
+	}
+	else if (const AJunPlayer* Player = Cast<AJunPlayer>(Character))
+	{
+		const bool bHasDesiredMoveInput =
+			!FMath::IsNearlyZero(Player->GetDesiredMoveForward()) ||
+			!FMath::IsNearlyZero(Player->GetDesiredMoveRight());
+
+		if (bHasDesiredMoveInput)
+		{
+			BlendSpaceSpeed = FMath::Max(GroundSpeed, Player->GetDesiredMaxWalkSpeed());
+		}
+
+		bShouldMove = bHasDesiredMoveInput || (GroundSpeed > 3.f &&
+			MovementComponent->GetCurrentAcceleration() != FVector::ZeroVector);
 	}
 	else
 	{

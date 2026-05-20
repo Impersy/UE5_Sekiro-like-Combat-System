@@ -35,6 +35,9 @@ protected:
 	float GroundSpeed = 0.f;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Movement")
+	float BlendSpaceSpeed = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Movement")
 	bool bShouldMove = false;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Movement")

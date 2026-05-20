@@ -1,5 +1,6 @@
 #include "Character/JunMonster.h"
 #include "AI/JunAIController.h"
+#include "AlphaBlend.h"
 #include "Animation/AnimMontage.h"
 #include "Character/JunPlayer.h"
 #include "Components/AudioComponent.h"
@@ -235,6 +236,7 @@ void AJunMonster::Tick(float DeltaTime)
 	GetCharacterMovement()->MaxWalkSpeed = GetDesiredMaxWalkSpeed();
 	bIsRunning = ShouldUseRunLocomotion();
 	UpdateHitReactKnockbackBraking(DeltaTime);
+	UpdateHitReactFacing(DeltaTime);
 
 	if (bExecutionReady && !bBeingExecuted)
 	{
@@ -351,6 +353,8 @@ void AJunMonster::ReceiveHit(
 	{
 		return;
 	}
+
+	HitReactFacingTarget = DamageCauser;
 
 	// 데미지는 먼저 적용하고, 그 다음 "새 피격 리액션으로 갈아탈 수 있는지"를 판단한다.
 	AJunCharacter* AttackerCharacter = Cast<AJunCharacter>(DamageCauser);
@@ -634,6 +638,7 @@ bool AJunMonster::HasExecutionResultApplied() const
 
 void AJunMonster::HandleEquipWeaponNotify()
 {
+	SetWeaponVisible(true);
 	AttachWeaponToHandSocket();
 }
 
@@ -800,7 +805,7 @@ void AJunMonster::StopCombatBGM()
 	}
 }
 
-void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData, EJunWeaponNiagaraComponent NiagaraComponent)
+void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData, EJunWeaponNiagaraComponent NiagaraComponent, const FJunAttackTraceOverrideData& TraceOverrideData)
 {
 	if (!EquippedWeapon)
 	{
@@ -810,6 +815,7 @@ void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunA
 	EquippedWeapon->SetAttackHitReactType(HitReactType);
 	EquippedWeapon->SetAttackDamageData(DamageData);
 	EquippedWeapon->SetAttackDefenseKnockbackData(DefenseKnockbackData);
+	EquippedWeapon->ApplyAttackTraceOverride(TraceOverrideData);
 	EquippedWeapon->StartAttackTrace(NiagaraComponent);
 }
 
@@ -985,7 +991,9 @@ void AJunMonster::EnterCutsceneWaitState()
 	bRunLocomotionRequested = false;
 	CombatMoveInput = FVector2D::ZeroVector;
 	bCutsceneTriggered = false;
+	bCutsceneWaitEquipMontageActive = false;
 	AttachWeaponToSheathedSocket();
+	SetWeaponVisible(false);
 	GetCharacterMovement()->bOrientRotationToMovement = true;
 	StopAIMovement();
 	SetDesiredMoveAxes(0.f, 0.f);
@@ -999,7 +1007,10 @@ void AJunMonster::EnterCutsceneWaitState()
 	MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnCutsceneWaitMontageEnded);
 	MonsterAnimInstance->OnMontageEnded.AddDynamic(this, &AJunMonster::OnCutsceneWaitMontageEnded);
 	PlayAnimMontage(CutsceneWaitMontage);
-	MonsterAnimInstance->Montage_JumpToSection(CutsceneWaitIdleSectionName, CutsceneWaitMontage);
+	if (!CutsceneWaitIdleSectionName.IsNone() && CutsceneWaitMontage->IsValidSectionName(CutsceneWaitIdleSectionName))
+	{
+		MonsterAnimInstance->Montage_JumpToSection(CutsceneWaitIdleSectionName, CutsceneWaitMontage);
+	}
 }
 
 void AJunMonster::EnterIdleState()
@@ -1176,18 +1187,48 @@ void AJunMonster::UpdateCutsceneWait(float DeltaTime)
 	StopAIMovement();
 	SetDesiredMoveAxes(0.f, 0.f);
 
-	UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
-	if (MonsterAnimInstance && CutsceneWaitMontage && MonsterAnimInstance->Montage_IsPlaying(CutsceneWaitMontage))
+	if (PlayCutsceneWaitEquipMontage(CutsceneWaitEquipBlendInTime))
 	{
-		MonsterAnimInstance->Montage_SetNextSection(
-			CutsceneWaitIdleSectionName,
-			CutsceneWaitEquipSectionName,
-			CutsceneWaitMontage);
 		return;
 	}
 
 	AttachWeaponToHandSocket();
 	SetMonsterState(EMonsterState::BattleStart);
+}
+
+bool AJunMonster::PlayCutsceneWaitEquipMontage(float BlendInTime)
+{
+	UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+	if (!MonsterAnimInstance || !CutsceneWaitEquipMontage)
+	{
+		return false;
+	}
+
+	if (CutsceneWaitMontage)
+	{
+		MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnCutsceneWaitMontageEnded);
+	}
+
+	bCutsceneWaitEquipMontageActive = true;
+	MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnCutsceneWaitEquipMontageEnded);
+	const float MontagePlayResult = MonsterAnimInstance->Montage_PlayWithBlendIn(
+		CutsceneWaitEquipMontage,
+		FAlphaBlendArgs(FMath::Max(0.f, BlendInTime)),
+		1.f,
+		EMontagePlayReturnType::MontageLength,
+		0.f,
+		true
+	);
+	MonsterAnimInstance->OnMontageEnded.AddDynamic(this, &AJunMonster::OnCutsceneWaitEquipMontageEnded);
+
+	if (MontagePlayResult <= 0.f)
+	{
+		bCutsceneWaitEquipMontageActive = false;
+		MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnCutsceneWaitEquipMontageEnded);
+		return false;
+	}
+
+	return true;
 }
 
 void AJunMonster::UpdateIdle(float DeltaTime)
@@ -2013,6 +2054,25 @@ void AJunMonster::EndAttackFacingWindow()
 	AttackFacingWindowInterpSpeed = 0.f;
 }
 
+void AJunMonster::BeginHitReactFacingWindow(float InterpSpeed)
+{
+	if (!HitReactFacingTarget)
+	{
+		bHitReactFacingWindowActive = false;
+		HitReactFacingWindowInterpSpeed = 0.f;
+		return;
+	}
+
+	bHitReactFacingWindowActive = true;
+	HitReactFacingWindowInterpSpeed = FMath::Max(InterpSpeed, 0.f);
+}
+
+void AJunMonster::EndHitReactFacingWindow()
+{
+	bHitReactFacingWindowActive = false;
+	HitReactFacingWindowInterpSpeed = 0.f;
+}
+
 void AJunMonster::TryAttack()
 {
 	if (!CanAttackTarget())
@@ -2519,6 +2579,35 @@ void AJunMonster::UpdateHitReact(float DeltaTime)
 	}
 }
 
+void AJunMonster::UpdateHitReactFacing(float DeltaTime)
+{
+	if (!bHitReactFacingWindowActive)
+	{
+		return;
+	}
+
+	if (!HitReactFacingTarget)
+	{
+		EndHitReactFacingWindow();
+		return;
+	}
+
+	FVector Direction = HitReactFacingTarget->GetActorLocation() - GetActorLocation();
+	Direction.Z = 0.f;
+	if (Direction.IsNearlyZero())
+	{
+		return;
+	}
+
+	const float ResolvedInterpSpeed = HitReactFacingWindowInterpSpeed > 0.f ? HitReactFacingWindowInterpSpeed : AttackFacingInterpSpeed;
+	SetActorRotation(FMath::RInterpTo(
+		GetActorRotation(),
+		Direction.Rotation(),
+		DeltaTime,
+		ResolvedInterpSpeed
+	));
+}
+
 void AJunMonster::EndHitReact()
 {
 	// HitReact 종료는 태그 해제만 담당하고,
@@ -2526,6 +2615,8 @@ void AJunMonster::EndHitReact()
 	const EHitReactType EndedHitReact = CurrentHitReact;
 	CurrentHitReact = EHitReactType::None;
 	CurrentHitReactDirection = ECharacterHitReactDirection::Front_F;
+	HitReactFacingTarget = nullptr;
+	EndHitReactFacingWindow();
 	HitReactTime = 0.f;
 	CurrentHitReactDuration = 0.f;
 	CurrentHitReactControlLockRemainTime = 0.f;
@@ -3072,12 +3163,33 @@ void AJunMonster::OnCutsceneWaitMontageEnded(UAnimMontage* Montage, bool bInterr
 
 	if (CurrentTarget)
 	{
-		SetMonsterState(EMonsterState::BattleStart);
+		PlayCutsceneWaitEquipMontage(CutsceneWaitEquipBlendInTime);
 	}
 	else
 	{
 		SetMonsterState(EMonsterState::Idle);
 	}
+}
+
+void AJunMonster::OnCutsceneWaitEquipMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	if (Montage != CutsceneWaitEquipMontage)
+	{
+		return;
+	}
+
+	if (UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+	{
+		MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnCutsceneWaitEquipMontageEnded);
+	}
+
+	if (CurrentState != EMonsterState::CutsceneWait)
+	{
+		return;
+	}
+
+	bCutsceneWaitEquipMontageActive = false;
+	SetMonsterState(CurrentTarget ? EMonsterState::BattleStart : EMonsterState::Idle);
 }
 
 void AJunMonster::UpdateExecutionFacing(float DeltaTime)

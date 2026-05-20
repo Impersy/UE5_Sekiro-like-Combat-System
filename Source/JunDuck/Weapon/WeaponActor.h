@@ -42,6 +42,12 @@ public:
 	void SetTraceSampleCount(int32 NewTraceSampleCount);
 
 	UFUNCTION(BlueprintCallable)
+	void ApplyAttackTraceOverride(const FJunAttackTraceOverrideData& TraceOverrideData);
+
+	UFUNCTION(BlueprintCallable)
+	void ClearAttackTraceOverride();
+
+	UFUNCTION(BlueprintCallable)
 	void SetAttackHitReactType(EHitReactType NewHitReactType);
 
 	UFUNCTION(BlueprintCallable)
@@ -64,12 +70,16 @@ public:
 
 protected:
 	void UpdateAttackTrace();
+	FVector GetCurrentTraceEndLocation(const FVector& CurrentTraceStart) const;
+	float GetCurrentTraceRadius() const;
+	int32 GetCurrentTraceSampleCount(const FVector& CurrentTraceStart, const FVector& CurrentTraceEnd) const;
 	void DrawAttackTraceDebug(const FVector& TraceStart, const FVector& TraceEnd, bool bSweepDebug, const FVector& PrevStart = FVector::ZeroVector, const FVector& PrevEnd = FVector::ZeroVector) const;
 
 	void ApplyDamageToHitCharacter(AActor* HitActor, const FVector& SwingDirection);
 	class UNiagaraComponent* GetWeaponNiagaraComponent(EJunWeaponNiagaraComponent ComponentType) const;
 	class UNiagaraComponent* FindNiagaraComponentByName(FName ComponentName) const;
 	void CacheWeaponNiagaraComponents();
+	void WarmupWeaponNiagaraComponents();
 
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
@@ -99,11 +109,20 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX")
 	FName AuraNiagaraComponentName = TEXT("NS_Aura");
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX")
+	FName JigenNiagaraComponentName = TEXT("NS_Jigen");
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace")
 	float TraceRadius = 10.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace")
 	int32 TraceSampleCount = 5;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trace")
+	bool bAttackTraceOverrideActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trace")
+	FJunAttackTraceOverrideData ActiveAttackTraceOverrideData;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace")
 	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_GameTraceChannel2;
@@ -116,6 +135,12 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
 	bool bActivateTrailWithAttackTrace = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX|Warmup")
+	bool bWarmupWeaponNiagaraOnBeginPlay = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX|Warmup", meta = (ClampMin = "0"))
+	float WeaponNiagaraWarmupDeactivateDelay = 0.05f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX", meta = (ToolTip = "Fallback component used by direct StartAttackTrace calls. AnimNotifyState_AttackTrace can override this per notify."))
 	EJunWeaponNiagaraComponent AttackTraceNiagaraComponent = EJunWeaponNiagaraComponent::Trail;
@@ -146,5 +171,8 @@ protected:
 
 	UPROPERTY(Transient)
 	mutable TObjectPtr<class UNiagaraComponent> CachedAuraNiagaraComponent = nullptr;
+
+	UPROPERTY(Transient)
+	mutable TObjectPtr<class UNiagaraComponent> CachedJigenNiagaraComponent = nullptr;
 
 };

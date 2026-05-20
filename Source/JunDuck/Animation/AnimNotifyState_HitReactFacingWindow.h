@@ -2,24 +2,16 @@
 
 #include "CoreMinimal.h"
 #include "Animation/AnimNotifies/AnimNotifyState.h"
-#include "AnimNotifyState_AttackComboAdvance.generated.h"
-
-UENUM(BlueprintType)
-enum class EJunAttackComboType : uint8
-{
-	BasicAttack,
-	HeavyAttack,
-	Jigen
-};
+#include "AnimNotifyState_HitReactFacingWindow.generated.h"
 
 UCLASS()
-class JUNDUCK_API UAnimNotifyState_AttackComboAdvance : public UAnimNotifyState
+class JUNDUCK_API UAnimNotifyState_HitReactFacingWindow : public UAnimNotifyState
 {
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combo")
-	EJunAttackComboType ComboType = EJunAttackComboType::BasicAttack;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Facing")
+	float FacingInterpSpeed = 14.f;
 
 	virtual FString GetNotifyName_Implementation() const override;
 

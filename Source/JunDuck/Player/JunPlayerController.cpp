@@ -11,6 +11,7 @@
 #include "Character/JunPlayer.h"
 #include "EngineUtils.h"
 #include "UI/JunCombatHUDWidget.h"
+#include "UI/JunDangerMarkerWidget.h"
 #include "UI/JunLockOnMarkerWidget.h"
 
 AJunPlayerController::AJunPlayerController(const FObjectInitializer& objectInitializer)
@@ -116,6 +117,15 @@ void AJunPlayerController::InitializeCombatWidgets()
 			LockOnMarkerWidget->SetLockOnMarkerVisible(false);
 		}
 	}
+
+	if (DangerMarkerWidgetClass && !DangerMarkerWidget)
+	{
+		DangerMarkerWidget = CreateWidget<UJunDangerMarkerWidget>(this, DangerMarkerWidgetClass);
+		if (DangerMarkerWidget)
+		{
+			DangerMarkerWidget->AddToViewport(2);
+		}
+	}
 }
 
 void AJunPlayerController::UpdateCombatWidgets()
@@ -152,6 +162,7 @@ void AJunPlayerController::UpdateCombatWidgets()
 		}
 	}
 
+	UpdateDangerMarkerWidget();
 	UpdateLockOnMarkerWidget(CurrentLockOnTarget);
 }
 
@@ -233,6 +244,56 @@ void AJunPlayerController::SetLockOnMarkerSuppressed(bool bSuppressed)
 		LockOnMarkerWidget->SetExecutionReadyMarkerVisible(false);
 		LockOnMarkerWidget->SetLockOnMarkerVisible(false);
 	}
+}
+
+void AJunPlayerController::ResetPlayerPostureVisibilityState()
+{
+	if (CombatHUDWidget)
+	{
+		CombatHUDWidget->ResetPlayerPostureVisibilityState();
+	}
+}
+
+void AJunPlayerController::PlayDangerMarkerOnPlayer()
+{
+	if (!DangerMarkerWidget)
+	{
+		return;
+	}
+
+	DangerMarkerWidget->PlayDangerMarker();
+	UpdateDangerMarkerWidget();
+}
+
+void AJunPlayerController::UpdateDangerMarkerWidget()
+{
+	if (!DangerMarkerWidget || !DangerMarkerWidget->IsDangerMarkerActive())
+	{
+		return;
+	}
+
+	if (!JunPlayer)
+	{
+		JunPlayer = Cast<AJunPlayer>(GetPawn());
+	}
+
+	if (!JunPlayer)
+	{
+		return;
+	}
+
+	FVector2D ScreenPosition = FVector2D::ZeroVector;
+	const FVector MarkerWorldLocation =
+		JunPlayer->GetActorLocation() +
+		JunPlayer->GetActorForwardVector() * DangerMarkerPlayerWorldOffset.X +
+		JunPlayer->GetActorRightVector() * DangerMarkerPlayerWorldOffset.Y +
+		FVector::UpVector * DangerMarkerPlayerWorldOffset.Z;
+	if (!ProjectWorldLocationToScreen(MarkerWorldLocation, ScreenPosition, true))
+	{
+		return;
+	}
+
+	DangerMarkerWidget->SetPositionInViewport(ScreenPosition, true);
 }
 
 AJunMonster* AJunPlayerController::FindActiveCombatBoss() const
@@ -517,6 +578,11 @@ void AJunPlayerController::Input_DodgeReleased(const FInputActionValue& InputVal
 void AJunPlayerController::Input_BasicAttack(const FInputActionValue& InputValue)
 {
 	if (!JunPlayer)
+	{
+		return;
+	}
+
+	if (JunPlayer->TryStartJigen())
 	{
 		return;
 	}

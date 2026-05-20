@@ -150,7 +150,8 @@ public:
 		EHitReactType HitReactType = EHitReactType::LightHit,
 		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData(),
-		EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail) override;
+		EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail,
+		const FJunAttackTraceOverrideData& TraceOverrideData = FJunAttackTraceOverrideData()) override;
 	virtual void EndAttackTraceWindow(EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail) override;
 	virtual void BeginKickAttackTraceWindow(
 		EHitReactType HitReactType = EHitReactType::LightHit,
@@ -161,6 +162,8 @@ public:
 	virtual void EndWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType) override;
 	void BeginAttackFacingWindow(float InterpSpeed);
 	void EndAttackFacingWindow();
+	void BeginHitReactFacingWindow(float InterpSpeed);
+	void EndHitReactFacingWindow();
 	virtual void HandleGameplayEventNotify(FGameplayTag EventTag) override;
 
 protected:
@@ -192,6 +195,7 @@ protected:
 	void UpdateReturn(float DeltaTime);
 	virtual void UpdateCombat(float DeltaTime);
 	void UpdateBattleStartMovementBlend(float DeltaTime);
+	bool PlayCutsceneWaitEquipMontage(float BlendInTime);
 	void UpdateCombatFacing(float DeltaTime);
 	void TryStartCombatTurn();
 	bool TryStartTurnTowardsTargetThenState(EMonsterState NextState);
@@ -260,6 +264,7 @@ protected:
 	// Direction is decided from swing direction, not attacker location.
 	void StartHitReact(EHitReactType NewHitReact, ECharacterHitReactDirection NewHitDirection);
 	void UpdateHitReact(float DeltaTime);
+	void UpdateHitReactFacing(float DeltaTime);
 	void EndHitReact();
 	void ReleaseHitReactControlLock();
 	virtual void OnHitReactStarted(EHitReactType NewHitReact, ECharacterHitReactDirection NewHitDirection);
@@ -301,6 +306,9 @@ protected:
 	UFUNCTION()
 	void OnCutsceneWaitMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
+	UFUNCTION()
+	void OnCutsceneWaitEquipMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
 protected:
 	// AI tuning / top-level state runtime
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI")
@@ -319,24 +327,30 @@ protected:
 	float BattleStartMoveBlendDuration = 0.4f;
 
 protected:
-	// Boss intro / staging state. The montage should loop Idle -> Idle, then branch Idle -> Equip.
+	// Boss intro / staging state. Idle waits in its own montage, then Equip plays and enters BattleStart.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cutscene")
 	bool bStartWithCutsceneWait = false;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Cutscene")
 	TObjectPtr<class UAnimMontage> CutsceneWaitMontage = nullptr;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Cutscene")
+	TObjectPtr<class UAnimMontage> CutsceneWaitEquipMontage = nullptr;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cutscene")
 	FName CutsceneWaitIdleSectionName = TEXT("Idle");
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cutscene")
-	FName CutsceneWaitEquipSectionName = TEXT("Equip");
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cutscene", meta = (ClampMin = "0"))
+	float CutsceneWaitEquipBlendInTime = 0.25f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cutscene", meta = (ClampMin = "0"))
 	float CutsceneTriggerRange = 1300.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Cutscene")
 	bool bCutsceneTriggered = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Cutscene")
+	bool bCutsceneWaitEquipMontageActive = false;
 
 protected:
 	// Runtime references cached after spawn / detection.
@@ -695,6 +709,15 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
 	float CurrentHitReactControlLockRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<AActor> HitReactFacingTarget = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	bool bHitReactFacingWindowActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float HitReactFacingWindowInterpSpeed = 0.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
 	float HitReactKnockbackBrakingOverrideRemainTime = 0.f;

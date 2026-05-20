@@ -9,5 +9,6 @@ enum class EJunWeaponNiagaraComponent : uint8
 	Trail,
 	SpecialTrail,
 	Aura,
+	Jigen,
 	None
 };

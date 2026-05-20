@@ -64,6 +64,39 @@ enum class EJunDefenseSoundType : uint8
 };
 
 USTRUCT(BlueprintType)
+struct FJunAttackTraceOverrideData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace")
+	bool bUseTraceOverride = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace", meta = (EditCondition = "bUseTraceOverride", ClampMin = "0.0"))
+	float TraceEndExtension = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace", meta = (EditCondition = "bUseTraceOverride"))
+	bool bOverrideTraceRadius = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace", meta = (EditCondition = "bUseTraceOverride && bOverrideTraceRadius", ClampMin = "0.0"))
+	float TraceRadius = 10.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace", meta = (EditCondition = "bUseTraceOverride"))
+	bool bOverrideTraceSampleCount = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace", meta = (EditCondition = "bUseTraceOverride && bOverrideTraceSampleCount", ClampMin = "2"))
+	int32 TraceSampleCount = 5;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace", meta = (EditCondition = "bUseTraceOverride"))
+	bool bAutoAdjustSampleCountForExtension = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace", meta = (EditCondition = "bUseTraceOverride && bAutoAdjustSampleCountForExtension", ClampMin = "1.0"))
+	float TraceSampleSpacing = 25.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace", meta = (EditCondition = "bUseTraceOverride && bAutoAdjustSampleCountForExtension", ClampMin = "2"))
+	int32 MaxAutoTraceSampleCount = 32;
+};
+
+USTRUCT(BlueprintType)
 struct FJunDefenseKnockbackData
 {
 	GENERATED_BODY()
@@ -157,7 +190,8 @@ public:
 		EHitReactType HitReactType = EHitReactType::LightHit,
 		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData(),
-		EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail);
+		EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail,
+		const FJunAttackTraceOverrideData& TraceOverrideData = FJunAttackTraceOverrideData());
 
 	virtual void EndAttackTraceWindow(EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail);
 

@@ -95,7 +95,12 @@ enum class EWukongNormalAttackType : uint8
 	Execution,
 	Bow4Combo,
 	BowBackDashAttack,
-	BowHeavyAttack
+	BowHeavyAttack,
+	FastComeSlash,
+	SlowComeSlash,
+	FakeDownSlash,
+	LionSlash,
+	SpinSlash
 };
 
 UENUM(BlueprintType)
@@ -435,7 +440,9 @@ protected:
 		AActor* DamageCauser,
 		const FVector& SwingDirection,
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData);
+	bool TryStartParryCounterDecision();
 	bool TryStartParryCounterAttack();
+	bool TryStartParryBackJump();
 	bool TryStartParryCounterFollowUp();
 
 	UFUNCTION()
@@ -490,6 +497,21 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack")
 	FWukongNormalAttackData ExecutionAttack;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack")
+	FWukongNormalAttackData FastComeSlashAttack;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack")
+	FWukongNormalAttackData SlowComeSlashAttack;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack")
+	FWukongNormalAttackData FakeDownSlashAttack;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack")
+	FWukongNormalAttackData LionSlashAttack;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack")
+	FWukongNormalAttackData SpinSlashAttack;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Bow")
 	FWukongNormalAttackData Bow4ComboAttack;
@@ -560,6 +582,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
 	TObjectPtr<class UAnimMontage> ParryCounterFollowUpRightMontage = nullptr;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
+	TObjectPtr<class UAnimMontage> ParryBackJumpMontage = nullptr;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float LightHitPerfectParryChance = 0.5f;
 
@@ -581,6 +606,9 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
 	float ParryCounterBlendInTime = 0.08f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float ParryCounterDecisionCounterChance = 0.8f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.1"))
 	float ParryCounterPlayRate = 1.f;
 
@@ -601,6 +629,15 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.1"))
 	float ParryCounterFollowUpPlayRate = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.1"))
+	float ParryBackJumpPlayRate = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
+	float ParryBackJumpBlendOutTime = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
+	float ParryBackJumpBlendInTime = 0.08f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
 	float ParryCounterFollowUpAttackRange = 300.f;
@@ -739,6 +776,21 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableExecution = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableFastComeSlash = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableSlowComeSlash = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableFakeDownSlash = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableLionSlash = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableSpinSlash = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableBow4Combo = true;

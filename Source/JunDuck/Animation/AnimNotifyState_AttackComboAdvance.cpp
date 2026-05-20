@@ -3,9 +3,16 @@
 
 FString UAnimNotifyState_AttackComboAdvance::GetNotifyName_Implementation() const
 {
-	return ComboType == EJunAttackComboType::HeavyAttack
-		? TEXT("HeavyAttackComboAdvance")
-		: TEXT("BasicAttackComboAdvance");
+	switch (ComboType)
+	{
+	case EJunAttackComboType::HeavyAttack:
+		return TEXT("HeavyAttackComboAdvance");
+	case EJunAttackComboType::Jigen:
+		return TEXT("JigenComboAdvance");
+	case EJunAttackComboType::BasicAttack:
+	default:
+		return TEXT("BasicAttackComboAdvance");
+	}
 }
 
 void UAnimNotifyState_AttackComboAdvance::NotifyBegin(

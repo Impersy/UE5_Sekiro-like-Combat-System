@@ -46,7 +46,14 @@ void AWeaponActor::BeginPlay()
 	Super::BeginPlay();
 
 	CacheWeaponNiagaraComponents();
-	DeactivateAllWeaponNiagara();
+	if (bWarmupWeaponNiagaraOnBeginPlay)
+	{
+		WarmupWeaponNiagaraComponents();
+	}
+	else
+	{
+		DeactivateAllWeaponNiagara();
+	}
 }
 
 // Called every frame
@@ -60,9 +67,10 @@ void AWeaponActor::Tick(float DeltaTime)
 	}
 	else if (bShowAttackTraceDebugAlways && TraceStartPoint && TraceEndPoint)
 	{
+		const FVector TraceStart = TraceStartPoint->GetComponentLocation();
 		DrawAttackTraceDebug(
-			TraceStartPoint->GetComponentLocation(),
-			TraceEndPoint->GetComponentLocation(),
+			TraceStart,
+			GetCurrentTraceEndLocation(TraceStart),
 			false
 		);
 	}
@@ -75,7 +83,7 @@ void AWeaponActor::StartAttackTrace(EJunWeaponNiagaraComponent NiagaraComponent)
 	ActiveAttackTraceNiagaraComponent = NiagaraComponent;
 
 	PrevTraceStart = TraceStartPoint->GetComponentLocation();
-	PrevTraceEnd = TraceEndPoint->GetComponentLocation();
+	PrevTraceEnd = GetCurrentTraceEndLocation(PrevTraceStart);
 
 	if (bActivateTrailWithAttackTrace)
 	{
@@ -88,6 +96,7 @@ void AWeaponActor::EndAttackTrace(EJunWeaponNiagaraComponent NiagaraComponent)
 	bTraceActive = false;
 	HitActors.Empty();
 	ActiveAttackTraceNiagaraComponent = NiagaraComponent;
+	ClearAttackTraceOverride();
 
 	if (bActivateTrailWithAttackTrace)
 	{
@@ -104,6 +113,7 @@ void AWeaponActor::StopAttackTrace()
 
 	bTraceActive = false;
 	HitActors.Empty();
+	ClearAttackTraceOverride();
 
 	if (bActivateTrailWithAttackTrace)
 	{
@@ -114,6 +124,18 @@ void AWeaponActor::StopAttackTrace()
 void AWeaponActor::SetTraceSampleCount(const int32 NewTraceSampleCount)
 {
 	TraceSampleCount = FMath::Max(2, NewTraceSampleCount);
+}
+
+void AWeaponActor::ApplyAttackTraceOverride(const FJunAttackTraceOverrideData& TraceOverrideData)
+{
+	bAttackTraceOverrideActive = TraceOverrideData.bUseTraceOverride;
+	ActiveAttackTraceOverrideData = TraceOverrideData;
+}
+
+void AWeaponActor::ClearAttackTraceOverride()
+{
+	bAttackTraceOverrideActive = false;
+	ActiveAttackTraceOverrideData = FJunAttackTraceOverrideData();
 }
 
 void AWeaponActor::SetAttackHitReactType(const EHitReactType NewHitReactType)
@@ -167,6 +189,7 @@ void AWeaponActor::DeactivateAllWeaponNiagara()
 	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::Trail);
 	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::SpecialTrail);
 	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::Aura);
+	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::Jigen);
 }
 
 void AWeaponActor::SetWeaponEffectsEnabled(bool bEnabled)
@@ -189,7 +212,7 @@ void AWeaponActor::UpdateAttackTrace()
 	// "이번 공격이 어느 방향으로 스윙됐는지"를 같이 계산한다.
 
 	const FVector CurrentTraceStart = TraceStartPoint->GetComponentLocation();
-	const FVector CurrentTraceEnd = TraceEndPoint->GetComponentLocation();
+	const FVector CurrentTraceEnd = GetCurrentTraceEndLocation(CurrentTraceStart);
 	const FVector SwingDirection = (((CurrentTraceStart - PrevTraceStart) + (CurrentTraceEnd - PrevTraceEnd)) * 0.5f).GetSafeNormal();
 
 	FCollisionQueryParams QueryParams;
@@ -198,7 +221,7 @@ void AWeaponActor::UpdateAttackTrace()
 
 	TSet<AActor*> CurrentFrameHitActors;
 
-	const int32 SampleCount = FMath::Max(2, TraceSampleCount);
+	const int32 SampleCount = GetCurrentTraceSampleCount(CurrentTraceStart, CurrentTraceEnd);
 	if (bShowAttackTraceSweepDebug)
 	{
 		DrawAttackTraceDebug(CurrentTraceStart, CurrentTraceEnd, true, PrevTraceStart, PrevTraceEnd);
@@ -219,7 +242,7 @@ void AWeaponActor::UpdateAttackTrace()
 			CurrSamplePoint,
 			FQuat::Identity,
 			TraceChannel,
-			FCollisionShape::MakeSphere(TraceRadius),
+			FCollisionShape::MakeSphere(GetCurrentTraceRadius()),
 			QueryParams
 		);
 
@@ -260,6 +283,59 @@ void AWeaponActor::UpdateAttackTrace()
 
 }
 
+FVector AWeaponActor::GetCurrentTraceEndLocation(const FVector& CurrentTraceStart) const
+{
+	const FVector BaseTraceEnd = TraceEndPoint ? TraceEndPoint->GetComponentLocation() : CurrentTraceStart;
+	if (!bAttackTraceOverrideActive || ActiveAttackTraceOverrideData.TraceEndExtension <= 0.f)
+	{
+		return BaseTraceEnd;
+	}
+
+	const FVector TraceDirection = (BaseTraceEnd - CurrentTraceStart).GetSafeNormal();
+	if (TraceDirection.IsNearlyZero())
+	{
+		return BaseTraceEnd;
+	}
+
+	return BaseTraceEnd + (TraceDirection * ActiveAttackTraceOverrideData.TraceEndExtension);
+}
+
+float AWeaponActor::GetCurrentTraceRadius() const
+{
+	if (bAttackTraceOverrideActive && ActiveAttackTraceOverrideData.bOverrideTraceRadius)
+	{
+		return FMath::Max(0.f, ActiveAttackTraceOverrideData.TraceRadius);
+	}
+
+	return FMath::Max(0.f, TraceRadius);
+}
+
+int32 AWeaponActor::GetCurrentTraceSampleCount(const FVector& CurrentTraceStart, const FVector& CurrentTraceEnd) const
+{
+	int32 ResolvedSampleCount = FMath::Max(2, TraceSampleCount);
+
+	if (!bAttackTraceOverrideActive)
+	{
+		return ResolvedSampleCount;
+	}
+
+	if (ActiveAttackTraceOverrideData.bOverrideTraceSampleCount)
+	{
+		ResolvedSampleCount = FMath::Max(2, ActiveAttackTraceOverrideData.TraceSampleCount);
+	}
+
+	if (ActiveAttackTraceOverrideData.bAutoAdjustSampleCountForExtension)
+	{
+		const float TraceLength = FVector::Dist(CurrentTraceStart, CurrentTraceEnd);
+		const float SampleSpacing = FMath::Max(1.f, ActiveAttackTraceOverrideData.TraceSampleSpacing);
+		const int32 AutoSampleCount = FMath::CeilToInt(TraceLength / SampleSpacing) + 1;
+		const int32 MaxAutoSampleCount = FMath::Max(2, ActiveAttackTraceOverrideData.MaxAutoTraceSampleCount);
+		ResolvedSampleCount = FMath::Max(ResolvedSampleCount, FMath::Min(AutoSampleCount, MaxAutoSampleCount));
+	}
+
+	return ResolvedSampleCount;
+}
+
 UNiagaraComponent* AWeaponActor::GetWeaponNiagaraComponent(EJunWeaponNiagaraComponent ComponentType) const
 {
 	switch (ComponentType)
@@ -282,6 +358,12 @@ UNiagaraComponent* AWeaponActor::GetWeaponNiagaraComponent(EJunWeaponNiagaraComp
 			CachedAuraNiagaraComponent = FindNiagaraComponentByName(AuraNiagaraComponentName);
 		}
 		return CachedAuraNiagaraComponent;
+	case EJunWeaponNiagaraComponent::Jigen:
+		if (!CachedJigenNiagaraComponent)
+		{
+			CachedJigenNiagaraComponent = FindNiagaraComponentByName(JigenNiagaraComponentName);
+		}
+		return CachedJigenNiagaraComponent;
 	default:
 		return nullptr;
 	}
@@ -313,6 +395,55 @@ void AWeaponActor::CacheWeaponNiagaraComponents()
 	CachedTrailNiagaraComponent = FindNiagaraComponentByName(TrailNiagaraComponentName);
 	CachedSpecialTrailNiagaraComponent = FindNiagaraComponentByName(SpecialTrailNiagaraComponentName);
 	CachedAuraNiagaraComponent = FindNiagaraComponentByName(AuraNiagaraComponentName);
+	CachedJigenNiagaraComponent = FindNiagaraComponentByName(JigenNiagaraComponentName);
+}
+
+void AWeaponActor::WarmupWeaponNiagaraComponents()
+{
+	TArray<UNiagaraComponent*> ComponentsToWarmup;
+	if (CachedTrailNiagaraComponent)
+	{
+		ComponentsToWarmup.Add(CachedTrailNiagaraComponent);
+	}
+	if (CachedSpecialTrailNiagaraComponent)
+	{
+		ComponentsToWarmup.Add(CachedSpecialTrailNiagaraComponent);
+	}
+	if (CachedAuraNiagaraComponent)
+	{
+		ComponentsToWarmup.Add(CachedAuraNiagaraComponent);
+	}
+	if (CachedJigenNiagaraComponent)
+	{
+		ComponentsToWarmup.Add(CachedJigenNiagaraComponent);
+	}
+
+	if (ComponentsToWarmup.IsEmpty())
+	{
+		return;
+	}
+
+	for (UNiagaraComponent* NiagaraComponent : ComponentsToWarmup)
+	{
+		if (NiagaraComponent)
+		{
+			NiagaraComponent->Activate(true);
+		}
+	}
+
+	FTimerDelegate DeactivateDelegate;
+	DeactivateDelegate.BindWeakLambda(this, [this]()
+	{
+		DeactivateAllWeaponNiagara();
+	});
+
+	FTimerHandle DeactivateTimerHandle;
+	GetWorldTimerManager().SetTimer(
+		DeactivateTimerHandle,
+		DeactivateDelegate,
+		WeaponNiagaraWarmupDeactivateDelay,
+		false
+	);
 }
 
 void AWeaponActor::DrawAttackTraceDebug(const FVector& TraceStart, const FVector& TraceEnd, const bool bSweepDebug, const FVector& PrevStart, const FVector& PrevEnd) const
@@ -322,7 +453,8 @@ void AWeaponActor::DrawAttackTraceDebug(const FVector& TraceStart, const FVector
 		return;
 	}
 
-	const int32 SampleCount = FMath::Max(2, TraceSampleCount);
+	const int32 SampleCount = GetCurrentTraceSampleCount(TraceStart, TraceEnd);
+	const float DebugTraceRadius = GetCurrentTraceRadius();
 
 	if (!bSweepDebug)
 	{
@@ -338,11 +470,11 @@ void AWeaponActor::DrawAttackTraceDebug(const FVector& TraceStart, const FVector
 		{
 			const FVector PrevSamplePoint = FMath::Lerp(PrevStart, PrevEnd, Alpha);
 			DrawDebugLine(GetWorld(), PrevSamplePoint, CurrSamplePoint, FColor::Yellow, false, 0.05f, 0, 1.0f);
-			DrawDebugSphere(GetWorld(), CurrSamplePoint, TraceRadius, 12, FColor::Cyan, false, 0.05f);
+			DrawDebugSphere(GetWorld(), CurrSamplePoint, DebugTraceRadius, 12, FColor::Cyan, false, 0.05f);
 		}
 		else
 		{
-			DrawDebugSphere(GetWorld(), CurrSamplePoint, TraceRadius, 12, FColor::Cyan, false, 0.f);
+			DrawDebugSphere(GetWorld(), CurrSamplePoint, DebugTraceRadius, 12, FColor::Cyan, false, 0.f);
 		}
 	}
 }
