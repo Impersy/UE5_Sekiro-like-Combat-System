@@ -310,13 +310,22 @@ public:
 		float BlendOutTime,
 		float BlendInTime,
 		bool bRequireRange,
+		bool bMoveToRangeWhenOutOfRange,
+		bool bDelayMoveToRangeWhenOutOfRange,
 		bool bUseTestFilter);
+	bool TryForceNormalAttackLinkWhenTriggerChanceFails(float BlendOutTime, float BlendInTime);
+	bool TryExecuteDelayedNormalAttackRangeLinkFromNotify(float BlendOutTimeOverride = -1.f);
+	EWukongNormalAttackType GetCurrentNormalAttackType() const { return CurrentAttackNormalAttackType; }
+	bool WasNormalAttackRecentlyUsed(EWukongNormalAttackType AttackType, int32 Depth = 1) const;
 	void HandleHitTurnDecisionPoint();
 	virtual void NotifyAttackParriedBy(class AJunPlayer* Parrier, float PostureScale = 1.f) override;
 
 protected:
 	virtual void HandleGameplayEventNotify(FGameplayTag EventTag) override;
 	virtual void EnterCombatState() override;
+	virtual void EnterPlayerDeathWait() override;
+	virtual void ResumeAfterPlayerFakeDeath() override;
+	virtual void ResetAfterPlayerRealDeath() override;
 	virtual void UpdateCombat(float DeltaTime) override;
 	virtual FMonsterAttackSelection ChooseNextAttackSelection() const override;
 	virtual void OnAttackTick(float DeltaTime) override;
@@ -332,7 +341,8 @@ protected:
 		float DamageAmount,
 		AActor* DamageCauser,
 		const FVector& SwingDirection,
-		const FJunAttackDefenseKnockbackData& DefenseKnockbackData) override;
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
+		const FJunAttackDefenseRuleData& DefenseRuleData) override;
 
 	void SetWukongCombatState(EWukongCombatState NewState);
 	void EnterApproachState();
@@ -409,6 +419,7 @@ protected:
 	void ResetReactiveEvadePressure();
 	void ResetPendingAttackMotionState();
 	virtual void ResetCurrentAttackRuntimeState() override;
+	void ClearDelayedNormalAttackRangeLink();
 	bool IsBowNormalAttackType(EWukongNormalAttackType AttackType) const;
 	void BeginBowAttackPresentation();
 	void EndBowAttackPresentation();
@@ -419,6 +430,10 @@ protected:
 	void StartPlayerPressure();
 	void ClearPlayerPressure();
 	void UpdatePlayerPressure(float DeltaTime);
+	void UpdatePlannedCombatPlanAge(float DeltaTime);
+	bool IsPlannedAttackExpired() const;
+	bool ShouldForceCloseAfterBowAttack() const;
+	bool ShouldSuppressBowAttackCandidate() const;
 	void ResetPlannedCombatPlan();
 	void EnsureCombatPlan();
 	bool TryEnterReactiveStateFromIdle();
@@ -705,11 +720,17 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Plan", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float AttackPlanWeight = 0.8f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Plan", meta = (ClampMin = "0.0"))
+	float PlannedAttackMaxWaitTime = 3.f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Approach")
 	float NoAttackCandidateApproachDelay = 5.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Approach")
 	bool bForceApproachAfterBowAttack = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Approach", meta = (ClampMin = "0.0"))
+	float PostBowCloseRangeForceMaxTime = 4.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement")
 	float StrafeMinDuration = 2.f;
@@ -933,6 +954,9 @@ protected:
 	int32 PlannedComboLength = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
+	float PlannedAttackWaitTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
 	TArray<FWukongActionRecord> RecentActionHistory;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Combat")
@@ -951,6 +975,24 @@ protected:
 	EWukongNormalAttackType CurrentAttackNormalAttackType = EWukongNormalAttackType::None;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
+	EWukongNormalAttackType LastStartedNormalAttackType = EWukongNormalAttackType::None;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
+	bool bHasDelayedNormalAttackRangeLink = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
+	EWukongNormalAttackType DelayedNormalAttackRangeLinkType = EWukongNormalAttackType::None;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
+	float DelayedNormalAttackRangeLinkBlendOutTime = 0.12f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
+	float DelayedNormalAttackRangeLinkBlendInTime = 0.12f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
+	bool bDelayedNormalAttackRangeLinkUseTestFilter = true;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
 	bool bNoAttackCandidateApproachInProgress = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
@@ -961,6 +1003,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
 	bool bPostBowCloseRangeApproachInProgress = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Bow")
+	float PostBowCloseRangeForceElapsedTime = 0.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Bow")
 	bool bBowAttackPresentationActive = false;

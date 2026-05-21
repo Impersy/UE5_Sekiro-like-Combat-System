@@ -153,6 +153,11 @@ void AWeaponActor::SetAttackDefenseKnockbackData(const FJunAttackDefenseKnockbac
 	AttackDefenseKnockbackData = NewDefenseKnockbackData;
 }
 
+void AWeaponActor::SetAttackDefenseRuleData(const FJunAttackDefenseRuleData& NewDefenseRuleData)
+{
+	AttackDefenseRuleData = NewDefenseRuleData;
+}
+
 void AWeaponActor::ActivateWeaponNiagara(EJunWeaponNiagaraComponent ComponentType)
 {
 	if (ComponentType == EJunWeaponNiagaraComponent::None)
@@ -523,11 +528,11 @@ void AWeaponActor::ApplyDamageToHitCharacter(AActor* HitActor, const FVector& Sw
 
 		if (HitMonster)
 		{
-			HitMonster->ReceiveHit(AttackHitReactType, FinalDamage, AttackerCharacter, SwingDirection, AttackDefenseKnockbackData);
+			HitMonster->ReceiveHit(AttackHitReactType, FinalDamage, AttackerCharacter, SwingDirection, AttackDefenseKnockbackData, AttackDefenseRuleData);
 		}
 		else if (AJunPlayer* HitPlayer = Cast<AJunPlayer>(VictimCharacter))
 		{
-			HitPlayer->ReceiveHit(AttackHitReactType, FinalDamage, AttackerCharacter, SwingDirection, AttackDefenseKnockbackData);
+			HitPlayer->ReceiveHit(AttackHitReactType, FinalDamage, AttackerCharacter, SwingDirection, AttackDefenseKnockbackData, AttackDefenseRuleData);
 		}
 		else
 		{

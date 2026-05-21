@@ -128,11 +128,12 @@ public: // Engine / Character Overrides
 	virtual void Landed(const FHitResult& Hit) override;
 	virtual void HandleGameplayEventNotify(FGameplayTag EventTag) override;
 	virtual void BeginAttackTraceWindow(
-	EHitReactType HitReactType = EHitReactType::LightHit,
-	const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
-	const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData(),
-	EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail,
-	const FJunAttackTraceOverrideData& TraceOverrideData = FJunAttackTraceOverrideData()) override;
+		EHitReactType HitReactType = EHitReactType::LightHit,
+		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData(),
+		const FJunAttackDefenseRuleData& DefenseRuleData = FJunAttackDefenseRuleData(),
+		EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail,
+		const FJunAttackTraceOverrideData& TraceOverrideData = FJunAttackTraceOverrideData()) override;
 	virtual void EndAttackTraceWindow(EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail) override;
 	virtual void BeginWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType) override;
 	virtual void EndWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType) override;
@@ -151,6 +152,7 @@ public: // External Gameplay API
 	AActor* DamageCauser,
 	const FVector& SwingDirection,
 	const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData(),
+	const FJunAttackDefenseRuleData& DefenseRuleData = FJunAttackDefenseRuleData(),
 	bool bCanBuildAttackerPostureOnParry = true);
 	void AddCameraLookInput(const FVector2D& Input);
 	void ToggleLockOn();
@@ -311,6 +313,8 @@ protected: // JumpAttack
 	void UpdateJumpAttackState(float DeltaTime);
 	bool CanStartJumpAttack() const;
 	bool HasEnoughAirTimeForJumpAttack() const;
+	float GetDistanceFromGround() const;
+	bool IsJumpCounterEvadeSuccessful() const;
 	void StartJumpAttack();
 	void RequestJumpAttackEnd();
 	void EnterJumpAttackEnd();
@@ -401,6 +405,8 @@ protected: // Hit
 	ECharacterHitReactDirection DetermineHitReactDirection(const AActor* DamageCauser, const FVector& SwingDirection) const;
 	ECharacterKnockbackDirection DetermineKnockbackDirectionFromDamageCauser(const AActor* DamageCauser) const;
 	UAnimMontage* GetHitReactMontage(EHitReactType HitType, ECharacterHitReactDirection HitDirection) const;
+	EJunAirHitReactType ResolveAirHitReactType() const;
+	UAnimMontage* GetAirHitReactMontage(EJunAirHitReactType AirHitReactType) const;
 	UAnimMontage* GetParrySuccessMontage(const FVector& SwingDirection);
 	bool AddPosture(float Amount);
 	bool IsPostureFull() const;
@@ -413,6 +419,7 @@ protected: // Hit
 	void StartGuardBlock();
 	void StartGuardBreak();
 	void StartHitReact(EHitReactType HitType, ECharacterHitReactDirection HitDirection);
+	void ApplyAirHitKnockback(EJunAirHitReactType AirHitReactType);
 	void ApplyCommonKnockback(
 		ECharacterKnockbackDirection KnockbackDirection,
 		float Strength,
@@ -427,6 +434,7 @@ protected: // Hit
 	bool CanUseHitReactFacingWindow() const;
 	void ReleaseHitReactControlLock();
 	bool TryCancelHitReactIntoMove();
+	bool TryCancelHitReactIntoJump();
 	void FinishPlayerHitState();
 
 protected: // Defense
@@ -447,6 +455,9 @@ protected: // Defense
 	void EnterGuardLoop();
 	void BeginGuardEnd();
 	void FinishDefense();
+	void OpenParryWindow(bool bCountAsParryAttempt = true);
+	void ResetParrySpamPenalty();
+	void DrawDefenseTimingDebug() const;
 	float GetCurrentDefenseTimelineRate() const;
 
 	UFUNCTION()
@@ -755,6 +766,9 @@ protected: // Runtime Combat / Defense State
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpAttack")
 	EJunJumpAttackState JumpAttackState = EJunJumpAttackState::None;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpCounter")
+	bool bJumpCounterFollowUpDefenseBypassAvailable = false;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BasicAttack")
 	int32 BasicAttackComboIndex = 0;
 
@@ -799,6 +813,9 @@ protected: // Runtime Combat / Defense State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dodge")
 	bool bDodgeInputReleasedSinceLastDodge = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
+	bool bShowDefenseTimingDebug = true;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dodge")
 	bool bDodgeChainWindowActive = false;
@@ -867,16 +884,16 @@ protected: // Runtime Combat / Defense State
 	float SideDodgeInternalCooldownDuration = 0.75f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
-	float ForwardDodgeInvincibleDuration = 0.6f;
+	float ForwardDodgeInvincibleDuration = 0.12f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
-	float BackwardDodgeInvincibleDuration = 0.66f;
+	float BackwardDodgeInvincibleDuration = 0.146667f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
-	float BackDashInvincibleDuration = 0.45f;
+	float BackDashInvincibleDuration = 0.066667f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
-	float SideDodgeInvincibleDuration = 0.48f;
+	float SideDodgeInvincibleDuration = 0.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float DodgeChainBlendOutTime = 0.12f;
@@ -955,6 +972,18 @@ protected: // Runtime Combat / Defense State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
 	float ParryWindowRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
+	float CurrentParryWindowDuration = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
+	float CurrentPerfectParryWindowDuration = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
+	float ParrySpamPenaltyResetRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
+	int32 ParrySpamPenaltyStack = 0;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
 	float CurrentDefensePlayRate = 1.f;
@@ -1053,6 +1082,12 @@ protected: // Runtime Combat / Defense State
 	ECharacterHitReactDirection CurrentHitReactDirection = ECharacterHitReactDirection::Front_F;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
+	TObjectPtr<class UAnimMontage> CurrentHitReactMontage;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
+	bool bCurrentHitReactUsesAirMontage = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	FVector LastIncomingSwingDirection = FVector::ZeroVector;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
@@ -1060,6 +1095,9 @@ protected: // Runtime Combat / Defense State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	FJunAttackDefenseKnockbackData LastIncomingDefenseKnockbackData;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
+	FJunAttackDefenseRuleData LastIncomingDefenseRuleData;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	EJunBufferedParrySuccessCancelAction BufferedParrySuccessCancelAction = EJunBufferedParrySuccessCancelAction::None;
@@ -1350,10 +1388,22 @@ protected: // Attack / Defense Tuning
 	float GuardMoveBlendDuration = 0.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
-	float DefaultParryWindowDuration = 0.5f; // 기본 패리 판정 시간
+	float DefaultParryWindowDuration = 0.25f; // 기본 패리 판정 시간
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
 	float PerfectParryWindowDuration = 0.15f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
+	float ParrySpamPenaltyResetDuration = 0.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float ParrySpamPenaltyPerStack = 0.25f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
+	float MinParryWindowDuration = 0.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
+	float MinPerfectParryWindowDuration = 0.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard", meta = (ClampMin = "0.0", ClampMax = "360.0"))
 	float DefenseFrontAngle = 120.f;
@@ -1502,6 +1552,9 @@ protected: // Attack / Defense Tuning
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Recovery", meta = (ClampMin = "0"))
 	float GuardPostureRecoveryMultiplier = 2.5f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Recovery", meta = (ClampMin = "0"))
+	float RunPostureRecoveryMultiplier = 0.333333f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float HitReactDuration = 0.5f;
 
@@ -1513,6 +1566,24 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float LightHitControlLockDuration = 0.22f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	float AirLightHitReactDuration = 0.45f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	float AirLightHitControlLockDuration = 0.12f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	float AirLightHitKnockbackStrength = 140.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	float AirHeavyHitReactDuration = 0.65f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	float AirHeavyHitControlLockDuration = 0.2f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	float AirHeavyHitKnockbackStrength = 260.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float HeavyHitReactDuration = 0.5f;
@@ -1753,6 +1824,9 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack")
 	float JumpAttackMinGroundDistance = 600.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0"))
+	float JumpCounterEvadeMinGroundDistance = 200.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack", meta = (ClampMin = "0"))
 	float JumpAttackStartForwardImpulseStrength = 200.f;
@@ -2019,6 +2093,12 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	TObjectPtr<class UAnimMontage> LightHitRightMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	TObjectPtr<class UAnimMontage> AirHitFLightMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	TObjectPtr<class UAnimMontage> AirHitFHeavyMontage;
 
 protected: // Weapon Assets
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")

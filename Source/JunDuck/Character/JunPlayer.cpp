@@ -230,6 +230,8 @@ void AJunPlayer::Tick(float DeltaTime)
 	UpdatePostureRecovery(DeltaTime);
 
 	UpdateJumpStartAnimTrigger(DeltaTime);
+
+	DrawDefenseTimingDebug();
 }
 
 void AJunPlayer::OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker)
@@ -812,6 +814,11 @@ void AJunPlayer::Jump()
 		CancelJigenForRecoveryTransition(JigenJumpCancelBlendOutTime);
 	}
 
+	if (CurrentHitState == EJunPlayerHitState::HitReact && !TryCancelHitReactIntoJump())
+	{
+		return;
+	}
+
 	if (!CanJump())
 	{
 		return;
@@ -833,6 +840,8 @@ void AJunPlayer::Landed(const FHitResult& Hit)
 		RequestJumpAttackEnd();
 		return;
 	}
+
+	bJumpCounterFollowUpDefenseBypassAvailable = false;
 }
 
 void AJunPlayer::HandleGameplayEventNotify(FGameplayTag EventTag)
@@ -900,16 +909,23 @@ void AJunPlayer::HandleGameplayEventNotify(FGameplayTag EventTag)
 	}
 }
 
-void AJunPlayer::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData, EJunWeaponNiagaraComponent NiagaraComponent, const FJunAttackTraceOverrideData& TraceOverrideData)
+void AJunPlayer::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData, const FJunAttackDefenseRuleData& DefenseRuleData, EJunWeaponNiagaraComponent NiagaraComponent, const FJunAttackTraceOverrideData& TraceOverrideData)
 {
 	if (!EquippedWeapon)
 	{
 		return;
 	}
 
+	FJunAttackDefenseRuleData ResolvedDefenseRuleData = DefenseRuleData;
+	if (bJumpCounterFollowUpDefenseBypassAvailable && bIsJumpAttacking)
+	{
+		ResolvedDefenseRuleData.bCanBeParried = false;
+	}
+
 	EquippedWeapon->SetAttackHitReactType(HitReactType);
 	EquippedWeapon->SetAttackDamageData(DamageData);
 	EquippedWeapon->SetAttackDefenseKnockbackData(DefenseKnockbackData);
+	EquippedWeapon->SetAttackDefenseRuleData(ResolvedDefenseRuleData);
 	EquippedWeapon->ApplyAttackTraceOverride(TraceOverrideData);
 	EquippedWeapon->StartAttackTrace(NiagaraComponent);
 }
@@ -1282,8 +1298,7 @@ void AJunPlayer::OnDefenseStarted()
 		{
 			bDefenseButtonHeld = true;
 			bHoldRequestedForCurrentDeflect = true;
-			bParryWindowOpen = true;
-			ParryWindowRemainTime = DefaultParryWindowDuration;
+			OpenParryWindow(true);
 			return;
 		}
 
@@ -1380,6 +1395,8 @@ void AJunPlayer::OnDefenseReleased()
 		PlayerHitStateRemainTime = 0.f;
 		CurrentHitReactType = EHitReactType::None;
 		CurrentHitReactDirection = ECharacterHitReactDirection::Front_F;
+		CurrentHitReactMontage = nullptr;
+		bCurrentHitReactUsesAirMontage = false;
 
 		if (GetCharacterMovement())
 		{
@@ -1962,6 +1979,7 @@ void AJunPlayer::ReceiveHit(
 	AActor* DamageCauser,
 	const FVector& SwingDirection,
 	const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
+	const FJunAttackDefenseRuleData& DefenseRuleData,
 	bool bCanBuildAttackerPostureOnParry)
 {
 	if (Is_Dead() || bIsExecuting || IsInDeathSequence())
@@ -1972,7 +1990,15 @@ void AJunPlayer::ReceiveHit(
 	LastIncomingSwingDirection = SwingDirection;
 	LastIncomingKnockbackDirection = DetermineKnockbackDirectionFromDamageCauser(DamageCauser);
 	LastIncomingDefenseKnockbackData = DefenseKnockbackData;
+	LastIncomingDefenseRuleData = DefenseRuleData;
 	HitReactFacingTarget = DamageCauser;
+
+	if (DefenseRuleData.DangerAttackType == EJunDangerAttackType::JumpCounter &&
+		IsJumpCounterEvadeSuccessful())
+	{
+		bJumpCounterFollowUpDefenseBypassAvailable = true;
+		return;
+	}
 
 	const EJunPlayerHitResolveResult ResolveResult = ResolveIncomingHitResult(HitType, DamageCauser);
 	AJunCharacter* AttackerCharacter = Cast<AJunCharacter>(DamageCauser);
@@ -3058,6 +3084,45 @@ bool AJunPlayer::HasEnoughAirTimeForJumpAttack() const
 	return DistanceFromCapsuleBottomToGround >= JumpAttackMinGroundDistance;
 }
 
+float AJunPlayer::GetDistanceFromGround() const
+{
+	const UCapsuleComponent* Capsule = GetCapsuleComponent();
+	const UWorld* World = GetWorld();
+	if (!Capsule || !World)
+	{
+		return 0.f;
+	}
+
+	const float CapsuleHalfHeight = Capsule->GetScaledCapsuleHalfHeight();
+	const float TraceDistance = CapsuleHalfHeight + FMath::Max(JumpCounterEvadeMinGroundDistance + 200.f, JumpAttackMinGroundDistance + 20.f);
+	const FVector TraceStart = GetActorLocation();
+	const FVector TraceEnd = TraceStart - FVector(0.f, 0.f, TraceDistance);
+
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(JumpCounterGroundCheck), false, this);
+	FHitResult Hit;
+	const bool bHitGround = World->LineTraceSingleByChannel(
+		Hit,
+		TraceStart,
+		TraceEnd,
+		ECC_Visibility,
+		QueryParams);
+
+	if (!bHitGround)
+	{
+		return TraceDistance - CapsuleHalfHeight;
+	}
+
+	return FMath::Max(0.f, Hit.Distance - CapsuleHalfHeight);
+}
+
+bool AJunPlayer::IsJumpCounterEvadeSuccessful() const
+{
+	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	return MovementComponent &&
+		MovementComponent->IsFalling() &&
+		GetDistanceFromGround() >= JumpCounterEvadeMinGroundDistance;
+}
+
 void AJunPlayer::StartJumpAttack()
 {
 	if (!CanStartJumpAttack())
@@ -3163,6 +3228,7 @@ void AJunPlayer::FinishJumpAttack()
 
 	bIsJumpAttacking = false;
 	bJumpAttackEndRequested = false;
+	bJumpCounterFollowUpDefenseBypassAvailable = false;
 	JumpAttackState = EJunJumpAttackState::None;
 	JumpAttackSectionElapsedTime = 0.f;
 	CurrentJumpAttackPlayRate = 1.f;
@@ -5367,6 +5433,16 @@ void AJunPlayer::UpdateDefenseInput(float DeltaTime)
 		}
 	}
 
+	if (ParrySpamPenaltyResetRemainTime > 0.f)
+	{
+		ParrySpamPenaltyResetRemainTime = FMath::Max(0.f, ParrySpamPenaltyResetRemainTime - DeltaTime);
+
+		if (ParrySpamPenaltyResetRemainTime <= 0.f)
+		{
+			ParrySpamPenaltyStack = 0;
+		}
+	}
+
 	if (bParryWindowOpen)
 	{
 		ParryWindowRemainTime = FMath::Max(0.f, ParryWindowRemainTime - DeltaTime);
@@ -5381,23 +5457,24 @@ void AJunPlayer::UpdateDefenseInput(float DeltaTime)
 
 EJunPlayerHitResolveResult AJunPlayer::ResolveIncomingHitResult(EHitReactType IncomingHitType, const AActor* DamageCauser) const
 {
-	if (HasGameplayTag(JunGameplayTags::State_Action_Dodge))
+	if (LastIncomingDefenseRuleData.bCanBeDodgedByInvincibility &&
+		HasGameplayTag(JunGameplayTags::State_Condition_Invincible))
 	{
 		return EJunPlayerHitResolveResult::Ignored;
 	}
 
 	const bool bCanDefendFromIncomingAngle = IsDamageCauserInDefenseAngle(DamageCauser);
 
-	if (bParryWindowOpen && bCanDefendFromIncomingAngle)
+	if (LastIncomingDefenseRuleData.bCanBeParried && bParryWindowOpen && bCanDefendFromIncomingAngle)
 	{
 		const float PerfectParryRemainThreshold =
-			FMath::Max(0.f, DefaultParryWindowDuration - PerfectParryWindowDuration);
+			FMath::Max(0.f, CurrentParryWindowDuration - CurrentPerfectParryWindowDuration);
 		return ParryWindowRemainTime >= PerfectParryRemainThreshold
 			? EJunPlayerHitResolveResult::PerfectParrySuccess
 			: EJunPlayerHitResolveResult::NormalParrySuccess;
 	}
 
-	if (DefenseState == EJunDefenseState::Guarding && bCanDefendFromIncomingAngle)
+	if (LastIncomingDefenseRuleData.bCanBeGuarded && DefenseState == EJunDefenseState::Guarding && bCanDefendFromIncomingAngle)
 	{
 		return EJunPlayerHitResolveResult::GuardBlock;
 	}
@@ -5673,6 +5750,32 @@ UAnimMontage* AJunPlayer::GetHitReactMontage(EHitReactType HitType, ECharacterHi
 	}
 }
 
+EJunAirHitReactType AJunPlayer::ResolveAirHitReactType() const
+{
+	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent || !MovementComponent->IsFalling())
+	{
+		return EJunAirHitReactType::None;
+	}
+
+	const EJunAirHitReactType RequestedAirHitReactType = LastIncomingDefenseRuleData.AirHitReactType;
+	return GetAirHitReactMontage(RequestedAirHitReactType) ? RequestedAirHitReactType : EJunAirHitReactType::None;
+}
+
+UAnimMontage* AJunPlayer::GetAirHitReactMontage(EJunAirHitReactType AirHitReactType) const
+{
+	switch (AirHitReactType)
+	{
+	case EJunAirHitReactType::Light:
+		return AirHitFLightMontage;
+	case EJunAirHitReactType::Heavy:
+		return AirHitFHeavyMontage;
+	case EJunAirHitReactType::None:
+	default:
+		return nullptr;
+	}
+}
+
 UAnimMontage* AJunPlayer::GetParrySuccessMontage(const FVector& SwingDirection)
 {
 	if (!bHasSelectedInitialParrySuccessSide)
@@ -5728,8 +5831,11 @@ void AJunPlayer::UpdatePostureRecovery(float DeltaTime)
 	}
 
 	const bool bGuardRecoveryBoost = DefenseState == EJunDefenseState::Guarding;
-	const float GuardMultiplier = bGuardRecoveryBoost ? GuardPostureRecoveryMultiplier : 1.f;
-	const float RecoveryAmount = PostureRecoveryRate * GuardMultiplier * DeltaTime;
+	const bool bRunRecoveryPenalty = GetMoveState() == EJunMoveState::Run;
+	const float RecoveryMultiplier = bGuardRecoveryBoost
+		? GuardPostureRecoveryMultiplier
+		: (bRunRecoveryPenalty ? RunPostureRecoveryMultiplier : 1.f);
+	const float RecoveryAmount = PostureRecoveryRate * RecoveryMultiplier * DeltaTime;
 	CurrentPosture = FMath::Max(0.f, CurrentPosture - RecoveryAmount);
 }
 
@@ -5755,11 +5861,13 @@ bool AJunPlayer::CanRecoverPosture() const
 		return false;
 	}
 
-	return GetMoveState() != EJunMoveState::Run;
+	return true;
 }
 
 void AJunPlayer::StartParrySuccess()
 {
+	ResetParrySpamPenalty();
+
 	InterruptActionsForHitReaction();
 	PlayDefenseEffect(CachedParryParticleComponent, ParryParticleComponentName);
 
@@ -5843,6 +5951,8 @@ void AJunPlayer::StartGuardBreak()
 	CurrentParrySuccessMontage = nullptr;
 	CurrentHitReactType = EHitReactType::None;
 	CurrentHitReactDirection = ECharacterHitReactDirection::Front_F;
+	CurrentHitReactMontage = nullptr;
+	bCurrentHitReactUsesAirMontage = false;
 	DesiredMoveForward = 0.f;
 	DesiredMoveRight = 0.f;
 	PendingMoveForward = 0.f;
@@ -5879,9 +5989,14 @@ void AJunPlayer::StartHitReact(EHitReactType HitType, ECharacterHitReactDirectio
 {
 	InterruptActionsForHitReaction();
 
+	const EJunAirHitReactType AirHitReactType = ResolveAirHitReactType();
+	const bool bUseAirHitReact = AirHitReactType != EJunAirHitReactType::None;
+
 	CurrentHitState = EJunPlayerHitState::HitReact;
 	CurrentHitReactType = HitType;
 	CurrentHitReactDirection = HitDirection;
+	CurrentHitReactMontage = nullptr;
+	bCurrentHitReactUsesAirMontage = bUseAirHitReact;
 	DesiredMoveForward = 0.f;
 	DesiredMoveRight = 0.f;
 	PendingMoveForward = 0.f;
@@ -5891,15 +6006,29 @@ void AJunPlayer::StartHitReact(EHitReactType HitType, ECharacterHitReactDirectio
 
 	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
 	{
-		FVector NewVelocity = MovementComponent->Velocity;
-		NewVelocity.X = 0.f;
-		NewVelocity.Y = 0.f;
-		MovementComponent->Velocity = NewVelocity;
+		if (!bUseAirHitReact)
+		{
+			FVector NewVelocity = MovementComponent->Velocity;
+			NewVelocity.X = 0.f;
+			NewVelocity.Y = 0.f;
+			MovementComponent->Velocity = NewVelocity;
+		}
 	}
 	ConsumeMovementInputVector();
 
-	UAnimMontage* HitReactMontage = GetHitReactMontage(HitType, HitDirection);
-	if (HitType == EHitReactType::LightHit)
+	UAnimMontage* HitReactMontage = bUseAirHitReact ? GetAirHitReactMontage(AirHitReactType) : GetHitReactMontage(HitType, HitDirection);
+	CurrentHitReactMontage = HitReactMontage;
+	if (AirHitReactType == EJunAirHitReactType::Light)
+	{
+		PlayerHitStateRemainTime = HitReactMontage ? FMath::Min(HitReactMontage->GetPlayLength(), AirLightHitReactDuration) : AirLightHitReactDuration;
+		PlayerHitControlLockRemainTime = AirLightHitControlLockDuration;
+	}
+	else if (AirHitReactType == EJunAirHitReactType::Heavy)
+	{
+		PlayerHitStateRemainTime = HitReactMontage ? FMath::Min(HitReactMontage->GetPlayLength(), AirHeavyHitReactDuration) : AirHeavyHitReactDuration;
+		PlayerHitControlLockRemainTime = AirHeavyHitControlLockDuration;
+	}
+	else if (HitType == EHitReactType::LightHit)
 	{
 		PlayerHitStateRemainTime = LightHitReactDuration;
 		PlayerHitControlLockRemainTime = LightHitControlLockDuration;
@@ -5946,7 +6075,11 @@ void AJunPlayer::StartHitReact(EHitReactType HitType, ECharacterHitReactDirectio
 		PlayerHitControlLockRemainTime = FMath::Max(PlayerHitControlLockRemainTime, GuardBreakVulnerableRemainTime);
 	}
 
-	if (!DoesMontageUseRootMotion(HitReactMontage))
+	if (bUseAirHitReact)
+	{
+		ApplyAirHitKnockback(AirHitReactType);
+	}
+	else if (!DoesMontageUseRootMotion(HitReactMontage))
 	{
 		ApplyCommonKnockback(
 			LastIncomingKnockbackDirection,
@@ -5958,7 +6091,10 @@ void AJunPlayer::StartHitReact(EHitReactType HitType, ECharacterHitReactDirectio
 		);
 	}
 
-	AddGameplayTag(JunGameplayTags::State_Condition_HitReact);
+	if (!bUseAirHitReact)
+	{
+		AddGameplayTag(JunGameplayTags::State_Condition_HitReact);
+	}
 	AddGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
 
 	if (HitReactMontage)
@@ -5969,6 +6105,54 @@ void AJunPlayer::StartHitReact(EHitReactType HitType, ECharacterHitReactDirectio
 		}
 
 		PlayAnimMontage(HitReactMontage);
+	}
+}
+
+void AJunPlayer::ApplyAirHitKnockback(EJunAirHitReactType AirHitReactType)
+{
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	const float KnockbackStrength = AirHitReactType == EJunAirHitReactType::Heavy
+		? AirHeavyHitKnockbackStrength
+		: AirLightHitKnockbackStrength;
+	if (!MovementComponent || KnockbackStrength <= 0.f)
+	{
+		return;
+	}
+
+	FVector KnockbackDirection = FVector::ZeroVector;
+	if (HitReactFacingTarget)
+	{
+		KnockbackDirection = GetActorLocation() - HitReactFacingTarget->GetActorLocation();
+	}
+
+	KnockbackDirection.Z = 0.f;
+	KnockbackDirection = KnockbackDirection.GetSafeNormal();
+	if (KnockbackDirection.IsNearlyZero())
+	{
+		switch (LastIncomingKnockbackDirection)
+		{
+		case ECharacterKnockbackDirection::Forward:
+			KnockbackDirection = GetActorForwardVector();
+			break;
+		case ECharacterKnockbackDirection::Left:
+			KnockbackDirection = -GetActorRightVector();
+			break;
+		case ECharacterKnockbackDirection::Right:
+			KnockbackDirection = GetActorRightVector();
+			break;
+		case ECharacterKnockbackDirection::Backward:
+		default:
+			KnockbackDirection = -GetActorForwardVector();
+			break;
+		}
+
+		KnockbackDirection.Z = 0.f;
+		KnockbackDirection = KnockbackDirection.GetSafeNormal();
+	}
+
+	if (!KnockbackDirection.IsNearlyZero())
+	{
+		MovementComponent->AddImpulse(KnockbackDirection * KnockbackStrength, true);
 	}
 }
 
@@ -6198,7 +6382,7 @@ bool AJunPlayer::TryCancelHitReactIntoMove()
 
 	if (AnimInstance)
 	{
-		if (UAnimMontage* HitReactMontage = GetHitReactMontage(CurrentHitReactType, CurrentHitReactDirection))
+		if (UAnimMontage* HitReactMontage = CurrentHitReactMontage.Get())
 		{
 			AnimInstance->Montage_Stop(HitReactMoveCancelBlendOutTime, HitReactMontage);
 		}
@@ -6210,6 +6394,8 @@ bool AJunPlayer::TryCancelHitReactIntoMove()
 	ChainParryWindowRemainTime = 0.f;
 	CurrentHitReactType = EHitReactType::None;
 	CurrentHitReactDirection = ECharacterHitReactDirection::Front_F;
+	CurrentHitReactMontage = nullptr;
+	bCurrentHitReactUsesAirMontage = false;
 	HitReactFacingTarget = nullptr;
 	EndHitReactFacingWindow();
 
@@ -6227,6 +6413,48 @@ bool AJunPlayer::TryCancelHitReactIntoMove()
 	return true;
 }
 
+bool AJunPlayer::TryCancelHitReactIntoJump()
+{
+	if (CurrentHitState != EJunPlayerHitState::HitReact ||
+		HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
+	{
+		return false;
+	}
+
+	if (AnimInstance)
+	{
+		if (UAnimMontage* HitReactMontage = CurrentHitReactMontage.Get())
+		{
+			AnimInstance->Montage_Stop(HitReactMoveCancelBlendOutTime, HitReactMontage);
+		}
+	}
+
+	CurrentHitState = EJunPlayerHitState::None;
+	PlayerHitStateRemainTime = 0.f;
+	PlayerHitControlLockRemainTime = 0.f;
+	ChainParryWindowRemainTime = 0.f;
+	CurrentHitReactType = EHitReactType::None;
+	CurrentHitReactDirection = ECharacterHitReactDirection::Front_F;
+	CurrentHitReactMontage = nullptr;
+	bCurrentHitReactUsesAirMontage = false;
+	HitReactFacingTarget = nullptr;
+	EndHitReactFacingWindow();
+
+	if (GetCharacterMovement())
+	{
+		RestoreDefaultMovementBrakingSettings();
+	}
+
+	RemoveGameplayTag(JunGameplayTags::State_Condition_HitReact);
+	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Jump);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Attack);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Dodge);
+
+	return true;
+}
+
 void AJunPlayer::FinishPlayerHitState()
 {
 	CurrentHitState = EJunPlayerHitState::None;
@@ -6236,6 +6464,8 @@ void AJunPlayer::FinishPlayerHitState()
 	ParrySuccessElapsedTime = 0.f;
 	CurrentHitReactType = EHitReactType::None;
 	CurrentHitReactDirection = ECharacterHitReactDirection::Front_F;
+	CurrentHitReactMontage = nullptr;
+	bCurrentHitReactUsesAirMontage = false;
 	HitReactFacingTarget = nullptr;
 	EndHitReactFacingWindow();
 	BufferedParrySuccessCancelAction = EJunBufferedParrySuccessCancelAction::None;
@@ -6259,6 +6489,76 @@ void AJunPlayer::FinishPlayerHitState()
 	}
 }
 
+void AJunPlayer::OpenParryWindow(bool bCountAsParryAttempt)
+{
+	if (bCountAsParryAttempt)
+	{
+		if (ParrySpamPenaltyResetRemainTime <= 0.f)
+		{
+			ParrySpamPenaltyStack = 0;
+		}
+		else
+		{
+			++ParrySpamPenaltyStack;
+		}
+
+		ParrySpamPenaltyResetRemainTime = ParrySpamPenaltyResetDuration;
+	}
+
+	const float PenaltyScale = FMath::Clamp(
+		1.f - static_cast<float>(ParrySpamPenaltyStack) * ParrySpamPenaltyPerStack,
+		0.f,
+		1.f);
+
+	CurrentParryWindowDuration = FMath::Max(MinParryWindowDuration, DefaultParryWindowDuration * PenaltyScale);
+	CurrentPerfectParryWindowDuration = FMath::Min(
+		CurrentParryWindowDuration,
+		FMath::Max(MinPerfectParryWindowDuration, PerfectParryWindowDuration * PenaltyScale));
+
+	bParryWindowOpen = CurrentParryWindowDuration > KINDA_SMALL_NUMBER;
+	ParryWindowRemainTime = CurrentParryWindowDuration;
+}
+
+void AJunPlayer::ResetParrySpamPenalty()
+{
+	ParrySpamPenaltyStack = 0;
+	ParrySpamPenaltyResetRemainTime = 0.f;
+}
+
+void AJunPlayer::DrawDefenseTimingDebug() const
+{
+	if (!bShowDefenseTimingDebug || !GEngine)
+	{
+		return;
+	}
+
+	const float ParryRemainFrames = ParryWindowRemainTime * 60.f;
+	const float ParryWindowFrames = CurrentParryWindowDuration * 60.f;
+	const float PerfectWindowFrames = CurrentPerfectParryWindowDuration * 60.f;
+	const float DodgeTimelineRate = GetCurrentDodgeTimelineRate();
+	const float DodgeInvincibleRealTime = DodgeInvincibleRemainTime / FMath::Max(DodgeTimelineRate, KINDA_SMALL_NUMBER);
+	const float DodgeInvincibleFrames = DodgeInvincibleRealTime * 60.f;
+	const bool bDodgeInvincibleActive = HasGameplayTag(JunGameplayTags::State_Condition_Invincible);
+
+	const FString DebugText = FString::Printf(
+		TEXT("Defense Timing Debug\n")
+		TEXT("Parry: %s | Remain %.3fs (%.1ff) | Window %.1ff | Perfect %.1ff | SpamStack %d\n")
+		TEXT("Dodge IFrame: %s | Remain %.3fs (%.1ff) | PlayRate %.2f"),
+		bParryWindowOpen ? TEXT("OPEN") : TEXT("CLOSED"),
+		ParryWindowRemainTime,
+		ParryRemainFrames,
+		ParryWindowFrames,
+		PerfectWindowFrames,
+		ParrySpamPenaltyStack,
+		bDodgeInvincibleActive ? TEXT("ON") : TEXT("OFF"),
+		DodgeInvincibleRealTime,
+		DodgeInvincibleFrames,
+		CurrentDodgePlayRate);
+
+	const FColor DebugColor = (bParryWindowOpen || bDodgeInvincibleActive) ? FColor::Green : FColor::White;
+	GEngine->AddOnScreenDebugMessage(61001, 0.f, DebugColor, DebugText);
+}
+
 void AJunPlayer::StartDefenseSequence()
 {
 	// Every tap/press starts a fresh deflect attempt from frame 0 of GuardStart.
@@ -6267,8 +6567,7 @@ void AJunPlayer::StartDefenseSequence()
 		DefenseState == EJunDefenseState::Ending;
 
 	CurrentDefensePlayRate = FMath::Max(GuardStartPlayRate, KINDA_SMALL_NUMBER);
-	bParryWindowOpen = true;
-	ParryWindowRemainTime = DefaultParryWindowDuration;
+	OpenParryWindow(true);
 	BufferedDefenseTransitionCancelAction = EJunBufferedDefenseCancelAction::None;
 	bHoldRequestedForCurrentDeflect = bDefenseButtonHeld;
 	bDeflectResolveReceived = false;

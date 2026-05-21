@@ -342,14 +342,15 @@ void AJunMonster::ReceiveHit(
 	float DamageAmount,
 	AActor* DamageCauser,
 	const FVector& SwingDirection,
-	const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
+	const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
+	const FJunAttackDefenseRuleData& DefenseRuleData)
 {
 	if (CurrentState == EMonsterState::Dead || bBeingExecuted)
 	{
 		return;
 	}
 
-	if (TryHandleIncomingHitBeforeDamage(HitType, DamageAmount, DamageCauser, SwingDirection, DefenseKnockbackData))
+	if (TryHandleIncomingHitBeforeDamage(HitType, DamageAmount, DamageCauser, SwingDirection, DefenseKnockbackData, DefenseRuleData))
 	{
 		return;
 	}
@@ -414,7 +415,8 @@ bool AJunMonster::TryHandleIncomingHitBeforeDamage(
 	float DamageAmount,
 	AActor* DamageCauser,
 	const FVector& SwingDirection,
-	const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
+	const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
+	const FJunAttackDefenseRuleData& DefenseRuleData)
 {
 	return false;
 }
@@ -805,7 +807,7 @@ void AJunMonster::StopCombatBGM()
 	}
 }
 
-void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData, EJunWeaponNiagaraComponent NiagaraComponent, const FJunAttackTraceOverrideData& TraceOverrideData)
+void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData, const FJunAttackDefenseRuleData& DefenseRuleData, EJunWeaponNiagaraComponent NiagaraComponent, const FJunAttackTraceOverrideData& TraceOverrideData)
 {
 	if (!EquippedWeapon)
 	{
@@ -815,6 +817,7 @@ void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunA
 	EquippedWeapon->SetAttackHitReactType(HitReactType);
 	EquippedWeapon->SetAttackDamageData(DamageData);
 	EquippedWeapon->SetAttackDefenseKnockbackData(DefenseKnockbackData);
+	EquippedWeapon->SetAttackDefenseRuleData(DefenseRuleData);
 	EquippedWeapon->ApplyAttackTraceOverride(TraceOverrideData);
 	EquippedWeapon->StartAttackTrace(NiagaraComponent);
 }
@@ -929,6 +932,7 @@ void AJunMonster::EnterPlayerDeathWait()
 	StopAllAttackTraces();
 	CancelCombatTurn();
 	ResetCombatTurnState();
+	ResetCurrentAttackRuntimeState();
 	EndHitReact();
 	bIsAttacking = false;
 	bRunLocomotionRequested = false;
@@ -2488,6 +2492,7 @@ void AJunMonster::FireAttachedArrow(
 	EHitReactType HitReactType,
 	const FJunAttackDamageData& DamageData,
 	const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
+	const FJunAttackDefenseRuleData& DefenseRuleData,
 	float Speed,
 	float LifeSeconds,
 	float HomingDuration,
@@ -2508,7 +2513,7 @@ void AJunMonster::FireAttachedArrow(
 	AimPoint.Z += 50.f;
 	const FVector FireDirection = (AimPoint - AttachedArrow->GetActorLocation()).GetSafeNormal();
 
-	AttachedArrow->InitializeArrow(this, HitReactType, DamageData, DefenseKnockbackData);
+	AttachedArrow->InitializeArrow(this, HitReactType, DamageData, DefenseKnockbackData, DefenseRuleData);
 	AttachedArrow->Fire(FireDirection, Speed, LifeSeconds, CurrentTarget.Get(), HomingDuration, HomingInterpSpeed, HomingTargetHeightOffset);
 	AttachedArrow = nullptr;
 }

@@ -47,12 +47,14 @@ void AArrowProjectile::InitializeArrow(
 	AJunCharacter* InOwnerCharacter,
 	EHitReactType InHitReactType,
 	const FJunAttackDamageData& InDamageData,
-	const FJunAttackDefenseKnockbackData& InDefenseKnockbackData)
+	const FJunAttackDefenseKnockbackData& InDefenseKnockbackData,
+	const FJunAttackDefenseRuleData& InDefenseRuleData)
 {
 	OwnerCharacter = InOwnerCharacter;
 	HitReactType = InHitReactType;
 	DamageData = InDamageData;
 	DefenseKnockbackData = InDefenseKnockbackData;
+	DefenseRuleData = InDefenseRuleData;
 	bHasHit = false;
 	CurrentHomingTarget = nullptr;
 	HomingRemainTime = 0.f;
@@ -146,6 +148,8 @@ void AArrowProjectile::OnArrowOverlap(
 
 	bHasHit = true;
 	const FVector SwingDirection = GetVelocity().GetSafeNormal();
-	HitPlayer->ReceiveHit(HitReactType, DamageData.GetFinalDamage(), OwnerCharacter.Get(), SwingDirection, DefenseKnockbackData, false);
+	FJunAttackDefenseRuleData ResolvedDefenseRuleData = DefenseRuleData;
+	ResolvedDefenseRuleData.bCanBeDodgedByInvincibility = false;
+	HitPlayer->ReceiveHit(HitReactType, DamageData.GetFinalDamage(), OwnerCharacter.Get(), SwingDirection, DefenseKnockbackData, ResolvedDefenseRuleData, false);
 	Destroy();
 }

@@ -110,7 +110,8 @@ public:
 		float DamageAmount,
 		AActor* DamageCauser,
 		const FVector& SwingDirection,
-		const FJunAttackDefenseKnockbackData& DefenseKnockbackData);
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
+		const FJunAttackDefenseRuleData& DefenseRuleData = FJunAttackDefenseRuleData());
 	virtual void OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker) override;
 	virtual void NotifyAttackParriedBy(class AJunPlayer* Parrier, float PostureScale = 1.f);
 	bool IsExecutionReady() const;
@@ -150,6 +151,7 @@ public:
 		EHitReactType HitReactType = EHitReactType::LightHit,
 		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData(),
+		const FJunAttackDefenseRuleData& DefenseRuleData = FJunAttackDefenseRuleData(),
 		EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail,
 		const FJunAttackTraceOverrideData& TraceOverrideData = FJunAttackTraceOverrideData()) override;
 	virtual void EndAttackTraceWindow(EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail) override;
@@ -174,9 +176,9 @@ protected:
 	// Top-level state machine.
 	// Enter*() configures the state once, Update*() advances it every Tick.
 	void SetMonsterState(EMonsterState NewState);
-	void EnterPlayerDeathWait();
-	void ResumeAfterPlayerFakeDeath();
-	void ResetAfterPlayerRealDeath();
+	virtual void EnterPlayerDeathWait();
+	virtual void ResumeAfterPlayerFakeDeath();
+	virtual void ResetAfterPlayerRealDeath();
 	void EnterCutsceneWaitState();
 	void EnterIdleState();
 	void EnterPatrolState();
@@ -253,6 +255,7 @@ public:
 		EHitReactType HitReactType,
 		const FJunAttackDamageData& DamageData,
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
+		const FJunAttackDefenseRuleData& DefenseRuleData,
 		float Speed,
 		float LifeSeconds,
 		float HomingDuration,
@@ -277,7 +280,8 @@ protected:
 		float DamageAmount,
 		AActor* DamageCauser,
 		const FVector& SwingDirection,
-		const FJunAttackDefenseKnockbackData& DefenseKnockbackData);
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
+		const FJunAttackDefenseRuleData& DefenseRuleData);
 	virtual float GetHitReactDuration(EHitReactType HitType) const;
 	virtual float GetHitReactControlLockDuration(EHitReactType HitType) const;
 	ECharacterHitReactDirection DetermineHitReactDirection(const AActor* DamageCauser, const FVector& SwingDirection) const;

@@ -19,11 +19,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace")
 	EHitReactType HitReactType = EHitReactType::LightHit;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace|HitReact")
+	EJunAirHitReactType AirHitReactType = EJunAirHitReactType::Light;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace")
 	FJunAttackDamageData DamageData;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace")
 	FJunAttackDefenseKnockbackData DefenseKnockbackData;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace|Defense")
+	FJunAttackDefenseRuleData DefenseRuleData;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AttackTrace|VFX")
 	EJunWeaponNiagaraComponent AttackTraceNiagaraComponent = EJunWeaponNiagaraComponent::Trail;

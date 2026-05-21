@@ -57,6 +57,9 @@ public:
 	void SetAttackDefenseKnockbackData(const FJunAttackDefenseKnockbackData& NewDefenseKnockbackData);
 
 	UFUNCTION(BlueprintCallable)
+	void SetAttackDefenseRuleData(const FJunAttackDefenseRuleData& NewDefenseRuleData);
+
+	UFUNCTION(BlueprintCallable)
 	void ActivateWeaponNiagara(EJunWeaponNiagaraComponent ComponentType);
 
 	UFUNCTION(BlueprintCallable)
@@ -157,6 +160,8 @@ protected:
 	FJunAttackDamageData AttackDamageData;
 
 	FJunAttackDefenseKnockbackData AttackDefenseKnockbackData;
+
+	FJunAttackDefenseRuleData AttackDefenseRuleData;
 
 	FVector PrevTraceStart = FVector::ZeroVector;
 	FVector PrevTraceEnd = FVector::ZeroVector;

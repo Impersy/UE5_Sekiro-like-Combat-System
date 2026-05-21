@@ -35,6 +35,14 @@ enum class EHitReactType : uint8
 };
 
 UENUM(BlueprintType)
+enum class EJunAirHitReactType : uint8
+{
+	None,
+	Light,
+	Heavy
+};
+
+UENUM(BlueprintType)
 enum class ECharacterHitReactDirection : uint8
 {
 	Back_B,
@@ -61,6 +69,14 @@ enum class EJunDefenseSoundType : uint8
 	PerfectParry,
 	NormalParry,
 	GuardHit
+};
+
+UENUM(BlueprintType)
+enum class EJunDangerAttackType : uint8
+{
+	None,
+	JumpCounter,
+	MikiriCounter
 };
 
 USTRUCT(BlueprintType)
@@ -133,6 +149,27 @@ struct FJunAttackDefenseKnockbackData
 };
 
 USTRUCT(BlueprintType)
+struct FJunAttackDefenseRuleData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defense")
+	bool bCanBeParried = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defense")
+	bool bCanBeGuarded = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defense")
+	bool bCanBeDodgedByInvincibility = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Danger")
+	EJunDangerAttackType DangerAttackType = EJunDangerAttackType::None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Air Hit")
+	EJunAirHitReactType AirHitReactType = EJunAirHitReactType::Light;
+};
+
+USTRUCT(BlueprintType)
 struct FJunAttackDamageData
 {
 	GENERATED_BODY()
@@ -190,6 +227,7 @@ public:
 		EHitReactType HitReactType = EHitReactType::LightHit,
 		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData(),
+		const FJunAttackDefenseRuleData& DefenseRuleData = FJunAttackDefenseRuleData(),
 		EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail,
 		const FJunAttackTraceOverrideData& TraceOverrideData = FJunAttackTraceOverrideData());
 

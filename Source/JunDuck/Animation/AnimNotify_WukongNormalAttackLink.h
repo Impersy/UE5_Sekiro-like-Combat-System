@@ -23,6 +23,9 @@ struct FWukongNormalAttackLinkCandidate
 	bool bRequireRange = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|AttackLink")
+	bool bMoveToRangeWhenOutOfRange = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|AttackLink")
 	bool bUseTestFilter = true;
 };
 
@@ -62,7 +65,22 @@ protected:
 	bool bRequireRange = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|AttackLink")
+	bool bMoveToRangeWhenOutOfRange = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|AttackLink")
+	bool bDelayMoveToRangeWhenOutOfRange = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|AttackLink")
+	bool bForceAttackLinkWhenTriggerChanceFails = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|AttackLink")
 	bool bUseTestFilter = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|AttackLink")
+	bool bExcludeCurrentAttack = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|AttackLink")
+	bool bAvoidRecentlyUsedAttack = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|AttackLink")
 	bool bDebugLog = false;

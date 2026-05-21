@@ -14,6 +14,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arrow")
 	EHitReactType HitReactType = EHitReactType::LightHit;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arrow|HitReact")
+	EJunAirHitReactType AirHitReactType = EJunAirHitReactType::Light;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arrow")
 	FJunAttackDamageData DamageData;
 

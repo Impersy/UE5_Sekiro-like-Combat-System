@@ -21,7 +21,8 @@ public:
 		AJunCharacter* InOwnerCharacter,
 		EHitReactType InHitReactType,
 		const FJunAttackDamageData& InDamageData,
-		const FJunAttackDefenseKnockbackData& InDefenseKnockbackData);
+		const FJunAttackDefenseKnockbackData& InDefenseKnockbackData,
+		const FJunAttackDefenseRuleData& InDefenseRuleData);
 
 	void Fire(
 		const FVector& Direction,
@@ -64,6 +65,7 @@ protected:
 	EHitReactType HitReactType = EHitReactType::LightHit;
 	FJunAttackDamageData DamageData;
 	FJunAttackDefenseKnockbackData DefenseKnockbackData;
+	FJunAttackDefenseRuleData DefenseRuleData;
 	TWeakObjectPtr<AActor> CurrentHomingTarget;
 	float CurrentSpeed = 0.f;
 	float HomingRemainTime = 0.f;

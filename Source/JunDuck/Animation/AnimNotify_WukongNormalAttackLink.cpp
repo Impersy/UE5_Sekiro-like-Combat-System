@@ -17,6 +17,27 @@ void UAnimNotify_WukongNormalAttackLink::Notify(
 	if (AWukongBoss* Wukong = MeshComp ? Cast<AWukongBoss>(MeshComp->GetOwner()) : nullptr)
 	{
 		TArray<FWukongNormalAttackLinkCandidate> AttackCandidates;
+		const EWukongNormalAttackType CurrentAttackType = Wukong->GetCurrentNormalAttackType();
+		auto AddAttackCandidate = [&AttackCandidates, Wukong, CurrentAttackType, this](const FWukongNormalAttackLinkCandidate& Candidate)
+		{
+			if (Candidate.AttackType == EWukongNormalAttackType::None)
+			{
+				return;
+			}
+
+			if (bExcludeCurrentAttack && Candidate.AttackType == CurrentAttackType)
+			{
+				return;
+			}
+
+			if (bAvoidRecentlyUsedAttack && Wukong->WasNormalAttackRecentlyUsed(Candidate.AttackType, 1))
+			{
+				return;
+			}
+
+			AttackCandidates.Add(Candidate);
+		};
+
 		if (NextAttackType != EWukongNormalAttackType::None)
 		{
 			FWukongNormalAttackLinkCandidate DefaultCandidate;
@@ -24,8 +45,9 @@ void UAnimNotify_WukongNormalAttackLink::Notify(
 			DefaultCandidate.BlendOutTime = BlendOutTime;
 			DefaultCandidate.BlendInTime = BlendInTime;
 			DefaultCandidate.bRequireRange = bRequireRange;
+			DefaultCandidate.bMoveToRangeWhenOutOfRange = bMoveToRangeWhenOutOfRange;
 			DefaultCandidate.bUseTestFilter = bUseTestFilter;
-			AttackCandidates.Add(DefaultCandidate);
+			AddAttackCandidate(DefaultCandidate);
 		}
 
 		for (const EWukongNormalAttackType Candidate : AdditionalAttackCandidates)
@@ -37,44 +59,59 @@ void UAnimNotify_WukongNormalAttackLink::Notify(
 				LegacyCandidate.BlendOutTime = BlendOutTime;
 				LegacyCandidate.BlendInTime = BlendInTime;
 				LegacyCandidate.bRequireRange = bRequireRange;
+				LegacyCandidate.bMoveToRangeWhenOutOfRange = bMoveToRangeWhenOutOfRange;
 				LegacyCandidate.bUseTestFilter = bUseTestFilter;
-				AttackCandidates.Add(LegacyCandidate);
+				AddAttackCandidate(LegacyCandidate);
 			}
 		}
 
 		for (const FWukongNormalAttackLinkCandidate& Candidate : AdditionalAttackCandidateSettings)
 		{
-			if (Candidate.AttackType != EWukongNormalAttackType::None)
-			{
-				AttackCandidates.Add(Candidate);
-			}
+			AddAttackCandidate(Candidate);
 		}
 
 		bool bStarted = false;
+		bool bTriggerPassed = false;
 		EWukongNormalAttackType SelectedAttackType = EWukongNormalAttackType::None;
 		const float ClampedTriggerChance = FMath::Clamp(TriggerChance, 0.f, 1.f);
-		if (AttackCandidates.Num() > 0 && ClampedTriggerChance > 0.f && FMath::FRand() <= ClampedTriggerChance)
+		if (AttackCandidates.Num() > 0 && ClampedTriggerChance > 0.f)
 		{
-			const FWukongNormalAttackLinkCandidate& SelectedCandidate =
-				AttackCandidates[FMath::RandRange(0, AttackCandidates.Num() - 1)];
-			SelectedAttackType = SelectedCandidate.AttackType;
-			bStarted = Wukong->TryStartNormalAttackLinkFromNotify(
-				SelectedAttackType,
-				1.f,
-				SelectedCandidate.BlendOutTime,
-				SelectedCandidate.BlendInTime,
-				SelectedCandidate.bRequireRange,
-				SelectedCandidate.bUseTestFilter
-			);
+			bTriggerPassed = FMath::FRand() <= ClampedTriggerChance;
+			if (bTriggerPassed)
+			{
+				const FWukongNormalAttackLinkCandidate& SelectedCandidate =
+					AttackCandidates[FMath::RandRange(0, AttackCandidates.Num() - 1)];
+				SelectedAttackType = SelectedCandidate.AttackType;
+				bStarted = Wukong->TryStartNormalAttackLinkFromNotify(
+					SelectedAttackType,
+					1.f,
+					SelectedCandidate.BlendOutTime,
+					SelectedCandidate.BlendInTime,
+					SelectedCandidate.bRequireRange,
+					SelectedCandidate.bMoveToRangeWhenOutOfRange,
+					bDelayMoveToRangeWhenOutOfRange,
+					SelectedCandidate.bUseTestFilter
+				);
+			}
+			else if (bForceAttackLinkWhenTriggerChanceFails)
+			{
+				bStarted = Wukong->TryForceNormalAttackLinkWhenTriggerChanceFails(BlendOutTime, BlendInTime);
+			}
 		}
 
 		if (bDebugLog)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[WukongAttackLink] Started=%s SelectedAttack=%d Chance=%.2f Candidates=%d"),
+			UE_LOG(LogTemp, Warning, TEXT("[WukongAttackLink] Started=%s TriggerPassed=%s CurrentAttack=%d SelectedAttack=%d Chance=%.2f Candidates=%d DelayMove=%s ForceOnFail=%s ExcludeCurrent=%s AvoidRecent=%s"),
 				bStarted ? TEXT("true") : TEXT("false"),
+				bTriggerPassed ? TEXT("true") : TEXT("false"),
+				static_cast<int32>(CurrentAttackType),
 				static_cast<int32>(SelectedAttackType),
 				ClampedTriggerChance,
-				AttackCandidates.Num());
+				AttackCandidates.Num(),
+				bDelayMoveToRangeWhenOutOfRange ? TEXT("true") : TEXT("false"),
+				bForceAttackLinkWhenTriggerChanceFails ? TEXT("true") : TEXT("false"),
+				bExcludeCurrentAttack ? TEXT("true") : TEXT("false"),
+				bAvoidRecentlyUsedAttack ? TEXT("true") : TEXT("false"));
 		}
 	}
 }

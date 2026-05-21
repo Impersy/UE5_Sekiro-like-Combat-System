@@ -21,10 +21,14 @@ void UAnimNotify_FireMonsterArrow::Notify(
 
 	if (AJunMonster* Monster = Cast<AJunMonster>(MeshComp->GetOwner()))
 	{
+		FJunAttackDefenseRuleData DefenseRuleData;
+		DefenseRuleData.AirHitReactType = AirHitReactType;
+
 		Monster->FireAttachedArrow(
 			HitReactType,
 			DamageData,
 			DefenseKnockbackData,
+			DefenseRuleData,
 			Speed,
 			LifeSeconds,
 			HomingDuration,

@@ -342,6 +342,10 @@ AWukongBoss::AWukongBoss()
 void AWukongBoss::EnterCombatState()
 {
 	Super::EnterCombatState();
+	ResetPlannedCombatPlan();
+	ResetCurrentAttackRuntimeState();
+	RecentActionHistory.Reset();
+	LastStartedNormalAttackType = EWukongNormalAttackType::None;
 	ResetReactiveActionState();
 	ResetActiveReactiveActionState();
 	ResetReactiveEvadePressure();
@@ -351,6 +355,38 @@ void AWukongBoss::EnterCombatState()
 	bPostBowCloseRangeApproachInProgress = false;
 	CloseRangeBackDashCooldownRemainTime = 0.f;
 	SetWukongCombatState(EWukongCombatState::Approach);
+}
+
+void AWukongBoss::EnterPlayerDeathWait()
+{
+	Super::EnterPlayerDeathWait();
+	ResetPlannedCombatPlan();
+	ResetReactiveActionState();
+	ResetActiveReactiveActionState();
+	ResetPendingAttackMotionState();
+	CurrentCombatSubState = EWukongCombatState::Idle;
+	CombatSubStateElapsedTime = 0.f;
+}
+
+void AWukongBoss::ResumeAfterPlayerFakeDeath()
+{
+	Super::ResumeAfterPlayerFakeDeath();
+	ResetPlannedCombatPlan();
+	ResetReactiveActionState();
+	ResetActiveReactiveActionState();
+	SetWukongCombatState(EWukongCombatState::Idle);
+}
+
+void AWukongBoss::ResetAfterPlayerRealDeath()
+{
+	Super::ResetAfterPlayerRealDeath();
+	ResetPlannedCombatPlan();
+	ResetReactiveActionState();
+	ResetActiveReactiveActionState();
+	RecentActionHistory.Reset();
+	LastStartedNormalAttackType = EWukongNormalAttackType::None;
+	CurrentCombatSubState = EWukongCombatState::Idle;
+	CombatSubStateElapsedTime = 0.f;
 }
 
 void AWukongBoss::HandleGameplayEventNotify(FGameplayTag EventTag)
@@ -421,6 +457,7 @@ void AWukongBoss::UpdateCombat(float DeltaTime)
 	}
 
 	CombatSubStateElapsedTime += DeltaTime;
+	UpdatePlannedCombatPlanAge(DeltaTime);
 
 	switch (CurrentCombatSubState)
 	{
@@ -621,11 +658,13 @@ void AWukongBoss::EnterAttackState()
 	{
 		CurrentAttackActionType = EWukongActionType::NormalAttack;
 		CurrentAttackNormalAttackType = PlannedNormalAttackType;
+		LastStartedNormalAttackType = CurrentAttackNormalAttackType;
 		InitiativeState = EWukongInitiativeState::BossPattern;
 		if (IsBowNormalAttackType(CurrentAttackNormalAttackType))
 		{
 			BeginBowAttackPresentation();
 			bPostBowCloseRangeApproachInProgress = bForceApproachAfterBowAttack;
+			PostBowCloseRangeForceElapsedTime = 0.f;
 		}
 		else
 		{
@@ -879,7 +918,7 @@ void AWukongBoss::UpdateApproachState(float DeltaTime)
 	if (bNoAttackCandidateApproachInProgress)
 	{
 		const bool bPostBowStillNeedsApproach =
-			bPostBowCloseRangeApproachInProgress && !HasAnyNonBowAttackCandidateForCurrentDistance();
+			ShouldForceCloseAfterBowAttack() && !HasAnyNonBowAttackCandidateForCurrentDistance();
 		const bool bFartherThanAllCandidates = IsFartherThanAllAttackCandidates();
 
 		if (HasAnyAttackCandidateForCurrentDistance() && !bPostBowStillNeedsApproach && !bFartherThanAllCandidates)
@@ -1290,15 +1329,13 @@ bool AWukongBoss::HasAnyAttackCandidateForCurrentDistance() const
 		return TargetDistance >= MinRange && TargetDistance <= MaxRange;
 	};
 
-	const bool bCanUseCombo = HasAnyComboMontage();
-	const float MaxComboCandidateRange = GetMaxEnabledComboCandidateRange();
-	if (bCanUseCombo && IsWithinRange(0.f, MaxComboCandidateRange))
-	{
-		return true;
-	}
-
 	for (const EWukongNormalAttackType NormalAttackType : AllWukongNormalAttackTypes)
 	{
+		if (IsBowNormalAttackType(NormalAttackType) && ShouldSuppressBowAttackCandidate())
+		{
+			continue;
+		}
+
 		if (!IsNormalAttackEnabledByTestFilter(NormalAttackType))
 		{
 			continue;
@@ -1517,9 +1554,14 @@ float AWukongBoss::GetMaxEnabledComboCandidateRange() const
 
 float AWukongBoss::GetMaxEnabledAttackCandidateRange() const
 {
-	float MaxCandidateRange = GetMaxEnabledComboCandidateRange();
+	float MaxCandidateRange = 0.f;
 	for (const EWukongNormalAttackType NormalAttackType : AllWukongNormalAttackTypes)
 	{
+		if (IsBowNormalAttackType(NormalAttackType) && ShouldSuppressBowAttackCandidate())
+		{
+			continue;
+		}
+
 		if (!IsNormalAttackEnabledByTestFilter(NormalAttackType))
 		{
 			continue;
@@ -1558,11 +1600,6 @@ bool AWukongBoss::HasAnyNonBowAttackCandidateForCurrentDistance() const
 	{
 		return TargetDistance >= MinRange && TargetDistance <= MaxRange;
 	};
-
-	if (HasAnyComboMontage() && IsWithinRange(0.f, GetMaxEnabledComboCandidateRange()))
-	{
-		return true;
-	}
 
 	for (const EWukongNormalAttackType NormalAttackType : AllWukongNormalAttackTypes)
 	{
@@ -1604,6 +1641,63 @@ bool AWukongBoss::IsOppositeStrafeDirection(EWukongMovementDirection A, EWukongM
 		(A == EWukongMovementDirection::Right && B == EWukongMovementDirection::Left);
 }
 
+void AWukongBoss::UpdatePlannedCombatPlanAge(float DeltaTime)
+{
+	if (bPostBowCloseRangeApproachInProgress)
+	{
+		PostBowCloseRangeForceElapsedTime += DeltaTime;
+		if (PostBowCloseRangeForceMaxTime > 0.f &&
+			PostBowCloseRangeForceElapsedTime >= PostBowCloseRangeForceMaxTime)
+		{
+			bPostBowCloseRangeApproachInProgress = false;
+			PostBowCloseRangeForceElapsedTime = 0.f;
+			if (bNoAttackCandidateApproachInProgress)
+			{
+				ClearNoAttackCandidateApproach();
+			}
+			ResetPlannedCombatPlan();
+		}
+	}
+	else
+	{
+		PostBowCloseRangeForceElapsedTime = 0.f;
+	}
+
+	if (PlannedActionType == EWukongPlannedActionType::Attack &&
+		CurrentCombatSubState != EWukongCombatState::Attack)
+	{
+		PlannedAttackWaitTime += DeltaTime;
+		if (IsPlannedAttackExpired())
+		{
+			ResetPlannedCombatPlan();
+		}
+	}
+	else if (CurrentCombatSubState == EWukongCombatState::Attack ||
+		PlannedActionType != EWukongPlannedActionType::Attack)
+	{
+		PlannedAttackWaitTime = 0.f;
+	}
+}
+
+bool AWukongBoss::IsPlannedAttackExpired() const
+{
+	return PlannedAttackMaxWaitTime > 0.f &&
+		PlannedAttackWaitTime >= PlannedAttackMaxWaitTime;
+}
+
+bool AWukongBoss::ShouldForceCloseAfterBowAttack() const
+{
+	return bForceApproachAfterBowAttack &&
+		bPostBowCloseRangeApproachInProgress &&
+		(PostBowCloseRangeForceMaxTime <= 0.f ||
+			PostBowCloseRangeForceElapsedTime < PostBowCloseRangeForceMaxTime);
+}
+
+bool AWukongBoss::ShouldSuppressBowAttackCandidate() const
+{
+	return ShouldForceCloseAfterBowAttack();
+}
+
 void AWukongBoss::CollectNormalAttackCandidates(float TargetDistance, bool bIgnoreRepeat, TArray<EWukongNormalAttackType>& OutCandidates) const
 {
 	auto IsWithinRange = [TargetDistance](float MinRange, float MaxRange)
@@ -1614,7 +1708,7 @@ void AWukongBoss::CollectNormalAttackCandidates(float TargetDistance, bool bIgno
 	for (const EWukongNormalAttackType NormalAttackType : AllWukongNormalAttackTypes)
 	{
 		const bool bIsBowAttack = IsBowNormalAttackType(NormalAttackType);
-		if (bIsBowAttack && (bPostBowCloseRangeApproachInProgress || WasRecentlyUsedBowNormalAttack(1)))
+		if (bIsBowAttack && ShouldSuppressBowAttackCandidate())
 		{
 			continue;
 		}
@@ -1636,6 +1730,11 @@ void AWukongBoss::CollectNormalAttackCandidates(float TargetDistance, bool bIgno
 		}
 
 		if (!bIgnoreRepeat && WasRecentlyUsed(NormalAttackType, 1))
+		{
+			continue;
+		}
+
+		if (!bIgnoreRepeat && NormalAttackType == LastStartedNormalAttackType)
 		{
 			continue;
 		}
@@ -1882,6 +1981,8 @@ bool AWukongBoss::TryStartNormalAttackLinkFromNotify(
 	float BlendOutTime,
 	float BlendInTime,
 	bool bRequireRange,
+	bool bMoveToRangeWhenOutOfRange,
+	bool bDelayMoveToRangeWhenOutOfRange,
 	bool bUseTestFilter)
 {
 	if (TriggerChance <= 0.f || FMath::FRand() > FMath::Clamp(TriggerChance, 0.f, 1.f))
@@ -1935,8 +2036,65 @@ bool AWukongBoss::TryStartNormalAttackLinkFromNotify(
 	if (bRequireRange &&
 		(TargetDistance < NextAttackData->MinRange || TargetDistance > NextAttackData->MaxRange))
 	{
+		if (bMoveToRangeWhenOutOfRange)
+		{
+			if (bDelayMoveToRangeWhenOutOfRange)
+			{
+				bHasDelayedNormalAttackRangeLink = true;
+				DelayedNormalAttackRangeLinkType = NextAttackType;
+				DelayedNormalAttackRangeLinkBlendOutTime = FMath::Max(0.f, BlendOutTime);
+				DelayedNormalAttackRangeLinkBlendInTime = FMath::Max(0.f, BlendInTime);
+				bDelayedNormalAttackRangeLinkUseTestFilter = bUseTestFilter;
+				return true;
+			}
+
+			if (CurrentAttackMontage)
+			{
+				CurrentAnimInstance->Montage_Stop(FMath::Max(0.f, BlendOutTime), CurrentAttackMontage);
+			}
+
+			if (!bAttackInterruptedByHitReact && CurrentAttackActionType != EWukongActionType::None)
+			{
+				RecordAction(CurrentAttackActionType, CurrentAttackComboSet, CurrentAttackComboLength, CurrentAttackNormalAttackType);
+			}
+
+			if (!IsBowNormalAttackType(NextAttackType) && IsBowNormalAttackType(CurrentAttackNormalAttackType))
+			{
+				EndBowAttackPresentation();
+			}
+
+			StopAllAttackTraces();
+			ResetPendingAttackMotionState();
+			RestoreAttackGroundMotionOverride();
+			ClearTimedMontageSuperArmor();
+			ResetCurrentAttackRuntimeState();
+
+			bIsAttacking = false;
+			bAttackInterruptedByHitReact = false;
+			AttackTime = 0.f;
+			AttackFacingRemainTime = 0.f;
+			CombatMoveInput = FVector2D::ZeroVector;
+			SetDesiredMoveAxes(0.f, 0.f);
+			RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+			RemoveGameplayTag(JunGameplayTags::State_Block_Move);
+
+			PlannedActionType = EWukongPlannedActionType::Attack;
+			PlannedAttackType = EWukongPlannedAttackType::NormalAttack;
+			PlannedNormalAttackType = NextAttackType;
+			PlannedComboSet = EWukongComboSet::None;
+			PlannedComboLength = 0;
+			PlannedAttackWaitTime = 0.f;
+
+			SetWukongCombatState(TargetDistance > NextAttackData->MaxRange
+				? EWukongCombatState::Approach
+				: EWukongCombatState::Reposition);
+			return true;
+		}
+
 		return false;
 	}
+
+	ClearDelayedNormalAttackRangeLink();
 
 	const bool bNextAttackIsBow = IsBowNormalAttackType(NextAttackType);
 	if (!bNextAttackIsBow && IsBowNormalAttackType(CurrentAttackNormalAttackType))
@@ -1947,6 +2105,11 @@ bool AWukongBoss::TryStartNormalAttackLinkFromNotify(
 	if (CurrentAttackMontage)
 	{
 		CurrentAnimInstance->Montage_Stop(FMath::Max(0.f, BlendOutTime), CurrentAttackMontage);
+	}
+
+	if (!bAttackInterruptedByHitReact && CurrentAttackActionType != EWukongActionType::None)
+	{
+		RecordAction(CurrentAttackActionType, CurrentAttackComboSet, CurrentAttackComboLength, CurrentAttackNormalAttackType);
 	}
 
 	StopAllAttackTraces();
@@ -1960,6 +2123,7 @@ bool AWukongBoss::TryStartNormalAttackLinkFromNotify(
 	CurrentAttackComboSet = EWukongComboSet::None;
 	CurrentAttackComboLength = 0;
 	CurrentAttackNormalAttackType = NextAttackType;
+	LastStartedNormalAttackType = NextAttackType;
 	PlannedAttackType = EWukongPlannedAttackType::NormalAttack;
 	PlannedNormalAttackType = NextAttackType;
 
@@ -1990,6 +2154,7 @@ bool AWukongBoss::TryStartNormalAttackLinkFromNotify(
 	{
 		BeginBowAttackPresentation();
 		bPostBowCloseRangeApproachInProgress = bForceApproachAfterBowAttack;
+		PostBowCloseRangeForceElapsedTime = 0.f;
 	}
 	else
 	{
@@ -2015,6 +2180,90 @@ bool AWukongBoss::TryStartNormalAttackLinkFromNotify(
 	}
 
 	return true;
+}
+
+bool AWukongBoss::TryExecuteDelayedNormalAttackRangeLinkFromNotify(float BlendOutTimeOverride)
+{
+	if (!bHasDelayedNormalAttackRangeLink ||
+		DelayedNormalAttackRangeLinkType == EWukongNormalAttackType::None)
+	{
+		return false;
+	}
+
+	const EWukongNormalAttackType NextAttackType = DelayedNormalAttackRangeLinkType;
+	const float BlendOutTime = BlendOutTimeOverride >= 0.f
+		? BlendOutTimeOverride
+		: DelayedNormalAttackRangeLinkBlendOutTime;
+	const float BlendInTime = DelayedNormalAttackRangeLinkBlendInTime;
+	const bool bUseTestFilter = bDelayedNormalAttackRangeLinkUseTestFilter;
+
+	ClearDelayedNormalAttackRangeLink();
+
+	return TryStartNormalAttackLinkFromNotify(
+		NextAttackType,
+		1.f,
+		BlendOutTime,
+		BlendInTime,
+		true,
+		true,
+		false,
+		bUseTestFilter);
+}
+
+bool AWukongBoss::TryForceNormalAttackLinkWhenTriggerChanceFails(float BlendOutTime, float BlendInTime)
+{
+	auto CollectRangeIgnoredCandidates = [this](bool bIgnoreRepeat, TArray<EWukongNormalAttackType>& OutCandidates)
+	{
+		for (const EWukongNormalAttackType NormalAttackType : AllWukongNormalAttackTypes)
+		{
+			if (!IsNormalAttackEnabledByTestFilter(NormalAttackType))
+			{
+				continue;
+			}
+
+			const FWukongNormalAttackData* NormalAttackData = GetNormalAttackData(NormalAttackType);
+			if (!NormalAttackData || !NormalAttackData->Montage)
+			{
+				continue;
+			}
+
+			if (!bIgnoreRepeat &&
+				(WasRecentlyUsed(NormalAttackType, 1) || NormalAttackType == LastStartedNormalAttackType))
+			{
+				continue;
+			}
+
+			for (int32 WeightIndex = 0; WeightIndex < FMath::Max(1, NormalAttackData->SelectionWeight); ++WeightIndex)
+			{
+				OutCandidates.Add(NormalAttackType);
+			}
+		}
+	};
+
+	TArray<EWukongNormalAttackType> NormalAttackCandidates;
+	CollectRangeIgnoredCandidates(false, NormalAttackCandidates);
+	if (NormalAttackCandidates.Num() <= 0)
+	{
+		CollectRangeIgnoredCandidates(true, NormalAttackCandidates);
+	}
+
+	if (NormalAttackCandidates.Num() <= 0)
+	{
+		return false;
+	}
+
+	const EWukongNormalAttackType NextNormalAttackType =
+		NormalAttackCandidates[FMath::RandRange(0, NormalAttackCandidates.Num() - 1)];
+
+	return TryStartNormalAttackLinkFromNotify(
+		NextNormalAttackType,
+		1.f,
+		BlendOutTime,
+		BlendInTime,
+		false,
+		false,
+		false,
+		true);
 }
 
 bool AWukongBoss::TryStartParryBackJump()
@@ -2164,6 +2413,7 @@ void AWukongBoss::RecordAction(EWukongActionType ActionType, EWukongComboSet Com
 		IsBowNormalAttackType(NormalAttackType))
 	{
 		bPostBowCloseRangeApproachInProgress = true;
+		PostBowCloseRangeForceElapsedTime = 0.f;
 	}
 }
 
@@ -2208,6 +2458,11 @@ bool AWukongBoss::WasRecentlyUsed(EWukongNormalAttackType AttackType, int32 Dept
 	}
 
 	return false;
+}
+
+bool AWukongBoss::WasNormalAttackRecentlyUsed(EWukongNormalAttackType AttackType, int32 Depth) const
+{
+	return WasRecentlyUsed(AttackType, Depth);
 }
 
 bool AWukongBoss::WasRecentlyUsedBowNormalAttack(int32 Depth) const
@@ -2354,12 +2609,22 @@ void AWukongBoss::ResetPendingAttackMotionState()
 
 void AWukongBoss::ResetCurrentAttackRuntimeState()
 {
+	ClearDelayedNormalAttackRangeLink();
 	EndBowAttackPresentation();
 	Super::ResetCurrentAttackRuntimeState();
 	CurrentAttackActionType = EWukongActionType::None;
 	CurrentAttackComboSet = EWukongComboSet::None;
 	CurrentAttackComboLength = 0;
 	CurrentAttackNormalAttackType = EWukongNormalAttackType::None;
+}
+
+void AWukongBoss::ClearDelayedNormalAttackRangeLink()
+{
+	bHasDelayedNormalAttackRangeLink = false;
+	DelayedNormalAttackRangeLinkType = EWukongNormalAttackType::None;
+	DelayedNormalAttackRangeLinkBlendOutTime = 0.12f;
+	DelayedNormalAttackRangeLinkBlendInTime = 0.12f;
+	bDelayedNormalAttackRangeLinkUseTestFilter = true;
 }
 
 bool AWukongBoss::IsBowNormalAttackType(EWukongNormalAttackType AttackType) const
@@ -3079,8 +3344,14 @@ bool AWukongBoss::TryHandleIncomingHitBeforeDamage(
 	float DamageAmount,
 	AActor* DamageCauser,
 	const FVector& SwingDirection,
-	const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
+	const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
+	const FJunAttackDefenseRuleData& DefenseRuleData)
 {
+	if (!DefenseRuleData.bCanBeParried)
+	{
+		return false;
+	}
+
 	if (!CanParryIncomingHit(HitType, DamageCauser, SwingDirection))
 	{
 		return false;
@@ -3240,6 +3511,7 @@ FString AWukongBoss::GetMonsterDebugExtraText() const
 
 void AWukongBoss::ResetPlannedCombatPlan()
 {
+	ClearDelayedNormalAttackRangeLink();
 	PlannedActionType = EWukongPlannedActionType::None;
 	PlannedAttackType = EWukongPlannedAttackType::None;
 	PlannedNormalAttackType = EWukongNormalAttackType::None;
@@ -3248,6 +3520,7 @@ void AWukongBoss::ResetPlannedCombatPlan()
 	PlannedMovementDuration = 0.f;
 	PlannedComboSet = EWukongComboSet::None;
 	PlannedComboLength = 0;
+	PlannedAttackWaitTime = 0.f;
 }
 
 void AWukongBoss::BeginNoAttackCandidateApproach()
@@ -3711,18 +3984,6 @@ void AWukongBoss::RefreshPlannedAttackType()
 			AttackCandidates.Add(AttackType);
 		}
 	};
-	auto IsWithinRange = [TargetDistance](float MinRange, float MaxRange)
-	{
-		return TargetDistance >= MinRange && TargetDistance <= MaxRange;
-	};
-
-	const bool bCanUseCombo = HasAnyComboMontage();
-	const int32 ComboAttackSelectionWeight = GetComboAttackSelectionWeight();
-	const float MaxComboCandidateRange = GetMaxEnabledComboCandidateRange();
-	if (bCanUseCombo && IsWithinRange(0.f, MaxComboCandidateRange) && !WasRecentlyUsed(EWukongActionType::ComboAttack, 1))
-	{
-		AddWeightedAttackCandidate(EWukongPlannedAttackType::ComboAttack, ComboAttackSelectionWeight);
-	}
 
 	TArray<EWukongNormalAttackType> NormalAttackCandidates;
 	CollectNormalAttackCandidates(TargetDistance, false, NormalAttackCandidates);
@@ -3734,11 +3995,6 @@ void AWukongBoss::RefreshPlannedAttackType()
 
 	if (AttackCandidates.Num() == 0)
 	{
-		if (bCanUseCombo && IsWithinRange(0.f, MaxComboCandidateRange))
-		{
-			AddWeightedAttackCandidate(EWukongPlannedAttackType::ComboAttack, ComboAttackSelectionWeight);
-		}
-
 		NormalAttackCandidates.Reset();
 		CollectNormalAttackCandidates(TargetDistance, true, NormalAttackCandidates);
 
@@ -3775,48 +4031,13 @@ void AWukongBoss::RefreshPlannedAttackType()
 	{
 		return;
 	}
-
-	TArray<EWukongComboSet> ComboSetCandidates;
-	if (IsComboSetEnabledByTestFilter(EWukongComboSet::ComboA) && IsComboAttackUsable(ComboAttackA))
-	{
-		for (int32 WeightIndex = 0; WeightIndex < FMath::Max(1, ComboAttackA.SelectionWeight); ++WeightIndex)
-		{
-			ComboSetCandidates.Add(EWukongComboSet::ComboA);
-		}
-	}
-	if (IsComboSetEnabledByTestFilter(EWukongComboSet::ComboB) && IsComboAttackUsable(ComboAttackB))
-	{
-		for (int32 WeightIndex = 0; WeightIndex < FMath::Max(1, ComboAttackB.SelectionWeight); ++WeightIndex)
-		{
-			ComboSetCandidates.Add(EWukongComboSet::ComboB);
-		}
-	}
-
-	if (ComboSetCandidates.Num() <= 0)
-	{
-		PlannedAttackType = EWukongPlannedAttackType::None;
-		return;
-	}
-
-	PlannedComboSet = ComboSetCandidates[FMath::RandRange(0, ComboSetCandidates.Num() - 1)];
-
-	const FWukongComboAttackData* SelectedComboAttackData = GetComboAttackData(PlannedComboSet);
-	if (!SelectedComboAttackData)
-	{
-		PlannedAttackType = EWukongPlannedAttackType::None;
-		PlannedComboSet = EWukongComboSet::None;
-		return;
-	}
-
-	PlannedComboLength = 1;
 }
 
 void AWukongBoss::RefreshPlannedCombatPlan()
 {
 	ResetPlannedCombatPlan();
 
-	const bool bShouldCloseAfterBow =
-		bPostBowCloseRangeApproachInProgress || WasRecentlyUsedBowNormalAttack(1);
+	const bool bShouldCloseAfterBow = ShouldForceCloseAfterBowAttack();
 
 	if (bShouldCloseAfterBow && !HasAnyNonBowAttackCandidateForCurrentDistance())
 	{
