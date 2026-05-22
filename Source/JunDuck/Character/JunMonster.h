@@ -207,6 +207,7 @@ protected:
 	float GetCombatTargetYawDelta() const;
 	UAnimMontage* ChooseCombatTurnMontage(float YawDelta) const;
 	void CancelCombatTurn(float BlendOutTime = 0.05f);
+	void FinishCombatTurnEarly(float BlendOutTime);
 	void UpdateAttack(float DeltaTime);
 	void FinishAttack();
 	virtual FMonsterAttackSelection ChooseNextAttackSelection() const;
@@ -487,6 +488,15 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Turn", meta = (ClampMin = "0.01"))
 	float CombatTurnPlayRate = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Turn")
+	bool bEarlyBlendOutCombatTurnOnTargetYaw = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Turn", meta = (ClampMin = "0.0"))
+	float CombatTurnEarlyBlendOutYawTolerance = 8.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Turn", meta = (ClampMin = "0.0"))
+	float CombatTurnEarlyBlendOutTime = 0.25f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Debug")
 	bool bDebugCombatTurnYaw = false;

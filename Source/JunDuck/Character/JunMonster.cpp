@@ -1683,6 +1683,48 @@ void AJunMonster::CancelCombatTurn(float BlendOutTime)
 	}
 }
 
+void AJunMonster::FinishCombatTurnEarly(float BlendOutTime)
+{
+	if (!IsCombatTurnPlaying())
+	{
+		return;
+	}
+
+	UAnimMontage* PlayingTurnMontage = CurrentCombatTurnMontage.Get();
+	LastCombatTurnEndYaw = GetActorRotation().Yaw;
+
+	if (bDebugCombatTurnYaw)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[MonsterTurn][EarlyBlendOut] Montage=%s Start=%.2f AfterPlay=%.2f End=%.2f TotalDelta=%.2f TargetDelta=%.2f"),
+			*GetNameSafe(PlayingTurnMontage),
+			LastCombatTurnStartYaw,
+			LastCombatTurnPostPlayYaw,
+			LastCombatTurnEndYaw,
+			FMath::FindDeltaAngleDegrees(LastCombatTurnStartYaw, LastCombatTurnEndYaw),
+			GetCombatTargetYawDelta());
+	}
+
+	bCombatTurnInProgress = false;
+	CurrentCombatTurnMontage = nullptr;
+
+	if (UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+	{
+		MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnCombatTurnMontageEnded);
+		if (PlayingTurnMontage)
+		{
+			MonsterAnimInstance->Montage_Stop(FMath::Max(0.f, BlendOutTime), PlayingTurnMontage);
+		}
+	}
+
+	if (bHasPendingStateAfterCombatTurn)
+	{
+		const EMonsterState NextState = PendingStateAfterCombatTurn;
+		bHasPendingStateAfterCombatTurn = false;
+		PendingStateAfterCombatTurn = EMonsterState::Idle;
+		SetMonsterState(NextState);
+	}
+}
+
 void AJunMonster::UpdateCombatFacing(float DeltaTime)
 {
 	if (!CurrentTarget)

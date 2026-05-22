@@ -1268,15 +1268,10 @@ void AWukongBoss::UpdateEvadeState(float DeltaTime)
 	const bool bUsingReactiveEvade = ActiveReactiveActionData.Type != EWukongReactiveActionType::None;
 	const EWukongPlannedNonAttackType ResolvedEvadeType =
 		bUsingReactiveEvade ? ActiveReactiveActionData.NonAttackType : PlannedNonAttackType;
-	const EWukongMovementDirection ResolvedEvadeDirection =
-		bUsingReactiveEvade ? ActiveReactiveActionData.MovementDirection : PlannedMovementDirection;
 	const float ResolvedEvadeDuration =
 		bUsingReactiveEvade ? ActiveReactiveActionData.Duration : PlannedMovementDuration;
-	const bool bIsBackwardDodgeEvade =
-		ResolvedEvadeType == EWukongPlannedNonAttackType::Dodge &&
-		ResolvedEvadeDirection == EWukongMovementDirection::Backward;
 
-	if (CurrentTarget && !bIsBackwardDodgeEvade)
+	if (CurrentTarget)
 	{
 		UpdateFacingTowardsTargetWithoutTurn(DeltaTime, EvadeFacingInterpSpeed);
 	}
@@ -1312,6 +1307,14 @@ void AWukongBoss::UpdateTurnState(float DeltaTime)
 {
 	if (!IsCombatTurnPlaying())
 	{
+		SetWukongCombatState(EWukongCombatState::Idle);
+		return;
+	}
+
+	if (bEarlyBlendOutCombatTurnOnTargetYaw &&
+		FMath::Abs(GetCombatTargetYawDelta()) <= CombatTurnEarlyBlendOutYawTolerance)
+	{
+		FinishCombatTurnEarly(CombatTurnEarlyBlendOutTime);
 		SetWukongCombatState(EWukongCombatState::Idle);
 	}
 }
@@ -3248,6 +3251,11 @@ void AWukongBoss::OnParrySuccessMontageEnded(UAnimMontage* Montage, bool bInterr
 		return;
 	}
 
+	FinishParrySuccessState();
+}
+
+void AWukongBoss::FinishParrySuccessStateFromNotify()
+{
 	FinishParrySuccessState();
 }
 

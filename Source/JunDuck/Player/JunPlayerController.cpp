@@ -713,22 +713,12 @@ void AJunPlayerController::Input_DefenseReleased(const FInputActionValue& InputV
 
 void AJunPlayerController::Input_RunStarted(const FInputActionValue& InputValue)
 {
-	if (!JunPlayer)
-	{
-		return;
-	}
-
-	JunPlayer->SetWalkRequested(true);
+	// Walk is controlled by Input_WalkToggle. Keep Run input inert so legacy mappings do not force hold-walk.
 }
 
 void AJunPlayerController::Input_RunReleased(const FInputActionValue& InputValue)
 {
-	if (!JunPlayer)
-	{
-		return;
-	}
-
-	JunPlayer->SetWalkRequested(false);
+	// Walk is controlled by Input_WalkToggle. Keep Run input inert so legacy mappings do not force hold-walk.
 }
 
 void AJunPlayerController::Input_WalkToggle(const FInputActionValue& InputValue)

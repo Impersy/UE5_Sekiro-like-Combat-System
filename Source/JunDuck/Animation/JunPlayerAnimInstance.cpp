@@ -13,11 +13,23 @@ void UJunPlayerAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	{
 		bIsLockOn = false;
 		bHasMoveInput = false;
+		RawMoveForward = 0.f;
+		RawMoveRight = 0.f;
 		bUseRunLocomotion = false;
 		bIsSprinting = false;
 		bShouldPlayLockOnForwardRunStart = false;
 		bJumpStartTriggered = false;
 		bUseGuardBase = false;
+		DefenseState = EJunDefenseState::None;
+		bIsGuardStarting = false;
+		bIsGuarding = false;
+		bIsGuardEnding = false;
+		bIsGuardBlockReacting = false;
+		bIsGuardBlockReleasing = false;
+		GuardStartRestartSerial = 0;
+		bGuardStartRestartRequested = false;
+		LastGuardStartRestartSerial = 0;
+		LastDefenseState = EJunDefenseState::None;
 		LockOnForwardRunStartTriggerRemainTime = 0.f;
 		bHadMoveInputLastFrame = false;
 		return;
@@ -28,10 +40,27 @@ void UJunPlayerAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 		!FMath::IsNearlyZero(Player->GetDesiredMoveForward()) ||
 		!FMath::IsNearlyZero(Player->GetDesiredMoveRight());
 	bHasMoveInput = bHasMoveInputThisFrame;
+	RawMoveForward = Player->GetDesiredMoveForward();
+	RawMoveRight = Player->GetDesiredMoveRight();
 	bUseRunLocomotion = Player->ShouldUseRunningAnim();
 	bIsSprinting = Player->IsSprinting();
 	bJumpStartTriggered = Player->IsJumpStartAnimTriggered();
 	bUseGuardBase = Player->ShouldUseGuardBase();
+	DefenseState = Player->GetDefenseState();
+	bIsGuardStarting = DefenseState == EJunDefenseState::Starting;
+	bIsGuarding = DefenseState == EJunDefenseState::Guarding;
+	bIsGuardEnding = DefenseState == EJunDefenseState::Ending;
+	bIsGuardBlockReacting = Player->IsGuardBlockReacting();
+	bIsGuardBlockReleasing = Player->IsGuardBlockReleasing();
+
+	GuardStartRestartSerial = Player->GetGuardStartRestartSerial();
+	const bool bWasAlreadyStarting = LastDefenseState == EJunDefenseState::Starting;
+	bGuardStartRestartRequested =
+		bIsGuardStarting &&
+		bWasAlreadyStarting &&
+		GuardStartRestartSerial != LastGuardStartRestartSerial;
+	LastGuardStartRestartSerial = GuardStartRestartSerial;
+	LastDefenseState = DefenseState;
 
 	const bool bStartedMovingThisFrame = !bHadMoveInputLastFrame && bHasMoveInputThisFrame;
 	const bool bShouldTriggerLockOnForwardRunStart =

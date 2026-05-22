@@ -103,6 +103,15 @@ enum class EJunPlayerHitState : uint8
 };
 
 UENUM(BlueprintType)
+enum class EJunAirHeavyHitStage : uint8
+{
+	None,
+	Launch,
+	Down,
+	Land
+};
+
+UENUM(BlueprintType)
 enum class EJunPlayerDeathState : uint8
 {
 	Alive,
@@ -177,6 +186,7 @@ public: // External Gameplay API
 	void EndDodgeAttackWindow();
 	void BeginDodgeChainWindow();
 	void EndDodgeChainWindow();
+	void NotifyGuardRestartAnchorReached(class UAnimMontage* Montage, float AnchorPosition);
 	bool TryStartExecution();
 	bool TryChooseFakeDeathDie();
 	bool TryChooseFakeDeathRevive();
@@ -200,6 +210,8 @@ public: // Query / State API
 	bool IsWalking() const;
 	bool IsSprinting() const;
 	bool IsInParrySuccess() const;
+	bool IsGuardBlockReacting() const;
+	bool IsGuardBlockReleasing() const { return bGuardBlockReleasePending; }
 	bool IsJumpStartAnimTriggered() const;
 	EJunMoveState GetMoveState() const;
 	bool CanCancelBasicAttackIntoRecoveryAction(EJunBufferedRecoveryAction Action) const;
@@ -208,6 +220,7 @@ public: // Query / State API
 	bool CanBufferParrySuccessCancel(EJunBufferedParrySuccessCancelAction Action) const;
 	bool ShouldUseGuardBase() const;
 	EJunDefenseState GetDefenseState() const;
+	int32 GetGuardStartRestartSerial() const { return GuardStartRestartSerial; }
 	bool IsParryWindowOpen();
 	float GetDesiredMoveForward() const;
 	float GetDesiredMoveRight() const;
@@ -379,6 +392,9 @@ protected: // Death
 	void EnterFakeDeath();
 	void EnterRealDeath();
 	void ConfirmRealDeathFromFakeDeath();
+	bool TryStartAirDeathSequence();
+	void StartAirDeathHitFallSequence();
+	UAnimMontage* GetAirDeathLandMontage() const;
 	void TriggerPendingDeathPresentation();
 	void StartFakeDeathRevive();
 	void FinishFakeDeathRevive();
@@ -408,6 +424,7 @@ protected: // Hit
 	EJunAirHitReactType ResolveAirHitReactType() const;
 	UAnimMontage* GetAirHitReactMontage(EJunAirHitReactType AirHitReactType) const;
 	UAnimMontage* GetParrySuccessMontage(const FVector& SwingDirection);
+	UAnimMontage* GetAirParrySuccessMontage();
 	bool AddPosture(float Amount);
 	bool IsPostureFull() const;
 	void UpdatePostureRecovery(float DeltaTime);
@@ -418,7 +435,16 @@ protected: // Hit
 	void TryExecuteBufferedParrySuccessCancelAction();
 	void StartGuardBlock();
 	void StartGuardBreak();
+	void ApplyAirGuardBreakTuning();
+	void StartAirGuardBreakLandMontage();
 	void StartHitReact(EHitReactType HitType, ECharacterHitReactDirection HitDirection);
+	void UpdateAirHeavyHitReact(float DeltaTime);
+	void StartAirHeavyHitDownStage();
+	void StartAirHeavyHitLandStage();
+	void ResetAirHeavyHitReactState();
+	void ApplyAirLightHitFallTuning();
+	void ApplyAirHeavyHitFallTuning();
+	void RestoreAirHeavyHitFallTuning();
 	void ApplyAirHitKnockback(EJunAirHitReactType AirHitReactType);
 	void ApplyCommonKnockback(
 		ECharacterKnockbackDirection KnockbackDirection,
@@ -447,13 +473,20 @@ protected: // Defense
 	void CancelDefenseForCancelTransition(float BlendOutTime = -1.f);
 	void FinishDefenseForCancel();
 	void StartDefenseSequence();
+	void StartAirParrySequence();
 	void BeginDefenseFromBufferedInput();
 	void ResolveCurrentDeflectAttempt();
+	void StartGuardRestartBlend(class UAnimMontage* Montage, float TargetPosition, float BlendDuration);
+	void UpdateGuardRestartBlend(float DeltaTime);
+	void FinishGuardRestartBlend(bool bSnapToTarget);
+	void ResetGuardRestartAnchor();
 	void ApplyDefenseStartBlockTags();
+	void ApplyAirDefenseStartBlockTags();
 	void ApplyGuardOnBlockTags();
 	void ClearDefenseBlockTags();
 	void EnterGuardLoop();
 	void BeginGuardEnd();
+	void BeginAirGuardEnd();
 	void FinishDefense();
 	void OpenParryWindow(bool bCountAsParryAttempt = true);
 	void ResetParrySpamPenalty();
@@ -465,6 +498,12 @@ protected: // Defense
 
 	UFUNCTION()
 	void OnGuardEndMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+	UFUNCTION()
+	void OnAirGuardStartMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+	UFUNCTION()
+	void OnAirGuardEndMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
 	UFUNCTION()
 	void OnLockOnTurnMontageEnded(UAnimMontage* Montage, bool bInterrupted);
@@ -965,6 +1004,9 @@ protected: // Runtime Combat / Defense State
 	EJunDefenseState DefenseState = EJunDefenseState::None;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
+	int32 GuardStartRestartSerial = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
 	EJunBufferedDefenseCancelAction BufferedDefenseTransitionCancelAction = EJunBufferedDefenseCancelAction::None;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
@@ -1028,6 +1070,42 @@ protected: // Runtime Combat / Defense State
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
 	bool bDeferGuardMoveInput = false;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard|Air")
+	bool bAirParrySequenceActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
+	TObjectPtr<class UAnimMontage> GuardRestartAnchorMontage = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
+	float GuardRestartAnchorPosition = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
+	bool bGuardRestartAnchorReached = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
+	TObjectPtr<class UAnimMontage> GuardRestartBlendMontage = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
+	float GuardRestartBlendStartPosition = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
+	float GuardRestartBlendTargetPosition = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
+	float GuardRestartBlendElapsedTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
+	float GuardRestartBlendDuration = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
+	float GuardRestartBlendRestorePlayRate = 1.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
+	bool bGuardRestartBlendActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
+	bool bGuardBlockReleasePending = false;
+
 	FTimerHandle GuardBlockReleaseIntoGuardEndTimerHandle;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
@@ -1066,6 +1144,12 @@ protected: // Runtime Combat / Defense State
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Death")
 	bool bDeathPresentationStarted = false;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Death")
+	bool bAirDeathSequenceActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Posture")
+	bool bAirGuardBreakLandMontagePending = false;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	float PlayerHitControlLockRemainTime = 0.f;
 
@@ -1086,6 +1170,21 @@ protected: // Runtime Combat / Defense State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	bool bCurrentHitReactUsesAirMontage = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
+	EJunAirHeavyHitStage AirHeavyHitStage = EJunAirHeavyHitStage::None;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
+	float AirHeavyHitStageRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
+	bool bAirHeavyHitFallTuningActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
+	float DefaultAirHeavyHitGravityScale = 1.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
+	float DefaultAirHeavyHitFallingLateralFriction = 0.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	FVector LastIncomingSwingDirection = FVector::ZeroVector;
@@ -1376,7 +1475,28 @@ protected: // Attack / Defense Tuning
 	float GuardStartPlayRate = 1.3f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
+	float GuardStartVisualRestartMinInterval = 0.08f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
+	float GuardStartRestartBlendDuration = 0.035f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard|Air")
+	float AirGuardStartPlayRate = 1.3f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard|Air")
+	float AirGuardStartVisualRestartMinInterval = 0.08f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard|Air")
+	float AirGuardStartRestartBlendDuration = 0.035f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard|Air")
+	float AirGuardLandCancelBlendOutTime = 0.06f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
 	float GuardEndPlayRate = 1.2f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
+	float GuardEndStateDuration = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
 	float GuardEndBlendInTime = 0.12f;
@@ -1504,6 +1624,33 @@ protected: // Attack / Defense Tuning
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture")
 	float GuardBreakDamageMultiplier = 2.f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air", meta = (ClampMin = "0"))
+	float AirGuardBreakKnockbackStrength = 360.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air", meta = (ClampMin = "0"))
+	float AirGuardBreakGravityScale = 2.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air", meta = (ClampMin = "0"))
+	float AirGuardBreakFallingLateralFriction = 0.3f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air")
+	float AirGuardBreakDownwardVelocity = -520.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air", meta = (ClampMin = "0"))
+	float AirGuardBreakAirborneMaxDuration = 4.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air", meta = (ClampMin = "0"))
+	float AirGuardBreakLandingBrakingDeceleration = 80.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air", meta = (ClampMin = "0"))
+	float AirGuardBreakLandingGroundFriction = 0.2f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air", meta = (ClampMin = "0"))
+	float AirGuardBreakLandingBrakingFrictionFactor = 0.08f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air", meta = (ClampMin = "0"))
+	float AirGuardBreakLandingSlideDuration = 0.35f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death")
 	int32 MaxReviveCount = 1;
 
@@ -1576,6 +1723,15 @@ protected: // Attack / Defense Tuning
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float AirLightHitKnockbackStrength = 140.f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
+	float AirLightHitGravityScale = 1.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
+	float AirLightHitFallingLateralFriction = 0.2f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	float AirLightHitInitialDownwardVelocity = -180.f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float AirHeavyHitReactDuration = 0.65f;
 
@@ -1583,7 +1739,25 @@ protected: // Attack / Defense Tuning
 	float AirHeavyHitControlLockDuration = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
-	float AirHeavyHitKnockbackStrength = 260.f;
+	float AirHeavyHitKnockbackStrength = 420.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
+	float AirHeavyHitSequenceMaxDuration = 4.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
+	float AirHeavyHitLaunchStageMaxDuration = 0.28f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
+	float AirHeavyHitGravityScale = 2.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
+	float AirHeavyHitFallingLateralFriction = 0.35f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	float AirHeavyHitInitialDownwardVelocity = -420.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	float AirHeavyHitDownwardVelocity = -1000.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float HeavyHitReactDuration = 0.5f;
@@ -1997,6 +2171,12 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death")
 	TObjectPtr<class UAnimMontage> DeathMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death")
+	TObjectPtr<class UAnimMontage> AirFakeDeathMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death")
+	TObjectPtr<class UAnimMontage> AirDeathMontage;
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|LockOn")
 	TObjectPtr<class UAnimMontage> LockOnDodgeRightMontage;
@@ -2025,6 +2205,12 @@ protected: // Animation Assets
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
 	TObjectPtr<class UAnimMontage> GuardEndMontage;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard|Air")
+	TObjectPtr<class UAnimMontage> AirGuardStartMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard|Air")
+	TObjectPtr<class UAnimMontage> AirGuardEndMontage;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	TObjectPtr<class UAnimMontage> ParrySuccessL_UpMontage;
 
@@ -2033,6 +2219,12 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	TObjectPtr<class UAnimMontage> ParrySuccessR_UpMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit|Air")
+	TObjectPtr<class UAnimMontage> AirParrySuccessL_UpMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit|Air")
+	TObjectPtr<class UAnimMontage> AirParrySuccessR_UpMontage;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	TObjectPtr<class UAnimMontage> ParrySuccessR_DownMontage;
@@ -2048,6 +2240,9 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	TObjectPtr<class UAnimMontage> GuardBreakMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit|Air")
+	TObjectPtr<class UAnimMontage> AirGuardBreakMontage;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	TObjectPtr<class UAnimMontage> HeavyHitFront_AMontage;
@@ -2099,6 +2294,12 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	TObjectPtr<class UAnimMontage> AirHitFHeavyMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	TObjectPtr<class UAnimMontage> AirHitFHeavyDownMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	TObjectPtr<class UAnimMontage> AirHitFHeavyLandMontage;
 
 protected: // Weapon Assets
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")

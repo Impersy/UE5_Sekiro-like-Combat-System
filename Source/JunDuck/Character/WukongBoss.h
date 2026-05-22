@@ -318,6 +318,7 @@ public:
 	EWukongNormalAttackType GetCurrentNormalAttackType() const { return CurrentAttackNormalAttackType; }
 	bool WasNormalAttackRecentlyUsed(EWukongNormalAttackType AttackType, int32 Depth = 1) const;
 	void HandleHitTurnDecisionPoint();
+	void FinishParrySuccessStateFromNotify();
 	virtual void NotifyAttackParriedBy(class AJunPlayer* Parrier, float PostureScale = 1.f) override;
 
 protected:
@@ -622,7 +623,7 @@ protected:
 	float ParryCounterBlendInTime = 0.08f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float ParryCounterDecisionCounterChance = 0.8f;
+	float ParryCounterDecisionCounterChance = 1.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.1"))
 	float ParryCounterPlayRate = 1.f;
