@@ -182,6 +182,22 @@ void AJunPlayerController::PlayBossPostureBreakGlow()
 	}
 }
 
+void AJunPlayerController::StartPlayerPostureBreakHidePresentation()
+{
+	if (CombatHUDWidget)
+	{
+		CombatHUDWidget->StartPlayerPostureBreakHidePresentation();
+	}
+}
+
+void AJunPlayerController::HideBossPostureImmediately()
+{
+	if (CombatHUDWidget)
+	{
+		CombatHUDWidget->HideBossPostureImmediately();
+	}
+}
+
 void AJunPlayerController::ShowBossClearUI()
 {
 	if (CombatHUDWidget)
@@ -462,6 +478,11 @@ void AJunPlayerController::Input_Jump(const FInputActionValue& InputValue)
 		return;
 	}
 
+	if (JunPlayer->TryStartJumpCounterStompFollowUp())
+	{
+		return;
+	}
+
 	if (JunPlayer->IsInParrySuccess())
 	{
 		JunPlayer->BufferParrySuccessCancelAction(EJunBufferedParrySuccessCancelAction::Jump);
@@ -489,6 +510,11 @@ void AJunPlayerController::Input_Jump(const FInputActionValue& InputValue)
 		return;
 	}
 
+	if (JunPlayer->GetDefenseState() == EJunDefenseState::Starting)
+	{
+		return;
+	}
+
 	if (JunPlayer->CanBufferDefenseTransitionCancel())
 	{
 		JunPlayer->BufferDefenseTransitionCancelAction(EJunBufferedDefenseCancelAction::Jump);
@@ -510,6 +536,12 @@ void AJunPlayerController::Input_Dodge(const FInputActionValue& InputValue)
 	if (!JunPlayer)
 	{
 		return;
+	}
+
+	bDodgeInputHeld = true;
+	if (UWorld* World = GetWorld())
+	{
+		LastDodgeInputTime = World->GetTimeSeconds();
 	}
 
 	if (JunPlayer->IsInParrySuccess())
@@ -567,6 +599,8 @@ void AJunPlayerController::Input_Dodge(const FInputActionValue& InputValue)
 
 void AJunPlayerController::Input_DodgeReleased(const FInputActionValue& InputValue)
 {
+	bDodgeInputHeld = false;
+
 	if (!JunPlayer)
 	{
 		return;
@@ -582,12 +616,22 @@ void AJunPlayerController::Input_BasicAttack(const FInputActionValue& InputValue
 		return;
 	}
 
-	if (JunPlayer->TryStartJigen())
+	if (JunPlayer->TryChooseFakeDeathDie())
 	{
 		return;
 	}
 
-	if (JunPlayer->TryChooseFakeDeathDie())
+	if (JunPlayer->IsInDeathSequence())
+	{
+		return;
+	}
+
+	if (JunPlayer->TryCancelJumpCounterStompFollowUpIntoJumpAttack())
+	{
+		return;
+	}
+
+	if (JunPlayer->TryStartJigen())
 	{
 		return;
 	}
@@ -694,6 +738,14 @@ void AJunPlayerController::Input_Defense(const FInputActionValue& InputValue)
 	}
 
 	if (JunPlayer->TryChooseFakeDeathRevive())
+	{
+		return;
+	}
+
+	const UWorld* World = GetWorld();
+	const bool bRecentlyPressedDodge = World &&
+		World->GetTimeSeconds() - LastDodgeInputTime <= MikiriCounterDodgeDefenseInputGraceTime;
+	if (bDodgeInputHeld && bRecentlyPressedDodge && JunPlayer->TryOpenMikiriCounterWindow(false))
 	{
 		return;
 	}

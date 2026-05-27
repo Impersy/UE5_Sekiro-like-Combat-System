@@ -176,7 +176,7 @@ struct FWukongNormalAttackData
 	bool bTryTurnAfterAttack = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|NormalAttack")
-	float PostAttackTurnStartAngle = 45.f;
+	float PostAttackTurnStartAngle = 55.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wukong|NormalAttack", meta = (ClampMin = "1", ClampMax = "10"))
 	int32 SelectionWeight = 1;
@@ -303,6 +303,8 @@ public:
 	void EndCodeDrivenAttackMoveWindow();
 	void BeginAttackSuperArmorWindow();
 	void EndAttackSuperArmorWindow();
+	void BeginAirborneHitReactLockWindow();
+	void EndAirborneHitReactLockWindow();
 	void HandleComboDecisionPoint();
 	bool TryStartNormalAttackLinkFromNotify(
 		EWukongNormalAttackType NextAttackType,
@@ -319,7 +321,11 @@ public:
 	bool WasNormalAttackRecentlyUsed(EWukongNormalAttackType AttackType, int32 Depth = 1) const;
 	void HandleHitTurnDecisionPoint();
 	void FinishParrySuccessStateFromNotify();
-	virtual void NotifyAttackParriedBy(class AJunPlayer* Parrier, float PostureScale = 1.f) override;
+	virtual void NotifyAttackParriedBy(
+		class AJunPlayer* Parrier,
+		float PostureScale = 1.f,
+		const FJunAttackDefenseRuleData& DefenseRuleData = FJunAttackDefenseRuleData()) override;
+	virtual bool NotifyMikiriCounteredBy(class AJunPlayer* CounterPlayer) override;
 
 protected:
 	virtual void HandleGameplayEventNotify(FGameplayTag EventTag) override;
@@ -335,8 +341,15 @@ protected:
 	virtual float GetHitReactControlLockDuration(EHitReactType HitType) const override;
 	virtual FString GetMonsterDebugExtraText() const override;
 	virtual void OnHitReactStarted(EHitReactType NewHitReact, ECharacterHitReactDirection NewHitDirection) override;
+	virtual void OnIncomingHitResolvedWithoutHitReact(EHitReactType HitType) override;
 	virtual bool ShouldStartHitReact(EHitReactType IncomingHitReact) const override;
+	virtual ECharacterHitReactDirection AdjustHitReactDirection(
+		EHitReactType HitType,
+		ECharacterHitReactDirection HitDirection,
+		const FJunAttackDefenseRuleData& DefenseRuleData) const override;
 	virtual void OnHitReactEnded(EHitReactType EndedHitReact) override;
+	virtual void OnExecutionReadyStarted() override;
+	virtual void OnExecutionReadyEnded(bool bMissedExecution) override;
 	virtual bool TryHandleIncomingHitBeforeDamage(
 		EHitReactType HitType,
 		float DamageAmount,
@@ -444,13 +457,24 @@ protected:
 	bool HasQueuedReactiveAction() const;
 	bool CanStartMobilityMontageSafely() const;
 	bool CanParryIncomingHit(EHitReactType HitType, AActor* DamageCauser, const FVector& SwingDirection) const;
+	bool IsDamageCauserInParryFrontCone(const AActor* DamageCauser) const;
 	bool IsParryableHitType(EHitReactType HitType) const;
 	float GetPerfectParryChanceForHitType(EHitReactType HitType) const;
 	float GetNormalParryChanceForHitType(EHitReactType HitType) const;
+	void ResetParryExchangeCycle();
+	void ResetParryExchangePerfectChance(EHitReactType HitType);
+	void AccumulateParryExchangeNormalChance(EHitReactType HitType);
+	void AccumulateParryExchangePerfectChance(EHitReactType HitType);
+	void UpdateParryExchangeDecay(float DeltaTime);
+	bool ShouldEscapeParryExchangeBeforeCounter() const;
+	UAnimMontage* GetParryExchangeEscapeMontage() const;
 	UAnimMontage* GetParrySuccessMontage(const FVector& SwingDirection);
 	UAnimMontage* GetParryCounterMontage() const;
 	UAnimMontage* GetParryCounterFollowUpMontage() const;
+	bool TryStartPerfectParryRebound(AJunPlayer* Parrier, const FJunAttackDefenseRuleData& DefenseRuleData);
+	UAnimMontage* GetPerfectParryReboundMontage(const AJunPlayer* Parrier) const;
 	class UNiagaraComponent* FindNiagaraComponentByName(FName ComponentName) const;
+	USceneComponent* FindSceneComponentByName(FName ComponentName) const;
 	void PlayParryParticle();
 	void StartParrySuccessAgainstIncomingHit(
 		AActor* DamageCauser,
@@ -601,6 +625,12 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
 	TObjectPtr<class UAnimMontage> ParryBackJumpMontage = nullptr;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Rebound")
+	TObjectPtr<class UAnimMontage> PerfectParryReboundLMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Rebound")
+	TObjectPtr<class UAnimMontage> PerfectParryReboundRMontage = nullptr;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float LightHitPerfectParryChance = 0.5f;
 
@@ -613,8 +643,35 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float StrongHitNormalParryChance = 0.4f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "360.0"))
+	float ParryFrontConeAngle = 90.f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
 	float NormalParryPostureGain = 10.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float NormalParryChanceGainPerIncomingHit = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float PerfectParryChanceGainPerNormalParry = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float StrongNormalParryChanceGainPerIncomingHit = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float StrongPerfectParryChanceGainPerNormalParry = 0.15f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange", meta = (ClampMin = "0"))
+	int32 ParryExchangeEscapeMinNormalParryCount = 3;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float ParryExchangeEscapeChance = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange", meta = (ClampMin = "0.0"))
+	float ParryExchangeDecayDelay = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange", meta = (ClampMin = "0.0"))
+	float ParryExchangeChanceDecayPerSecond = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
 	float ParryCounterBlendOutTime = 0.08f;
@@ -662,10 +719,10 @@ protected:
 	float ParryCounterFollowUpFacingDuration = 0.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
-	float ParryCounterFollowUpFacingInterpSpeed = 18.f;
+	float ParryCounterFollowUpFacingInterpSpeed = 14.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
-	float ParrySuccessFacingDuration = 0.25f;
+	float ParrySuccessFacingDuration = 0.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
 	float ParrySuccessFacingInterpSpeed = 18.f;
@@ -677,19 +734,25 @@ protected:
 	FName ParryParticleComponentName = TEXT("Parry_Particle");
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry|VFX")
-	bool bAutoDeactivateParryParticle = true;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry|VFX", meta = (ClampMin = "0"))
-	float ParryParticleAutoDeactivateDelay = 0.1f;
+	FName ParryEffectLocationComponentName = TEXT("Parry_Location");
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UNiagaraComponent> CachedParryParticleComponent = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class USceneComponent> CachedParryEffectLocationComponent = nullptr;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
 	TObjectPtr<class UAnimMontage> CurrentParrySuccessMontage = nullptr;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
 	float ParrySuccessFallbackRemainTime = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0"))
+	float ParrySuccessExitActionLockDuration = 0.12f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
+	float ParrySuccessExitActionLockRemainTime = 0.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
 	bool bHasSelectedInitialParrySuccessSide = false;
@@ -715,6 +778,30 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
 	bool bParryCounterFollowUpStarted = false;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange")
+	float CurrentNormalParryChance = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange")
+	float CurrentPerfectParryChance = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange")
+	float CurrentStrongNormalParryChance = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange")
+	float CurrentStrongPerfectParryChance = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange")
+	int32 CurrentParryExchangeNormalParryCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange")
+	float ParryExchangeIdleTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange")
+	bool bPendingParryExchangeChanceGain = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange")
+	EHitReactType PendingParryExchangeHitType = EHitReactType::None;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Recovery")
 	float RecoveryDuration = 0.4f;
 
@@ -723,6 +810,21 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Plan", meta = (ClampMin = "0.0"))
 	float PlannedAttackMaxWaitTime = 3.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|MikiriCounter")
+	TObjectPtr<class UAnimMontage> MikiriCounterMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|MikiriCounter", meta = (ClampMin = "0.0"))
+	float MikiriCounterBlendOutTime = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|MikiriCounter", meta = (ClampMin = "0.0"))
+	float MikiriCounterBlendInTime = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|MikiriCounter", meta = (ClampMin = "0.1"))
+	float MikiriCounterPlayRate = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|MikiriCounter", meta = (ClampMin = "0.0"))
+	float MikiriCounterPostureGain = 80.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Approach")
 	float NoAttackCandidateApproachDelay = 5.f;
@@ -835,6 +937,15 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Turn")
 	float MoveTurnStartAngle = 90.f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Facing", meta = (ClampMin = "0", ClampMax = "180"))
+	float MaxCodeFacingAngle = 55.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Facing", meta = (ClampMin = "0"))
+	float FacingStateEntryLockDuration = 0.08f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Facing")
+	float CodeFacingLockRemainTime = 0.f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement")
 	float ApproachFacingInterpSpeed = 8.f;
 
@@ -879,6 +990,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Armor")
 	float TimedMontageSuperArmorRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Armor")
+	bool bAirborneHitReactLockWindowActive = false;
 
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Turn")

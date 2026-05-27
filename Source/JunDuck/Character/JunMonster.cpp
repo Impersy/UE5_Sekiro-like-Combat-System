@@ -1,6 +1,7 @@
 #include "Character/JunMonster.h"
 #include "AI/JunAIController.h"
 #include "AlphaBlend.h"
+#include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/JunPlayer.h"
 #include "Components/AudioComponent.h"
@@ -57,6 +58,13 @@ namespace
 	{
 		return HitType == EHitReactType::LargeHit_Short
 			|| HitType == EHitReactType::LargeHit_Long;
+	}
+
+	bool IsFrontHitReactDirection(const ECharacterHitReactDirection HitDirection)
+	{
+		return HitDirection == ECharacterHitReactDirection::Front_F ||
+			HitDirection == ECharacterHitReactDirection::Front_FL ||
+			HitDirection == ECharacterHitReactDirection::Front_FR;
 	}
 
 	bool DoesMontageUseRootMotion(const UAnimMontage* Montage)
@@ -376,38 +384,69 @@ void AJunMonster::ReceiveHit(
 		return;
 	}
 
-	// 인터럽트 가능 여부
-	if (!CanBeInterruptedBy(HitType))
+	if (HitType == EHitReactType::LightHit)
 	{
+		if (!CanBeInterruptedBy(HitType) || !ShouldStartHitReact(HitType))
+		{
+			const FVector PhysicalHitDirection = SwingDirection.IsNearlyZero()
+				? (GetActorLocation() - (DamageCauser ? DamageCauser->GetActorLocation() : GetActorLocation())).GetSafeNormal()
+				: SwingDirection.GetSafeNormal();
+			ApplyPhysicalHitReaction(PhysicalHitDirection, SuperArmorPhysicalHitReactionSettings, 1.f);
+			RequestPlayerAttackHitStop(AttackerCharacter);
+			OnIncomingHitResolvedWithoutHitReact(HitType);
+			return;
+		}
+
+		ApplyPhysicalHitReaction(SwingDirection, LightPhysicalHitReactionSettings, 1.f);
+
+		const ECharacterHitReactDirection HitDirection = AdjustHitReactDirection(
+			HitType,
+			DetermineHitReactDirection(DamageCauser, SwingDirection, DefenseRuleData),
+			DefenseRuleData);
+		UAnimMontage* HitReactMontage = GetHitReactMontage(HitType, HitDirection);
+		StartHitReact(HitType, HitDirection);
+		ApplyHitReactKnockback(DamageCauser, DefenseKnockbackData.HitReact, HitReactMontage);
+		RequestPlayerAttackHitStop(AttackerCharacter);
 		return;
 	}
 
-	// 이미 HitReact 중일 때 우선순위 간단 처리
-	if (IsInHitReact())
+	// 인터럽트 가능 여부
+	if (!CanBeInterruptedBy(HitType))
 	{
-		// Heavy react 중에는 Light/Large가 현재 모션을 덮지 못하게 막는다.
-		if (IsHeavyHitType(CurrentHitReact) && HitType == EHitReactType::LightHit)
-		{
-			return;
-		}
-
-		if (IsHeavyHitType(CurrentHitReact) && IsLargeHitType(HitType))
-		{
-			return;
-		}
+		const FVector PhysicalHitDirection = SwingDirection.IsNearlyZero()
+			? (GetActorLocation() - (DamageCauser ? DamageCauser->GetActorLocation() : GetActorLocation())).GetSafeNormal()
+			: SwingDirection.GetSafeNormal();
+		ApplyPhysicalHitReaction(PhysicalHitDirection, SuperArmorPhysicalHitReactionSettings, 1.f);
+		RequestPlayerAttackHitStop(AttackerCharacter);
+		OnIncomingHitResolvedWithoutHitReact(HitType);
+		return;
 	}
 
 	if (!ShouldStartHitReact(HitType))
 	{
+		const FVector PhysicalHitDirection = SwingDirection.IsNearlyZero()
+			? (GetActorLocation() - (DamageCauser ? DamageCauser->GetActorLocation() : GetActorLocation())).GetSafeNormal()
+			: SwingDirection.GetSafeNormal();
+		ApplyPhysicalHitReaction(PhysicalHitDirection, SuperArmorPhysicalHitReactionSettings, 1.f);
+		RequestPlayerAttackHitStop(AttackerCharacter);
+		OnIncomingHitResolvedWithoutHitReact(HitType);
 		return;
 	}
 
 	// 먼저 공격자 위치로 F/L/R/B를 나누고,
 	// 정면 계열일 때만 스윙 방향으로 F/FL/FR를 세분화한다.
-	const ECharacterHitReactDirection HitDirection = DetermineHitReactDirection(DamageCauser, SwingDirection);
+	const ECharacterHitReactDirection HitDirection = AdjustHitReactDirection(
+		HitType,
+		DetermineHitReactDirection(DamageCauser, SwingDirection, DefenseRuleData),
+		DefenseRuleData);
 	UAnimMontage* HitReactMontage = GetHitReactMontage(HitType, HitDirection);
 	StartHitReact(HitType, HitDirection);
+	if (IsHeavyHitType(HitType) || IsLargeHitType(HitType))
+	{
+		ApplyPhysicalHitReaction(SwingDirection, SuperArmorPhysicalHitReactionSettings, 1.f);
+	}
 	ApplyHitReactKnockback(DamageCauser, DefenseKnockbackData.HitReact, HitReactMontage);
+	RequestPlayerAttackHitStop(AttackerCharacter);
 }
 
 bool AJunMonster::TryHandleIncomingHitBeforeDamage(
@@ -444,7 +483,10 @@ void AJunMonster::OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker)
 	}
 }
 
-void AJunMonster::NotifyAttackParriedBy(AJunPlayer* Parrier, float PostureScale)
+void AJunMonster::NotifyAttackParriedBy(
+	AJunPlayer* Parrier,
+	float PostureScale,
+	const FJunAttackDefenseRuleData& DefenseRuleData)
 {
 	if (!Parrier || CurrentState == EMonsterState::Dead || bBeingExecuted)
 	{
@@ -452,6 +494,11 @@ void AJunMonster::NotifyAttackParriedBy(AJunPlayer* Parrier, float PostureScale)
 	}
 
 	AddPosture(ParriedPostureGain * FMath::Max(0.f, PostureScale));
+}
+
+bool AJunMonster::NotifyMikiriCounteredBy(AJunPlayer* CounterPlayer)
+{
+	return false;
 }
 
 bool AJunMonster::IsExecutionReady() const
@@ -497,7 +544,13 @@ bool AJunMonster::TryBeginExecutionBy(AJunPlayer* Player)
 	CurrentExecutionInstigator = Player;
 	CurrentExecutionMontage = nullptr;
 	ExecutionReadyRemainTime = 0.f;
+	CurrentPosture = 0.f;
+	PostureRecoveryDelayRemainTime = 0.f;
 	GetWorldTimerManager().ClearTimer(ExecutionRecoveryTimerHandle);
+	if (AJunPlayerController* JunPlayerController = Player ? Cast<AJunPlayerController>(Player->GetController()) : nullptr)
+	{
+		JunPlayerController->HideBossPostureImmediately();
+	}
 
 	StopAIMovement();
 	StopAllAttackTraces();
@@ -513,6 +566,16 @@ bool AJunMonster::TryBeginExecutionBy(AJunPlayer* Player)
 	GetCharacterMovement()->StopMovementImmediately();
 	AddGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
 	AddGameplayTag(JunGameplayTags::State_Block_Move);
+
+	if (ReadyExecutedMontage)
+	{
+		if (UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+		{
+			MonsterAnimInstance->Montage_Stop(0.05f, ReadyExecutedMontage);
+		}
+	}
+
+	OnExecutionReadyEnded(false);
 
 	return true;
 }
@@ -814,6 +877,8 @@ void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunA
 		return;
 	}
 
+	Super::BeginAttackTraceWindow(HitReactType, DamageData, DefenseKnockbackData, DefenseRuleData, NiagaraComponent, TraceOverrideData);
+
 	EquippedWeapon->SetAttackHitReactType(HitReactType);
 	EquippedWeapon->SetAttackDamageData(DamageData);
 	EquippedWeapon->SetAttackDefenseKnockbackData(DefenseKnockbackData);
@@ -824,6 +889,8 @@ void AJunMonster::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunA
 
 void AJunMonster::EndAttackTraceWindow(EJunWeaponNiagaraComponent NiagaraComponent)
 {
+	Super::EndAttackTraceWindow(NiagaraComponent);
+
 	if (!EquippedWeapon)
 	{
 		return;
@@ -2566,6 +2633,7 @@ void AJunMonster::StartHitReact(EHitReactType NewHitReact, ECharacterHitReactDir
 {
 	// 피격 리액션은 "상태 태그 잠금 + AI 이동 정지 + 방향별 몽타주 재생"으로 시작한다.
 	// 이 동안 일반 상태머신은 멈추고, Duration이 끝나면 다시 원래 AI 상태 갱신으로 돌아간다.
+	const bool bRestartingHitReact = IsInHitReact();
 	CurrentHitReact = NewHitReact;
 	CurrentHitReactDirection = NewHitDirection;
 	HitReactTime = 0.f;
@@ -2597,7 +2665,19 @@ void AJunMonster::StartHitReact(EHitReactType NewHitReact, ECharacterHitReactDir
 			CurrentHitReactDuration = HitReactMontage->GetPlayLength();
 		}
 
-		PlayAnimMontage(HitReactMontage);
+		if (UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+		{
+			const float BlendInTime = bRestartingHitReact ? HitReactRestartBlendInTime : HitReactBlendInTime;
+			const FMontageBlendSettings BlendInSettings(FMath::Max(0.f, BlendInTime));
+			if (AnimInstance->Montage_PlayWithBlendSettings(HitReactMontage, BlendInSettings) <= 0.f)
+			{
+				PlayAnimMontage(HitReactMontage);
+			}
+		}
+		else
+		{
+			PlayAnimMontage(HitReactMontage);
+		}
 	}
 }
 
@@ -2804,6 +2884,10 @@ void AJunMonster::OnHitReactEnded(EHitReactType EndedHitReact)
 {
 }
 
+void AJunMonster::OnIncomingHitResolvedWithoutHitReact(EHitReactType HitType)
+{
+}
+
 bool AJunMonster::IsInHitReact() const
 {
 	return CurrentHitReact != EHitReactType::None;
@@ -2853,6 +2937,14 @@ float AJunMonster::GetHitReactControlLockDuration(EHitReactType HitType) const
 	return GetHitReactDuration(HitType);
 }
 
+ECharacterHitReactDirection AJunMonster::AdjustHitReactDirection(
+	EHitReactType HitType,
+	ECharacterHitReactDirection HitDirection,
+	const FJunAttackDefenseRuleData& DefenseRuleData) const
+{
+	return HitDirection;
+}
+
 ECharacterHitReactDirection AJunMonster::DetermineHitReactDirection(const AActor* DamageCauser, const FVector& SwingDirection) const
 {
 	if (!DamageCauser)
@@ -2893,6 +2985,31 @@ ECharacterHitReactDirection AJunMonster::DetermineHitReactDirection(const AActor
 	}
 
 	return ECharacterHitReactDirection::Front_F;
+}
+
+ECharacterHitReactDirection AJunMonster::DetermineHitReactDirection(
+	const AActor* DamageCauser,
+	const FVector& SwingDirection,
+	const FJunAttackDefenseRuleData& DefenseRuleData) const
+{
+	const ECharacterHitReactDirection AutoDirection = DetermineHitReactDirection(DamageCauser, SwingDirection);
+	if (!IsFrontHitReactDirection(AutoDirection))
+	{
+		return AutoDirection;
+	}
+
+	switch (DefenseRuleData.FrontHitReactDirectionOverride)
+	{
+	case EJunFrontHitReactDirectionOverride::Front_FL:
+		return ECharacterHitReactDirection::Front_FL;
+	case EJunFrontHitReactDirectionOverride::Front_FR:
+		return ECharacterHitReactDirection::Front_FR;
+	case EJunFrontHitReactDirectionOverride::Front_F:
+		return ECharacterHitReactDirection::Front_F;
+	case EJunFrontHitReactDirectionOverride::Auto:
+	default:
+		return AutoDirection;
+	}
 }
 
 UAnimMontage* AJunMonster::GetHitReactMontage(EHitReactType HitType, ECharacterHitReactDirection HitDirection) const
@@ -3041,17 +3158,48 @@ bool AJunMonster::CanRecoverPosture() const
 		return false;
 	}
 
-	if (bIsAttacking || IsInHitReact())
+	const bool bTargetMaintainingAttackPosturePressure = IsTargetMaintainingAttackPosturePressure();
+	if ((bIsAttacking && bTargetMaintainingAttackPosturePressure) || IsInHitReact())
 	{
 		return false;
 	}
 
-	if (HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
+	if (HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked) &&
+		(!bIsAttacking || bTargetMaintainingAttackPosturePressure))
 	{
 		return false;
 	}
 
 	return true;
+}
+
+bool AJunMonster::IsTargetMaintainingAttackPosturePressure() const
+{
+	if (!bIsAttacking || !CurrentTarget || AttackPosturePressureDistance <= 0.f)
+	{
+		return false;
+	}
+
+	const float DistanceSq = FVector::DistSquared2D(GetActorLocation(), CurrentTarget->GetActorLocation());
+	if (DistanceSq > FMath::Square(AttackPosturePressureDistance))
+	{
+		return false;
+	}
+
+	const AJunPlayer* TargetPlayer = Cast<AJunPlayer>(CurrentTarget);
+	if (!TargetPlayer)
+	{
+		return true;
+	}
+
+	return TargetPlayer->IsBasicAttacking() ||
+		TargetPlayer->IsHeavyAttacking() ||
+		TargetPlayer->IsJigenAttacking() ||
+		TargetPlayer->IsJumpAttacking() ||
+		TargetPlayer->IsDodgeAttacking() ||
+		TargetPlayer->IsInParrySuccess() ||
+		TargetPlayer->IsGuardBlockReacting() ||
+		TargetPlayer->IsParryWindowOpen();
 }
 
 float AJunMonster::GetPostureRecoveryVitalityScale() const
@@ -3083,8 +3231,9 @@ void AJunMonster::StartExecutionReady()
 	}
 
 	bExecutionReady = true;
-	ExecutionReadyRemainTime = ExecutionReadyDuration;
-	CurrentPosture = 0.f;
+	ExecutionReadyRemainTime = FMath::Max(0.1f, ExecutionReadyDuration);
+	CurrentPosture = MaxPosture;
+	PostureRecoveryDelayRemainTime = ExecutionReadyRemainTime;
 
 	StopAIMovement();
 	StopAllAttackTraces();
@@ -3105,6 +3254,8 @@ void AJunMonster::StartExecutionReady()
 	{
 		PlayAnimMontage(ReadyExecutedMontage);
 	}
+
+	OnExecutionReadyStarted();
 }
 
 void AJunMonster::EndExecutionReady()
@@ -3116,7 +3267,10 @@ void AJunMonster::EndExecutionReady()
 
 	bExecutionReady = false;
 	ExecutionReadyRemainTime = 0.f;
-	CurrentPosture = 0.f;
+	CurrentPosture = MaxPosture > 0.f
+		? FMath::Clamp(MaxPosture * MissedExecutionPostureRatio, 0.f, MaxPosture - KINDA_SMALL_NUMBER)
+		: 0.f;
+	PostureRecoveryDelayRemainTime = PostureRecoveryDelay;
 
 	// HP 0으로 처형 대기가 끝나면 몬스터가 즉시 Dead 태그를 얻지 않도록 최소 생존 HP를 보장한다.
 	if (Hp <= 0 && CurrentLifeCount > 0)
@@ -3134,6 +3288,16 @@ void AJunMonster::EndExecutionReady()
 
 	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
 	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
+
+	OnExecutionReadyEnded(true);
+}
+
+void AJunMonster::OnExecutionReadyStarted()
+{
+}
+
+void AJunMonster::OnExecutionReadyEnded(bool bMissedExecution)
+{
 }
 
 void AJunMonster::FinishExecutionRecovery()

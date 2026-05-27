@@ -291,18 +291,21 @@ void AWeaponActor::UpdateAttackTrace()
 FVector AWeaponActor::GetCurrentTraceEndLocation(const FVector& CurrentTraceStart) const
 {
 	const FVector BaseTraceEnd = TraceEndPoint ? TraceEndPoint->GetComponentLocation() : CurrentTraceStart;
-	if (!bAttackTraceOverrideActive || ActiveAttackTraceOverrideData.TraceEndExtension <= 0.f)
+	if (!bAttackTraceOverrideActive || FMath::IsNearlyZero(ActiveAttackTraceOverrideData.TraceEndExtension))
 	{
 		return BaseTraceEnd;
 	}
 
-	const FVector TraceDirection = (BaseTraceEnd - CurrentTraceStart).GetSafeNormal();
-	if (TraceDirection.IsNearlyZero())
+	const FVector BaseTraceVector = BaseTraceEnd - CurrentTraceStart;
+	const float BaseTraceLength = BaseTraceVector.Size();
+	if (BaseTraceLength <= KINDA_SMALL_NUMBER)
 	{
 		return BaseTraceEnd;
 	}
 
-	return BaseTraceEnd + (TraceDirection * ActiveAttackTraceOverrideData.TraceEndExtension);
+	const FVector TraceDirection = BaseTraceVector / BaseTraceLength;
+	const float ResolvedTraceLength = FMath::Max(0.f, BaseTraceLength + ActiveAttackTraceOverrideData.TraceEndExtension);
+	return CurrentTraceStart + (TraceDirection * ResolvedTraceLength);
 }
 
 float AWeaponActor::GetCurrentTraceRadius() const
@@ -510,8 +513,8 @@ void AWeaponActor::ApplyDamageToHitCharacter(AActor* HitActor, const FVector& Sw
 			return;
 		}
 		
-		// 무적 체크
-		if (VictimCharacter->Is_Invincible())
+		// Dodge invincibility only ignores attacks that explicitly allow it.
+		if (AttackDefenseRuleData.bCanBeDodgedByInvincibility && VictimCharacter->Is_Invincible())
 		{
 			return;
 		}
@@ -541,4 +544,3 @@ void AWeaponActor::ApplyDamageToHitCharacter(AActor* HitActor, const FVector& Sw
 		}
 	}
 }
-

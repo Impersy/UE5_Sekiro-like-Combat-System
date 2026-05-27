@@ -19,6 +19,8 @@ void UJunPlayerAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 		bIsSprinting = false;
 		bShouldPlayLockOnForwardRunStart = false;
 		bJumpStartTriggered = false;
+		bSuppressLandingAnim = false;
+		bSuppressAirborneAnim = false;
 		bUseGuardBase = false;
 		DefenseState = EJunDefenseState::None;
 		bIsGuardStarting = false;
@@ -28,6 +30,7 @@ void UJunPlayerAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 		bIsGuardBlockReleasing = false;
 		GuardStartRestartSerial = 0;
 		bGuardStartRestartRequested = false;
+		bGuardStartRepeatRequested = false;
 		LastGuardStartRestartSerial = 0;
 		LastDefenseState = EJunDefenseState::None;
 		LockOnForwardRunStartTriggerRemainTime = 0.f;
@@ -45,6 +48,8 @@ void UJunPlayerAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	bUseRunLocomotion = Player->ShouldUseRunningAnim();
 	bIsSprinting = Player->IsSprinting();
 	bJumpStartTriggered = Player->IsJumpStartAnimTriggered();
+	bSuppressLandingAnim = Player->ShouldSuppressLandingAnim();
+	bSuppressAirborneAnim = Player->ShouldSuppressAirborneAnim();
 	bUseGuardBase = Player->ShouldUseGuardBase();
 	DefenseState = Player->GetDefenseState();
 	bIsGuardStarting = DefenseState == EJunDefenseState::Starting;
@@ -59,6 +64,7 @@ void UJunPlayerAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 		bIsGuardStarting &&
 		bWasAlreadyStarting &&
 		GuardStartRestartSerial != LastGuardStartRestartSerial;
+	bGuardStartRepeatRequested = bGuardStartRestartRequested;
 	LastGuardStartRestartSerial = GuardStartRestartSerial;
 	LastDefenseState = DefenseState;
 

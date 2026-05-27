@@ -24,7 +24,8 @@ public class JunDuck : ModuleRules
 			"Niagara",
 			"NavigationSystem",
 			"AIModule",
-			"UMG"
+			"UMG",
+			"PhysicsCore"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });

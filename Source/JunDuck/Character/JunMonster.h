@@ -113,7 +113,11 @@ public:
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
 		const FJunAttackDefenseRuleData& DefenseRuleData = FJunAttackDefenseRuleData());
 	virtual void OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker) override;
-	virtual void NotifyAttackParriedBy(class AJunPlayer* Parrier, float PostureScale = 1.f);
+	virtual void NotifyAttackParriedBy(
+		class AJunPlayer* Parrier,
+		float PostureScale = 1.f,
+		const FJunAttackDefenseRuleData& DefenseRuleData = FJunAttackDefenseRuleData());
+	virtual bool NotifyMikiriCounteredBy(class AJunPlayer* CounterPlayer);
 	bool IsExecutionReady() const;
 	bool CanBeExecutedBy(const class AJunPlayer* Player) const;
 	bool TryBeginExecutionBy(class AJunPlayer* Player);
@@ -273,6 +277,7 @@ protected:
 	void ReleaseHitReactControlLock();
 	virtual void OnHitReactStarted(EHitReactType NewHitReact, ECharacterHitReactDirection NewHitDirection);
 	virtual void OnHitReactEnded(EHitReactType EndedHitReact);
+	virtual void OnIncomingHitResolvedWithoutHitReact(EHitReactType HitType);
 	bool IsInHitReact() const;
 	bool CanBeInterruptedBy(EHitReactType IncomingHitReact) const;
 	virtual bool ShouldStartHitReact(EHitReactType IncomingHitReact) const;
@@ -285,7 +290,15 @@ protected:
 		const FJunAttackDefenseRuleData& DefenseRuleData);
 	virtual float GetHitReactDuration(EHitReactType HitType) const;
 	virtual float GetHitReactControlLockDuration(EHitReactType HitType) const;
+	virtual ECharacterHitReactDirection AdjustHitReactDirection(
+		EHitReactType HitType,
+		ECharacterHitReactDirection HitDirection,
+		const FJunAttackDefenseRuleData& DefenseRuleData) const;
 	ECharacterHitReactDirection DetermineHitReactDirection(const AActor* DamageCauser, const FVector& SwingDirection) const;
+	ECharacterHitReactDirection DetermineHitReactDirection(
+		const AActor* DamageCauser,
+		const FVector& SwingDirection,
+		const FJunAttackDefenseRuleData& DefenseRuleData) const;
 	UAnimMontage* GetHitReactMontage(EHitReactType HitType, ECharacterHitReactDirection HitDirection) const;
 	bool CanUpdateBehavior() const;
 	ECharacterKnockbackDirection DetermineKnockbackDirectionFromDamageCauser(const AActor* DamageCauser) const;
@@ -297,6 +310,7 @@ protected:
 	void AddPosture(float Amount);
 	void UpdatePostureRecovery(float DeltaTime);
 	bool CanRecoverPosture() const;
+	bool IsTargetMaintainingAttackPosturePressure() const;
 	float GetPostureRecoveryVitalityScale() const;
 	void StartExecutionReady();
 	void EndExecutionReady();
@@ -304,6 +318,8 @@ protected:
 	void UpdateExecutionFacing(float DeltaTime);
 	void ResetExecutionRuntimeState();
 	float GetExecutionMontageDuration(const UAnimMontage* Montage, float FallbackDuration) const;
+	virtual void OnExecutionReadyStarted();
+	virtual void OnExecutionReadyEnded(bool bMissedExecution);
 
 	UFUNCTION()
 	void OnExecutionMontageEnded(UAnimMontage* Montage, bool bInterrupted);
@@ -560,8 +576,14 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|PostureRecovery", meta = (ClampMin = "0"))
 	float PostureRecoveryRate = 25.f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|PostureRecovery", meta = (ClampMin = "0"))
+	float AttackPosturePressureDistance = 700.f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0.1"))
-	float ExecutionReadyDuration = 2.f;
+	float ExecutionReadyDuration = 1.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0", ClampMax = "1"))
+	float MissedExecutionPostureRatio = 0.99f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0"))
 	float ExecutionInteractRange = 180.f;
@@ -768,6 +790,12 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact")
 	float LargeHitLongDuration = 0.8f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact", meta = (ClampMin = "0.0"))
+	float HitReactBlendInTime = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact", meta = (ClampMin = "0.0"))
+	float HitReactRestartBlendInTime = 0.12f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
 	TObjectPtr<class UAnimMontage> HeavyHitFront_AMontage = nullptr;

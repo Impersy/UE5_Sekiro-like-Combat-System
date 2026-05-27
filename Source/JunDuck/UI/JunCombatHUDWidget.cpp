@@ -124,6 +124,17 @@ void UJunCombatHUDWidget::SetPlayerPosture(float CurrentPosture, float MaxPostur
 		? FMath::Clamp(CurrentPosture / MaxPosture, 0.f, 1.f)
 		: 0.f;
 
+	if (PlayerPosturePercent > KINDA_SMALL_NUMBER)
+	{
+		bPlayerPostureBreakHidePresentationActive = false;
+		PlayerPostureFrameOpacity = 1.f;
+		if (PlayerPosture_Frame)
+		{
+			PlayerPosture_Frame->SetRenderOpacity(PlayerPostureFrameOpacity);
+			PlayerPosture_Frame->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+	}
+
 	ApplyPostureBars();
 }
 
@@ -132,8 +143,35 @@ void UJunCombatHUDWidget::ResetPlayerPostureVisibilityState()
 	PlayerPosturePercent = 0.f;
 	PlayerZeroPostureElapsedTime = 0.f;
 	bPlayerPostureEverShown = false;
+	bPlayerPostureBreakHidePresentationActive = false;
+	PlayerPostureFrameOpacity = 1.f;
+	if (PlayerPosture_Frame)
+	{
+		PlayerPosture_Frame->SetRenderOpacity(PlayerPostureFrameOpacity);
+		PlayerPosture_Frame->SetVisibility(ESlateVisibility::Hidden);
+	}
 	ApplyPostureBars();
 	ApplyPlayerPostureVisibility(false);
+}
+
+void UJunCombatHUDWidget::StartPlayerPostureBreakHidePresentation()
+{
+	PlayerPosturePercent = 0.f;
+	PlayerZeroPostureElapsedTime = PostureHideDelay;
+	bPlayerPostureEverShown = true;
+	bPlayerPostureBreakHidePresentationActive = true;
+	PlayerPostureFrameOpacity = 1.f;
+	ApplyPostureBars();
+	if (PlayerPostureRoot)
+	{
+		PlayerPostureRoot->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	if (PlayerPosture_Frame)
+	{
+		PlayerPosture_Frame->SetRenderOpacity(PlayerPostureFrameOpacity);
+		PlayerPosture_Frame->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	ApplyPlayerPostureFillVisibility(false);
 }
 
 void UJunCombatHUDWidget::SetBossPosture(float CurrentPosture, float MaxPosture)
@@ -149,6 +187,15 @@ void UJunCombatHUDWidget::SetBossPosture(float CurrentPosture, float MaxPosture)
 	}
 
 	ApplyPostureBars();
+}
+
+void UJunCombatHUDWidget::HideBossPostureImmediately()
+{
+	BossPosturePercent = 0.f;
+	BossZeroPostureElapsedTime = PostureHideDelay;
+	bBossPostureEverShown = false;
+	ApplyPostureBars();
+	ApplyBossPostureVisibility(false);
 }
 
 void UJunCombatHUDWidget::PlayPlayerPostureBreakGlow()
@@ -570,9 +617,41 @@ void UJunCombatHUDWidget::UpdatePostureVisibility(float DeltaTime)
 		? 0.f
 		: BossZeroPostureElapsedTime + DeltaTime;
 
-	ApplyPlayerPostureVisibility(
-		bPlayerPostureEverShown &&
-		(bPlayerHasPosture || PlayerZeroPostureElapsedTime < PostureHideDelay));
+	if (bPlayerPostureBreakHidePresentationActive)
+	{
+		PlayerPostureFrameOpacity = PlayerPostureBreakFrameFadeOutSpeed > 0.f
+			? FMath::FInterpTo(PlayerPostureFrameOpacity, 0.f, DeltaTime, PlayerPostureBreakFrameFadeOutSpeed)
+			: 0.f;
+
+		if (PlayerPostureRoot)
+		{
+			PlayerPostureRoot->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+		if (PlayerPosture_Frame)
+		{
+			PlayerPosture_Frame->SetRenderOpacity(PlayerPostureFrameOpacity);
+			PlayerPosture_Frame->SetVisibility(PlayerPostureFrameOpacity > 0.01f ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+		}
+
+		ApplyPlayerPostureFillVisibility(false);
+		if (PlayerPostureFrameOpacity <= 0.01f)
+		{
+			bPlayerPostureBreakHidePresentationActive = false;
+			PlayerPostureFrameOpacity = 1.f;
+			if (PlayerPosture_Frame)
+			{
+				PlayerPosture_Frame->SetRenderOpacity(PlayerPostureFrameOpacity);
+			}
+			ApplyPlayerPostureVisibility(false);
+		}
+	}
+	else
+	{
+		ApplyPlayerPostureVisibility(
+			bPlayerPostureEverShown &&
+			(bPlayerHasPosture || PlayerZeroPostureElapsedTime < PostureHideDelay));
+	}
+
 	ApplyBossPostureVisibility(
 		bBossPostureEverShown &&
 		bBossHealthVisible &&
@@ -604,15 +683,9 @@ void UJunCombatHUDWidget::ApplyPostureTint(UImage* FillImage, float Percent) con
 	FillImage->SetColorAndOpacity(TargetTint);
 }
 
-void UJunCombatHUDWidget::ApplyPlayerPostureVisibility(bool bVisible)
+void UJunCombatHUDWidget::ApplyPlayerPostureFillVisibility(bool bVisible)
 {
 	const ESlateVisibility TargetVisibility = bVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden;
-	if (PlayerPostureRoot)
-	{
-		PlayerPostureRoot->SetVisibility(TargetVisibility);
-		return;
-	}
-
 	if (PlayerFillCenter)
 	{
 		PlayerFillCenter->SetVisibility(TargetVisibility);
@@ -631,15 +704,9 @@ void UJunCombatHUDWidget::ApplyPlayerPostureVisibility(bool bVisible)
 	}
 }
 
-void UJunCombatHUDWidget::ApplyBossPostureVisibility(bool bVisible)
+void UJunCombatHUDWidget::ApplyBossPostureFillVisibility(bool bVisible)
 {
 	const ESlateVisibility TargetVisibility = bVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden;
-	if (BossPostureRoot)
-	{
-		BossPostureRoot->SetVisibility(TargetVisibility);
-		return;
-	}
-
 	if (BossFillCenter)
 	{
 		BossFillCenter->SetVisibility(TargetVisibility);
@@ -656,6 +723,34 @@ void UJunCombatHUDWidget::ApplyBossPostureVisibility(bool bVisible)
 	{
 		BossRightCap->SetVisibility(TargetVisibility);
 	}
+}
+
+void UJunCombatHUDWidget::ApplyPlayerPostureVisibility(bool bVisible)
+{
+	const ESlateVisibility TargetVisibility = bVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden;
+	if (PlayerPostureRoot)
+	{
+		PlayerPostureRoot->SetVisibility(TargetVisibility);
+	}
+
+	if (PlayerPosture_Frame)
+	{
+		PlayerPosture_Frame->SetRenderOpacity(1.f);
+		PlayerPosture_Frame->SetVisibility(TargetVisibility);
+	}
+
+	ApplyPlayerPostureFillVisibility(bVisible);
+}
+
+void UJunCombatHUDWidget::ApplyBossPostureVisibility(bool bVisible)
+{
+	const ESlateVisibility TargetVisibility = bVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden;
+	if (BossPostureRoot)
+	{
+		BossPostureRoot->SetVisibility(TargetVisibility);
+	}
+
+	ApplyBossPostureFillVisibility(bVisible);
 }
 
 void UJunCombatHUDWidget::ApplyBossHealthVisibility()

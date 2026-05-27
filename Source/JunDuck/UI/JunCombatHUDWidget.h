@@ -34,7 +34,13 @@ public:
 	void ResetPlayerPostureVisibilityState();
 
 	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
+	void StartPlayerPostureBreakHidePresentation();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
 	void SetBossPosture(float CurrentPosture, float MaxPosture);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
+	void HideBossPostureImmediately();
 
 	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
 	void PlayPlayerPostureBreakGlow();
@@ -120,6 +126,8 @@ private:
 	void UpdateRedGlowEffect(float DeltaTime, UWidget* RootWidget, float& ElapsedTime);
 	void StartRedGlowEffect(UWidget* RootWidget, float& ElapsedTime);
 	void UpdatePostureVisibility(float DeltaTime);
+	void ApplyPlayerPostureFillVisibility(bool bVisible);
+	void ApplyBossPostureFillVisibility(bool bVisible);
 	void UpdateBossClearUI(float DeltaTime);
 	void UpdateDeathUI(float DeltaTime);
 	void ApplyWidgetOpacity(UWidget* Widget, float Opacity, bool bHideWhenZero = true) const;
@@ -210,6 +218,9 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|PostureGlow", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
 	float RedGlowScaleY = 1.f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Posture", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float PlayerPostureBreakFrameFadeOutSpeed = 4.f;
+
 	float PlayerDelayedHealthDelayRemainTime = 0.f;
 	float BossDelayedHealthDelayRemainTime = 0.f;
 	float PlayerRedGlowElapsedTime = -1.f;
@@ -218,6 +229,8 @@ private:
 	float BossZeroPostureElapsedTime = 0.f;
 	bool bPlayerPostureEverShown = false;
 	bool bBossPostureEverShown = false;
+	bool bPlayerPostureBreakHidePresentationActive = false;
+	float PlayerPostureFrameOpacity = 1.f;
 	float DimBlackOpacity = 0.f;
 	float FullBlackOpacity = 0.f;
 	float FakeDeathOpacity = 0.f;
@@ -256,6 +269,9 @@ private:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> PlayerPostureRoot;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> PlayerPosture_Frame;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UProgressBar> PlayerHealthBar;

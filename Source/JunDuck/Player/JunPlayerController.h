@@ -20,6 +20,8 @@ public:
 	AJunPlayerController(const FObjectInitializer& objectInitializer);
 	void PlayPlayerPostureBreakGlow();
 	void PlayBossPostureBreakGlow();
+	void StartPlayerPostureBreakHidePresentation();
+	void HideBossPostureImmediately();
 	void ShowBossClearUI();
 	void ShowFakeDeathUI();
 	void HideFakeDeathUI();
@@ -59,6 +61,9 @@ private:
 	void Input_RunReleased(const FInputActionValue& InputValue);
 	void Input_WalkToggle(const FInputActionValue& InputValue);
 
+	bool bDodgeInputHeld = false;
+	float LastDodgeInputTime = -FLT_MAX;
+
 protected:
 	TObjectPtr<class AJunPlayer> JunPlayer;
 
@@ -94,4 +99,7 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Danger")
 	FVector DangerMarkerPlayerWorldOffset = FVector(0.f, 0.f, 120.f);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|MikiriCounter", meta = (ClampMin = "0.0"))
+	float MikiriCounterDodgeDefenseInputGraceTime = 0.2f;
 };

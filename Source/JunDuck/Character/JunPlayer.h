@@ -133,6 +133,7 @@ public: // Engine / Character Overrides
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
 	virtual void OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker) override;
+	virtual bool Is_Invincible() const override;
 	virtual void Jump() override;
 	virtual void Landed(const FHitResult& Hit) override;
 	virtual void HandleGameplayEventNotify(FGameplayTag EventTag) override;
@@ -182,8 +183,13 @@ public: // External Gameplay API
 	bool TryCancelDodgeIntoJigen();
 	bool TryCancelDodgeIntoJump();
 	bool TryCancelDodgeIntoDefense();
+	bool TryOpenMikiriCounterWindow(bool bRequireForwardInput = true);
+	bool TryStartJumpCounterStompFollowUp();
+	bool TryCancelJumpCounterStompFollowUpIntoJumpAttack();
 	void BeginDodgeAttackWindow();
 	void EndDodgeAttackWindow();
+	void BeginJumpCounterStompJumpAttackWindow();
+	void EndJumpCounterStompJumpAttackWindow();
 	void BeginDodgeChainWindow();
 	void EndDodgeChainWindow();
 	void NotifyGuardRestartAnchorReached(class UAnimMontage* Montage, float AnchorPosition);
@@ -191,6 +197,12 @@ public: // External Gameplay API
 	bool TryChooseFakeDeathDie();
 	bool TryChooseFakeDeathRevive();
 	bool TryStartJigen();
+	void ApplyJumpCounterStompBounce(float UpVelocity, float BackwardVelocity);
+	void ApplyJumpCounterStompBounce(float UpVelocity, float BackwardVelocity, float BackwardMoveDuration);
+	void ApplyJumpCounterStompHit(
+		EHitReactType HitReactType,
+		const FJunAttackDamageData& DamageData,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData);
 	UFUNCTION(BlueprintCallable, Category = "Equipment|Hat")
 	void EquipHat(TSubclassOf<class AHatActor> NewHatClass);
 	UFUNCTION(BlueprintCallable, Category = "Equipment|Hat")
@@ -205,6 +217,7 @@ public: // Query / State API
 	bool IsGuardPoseActive();
 	bool IsBasicAttacking() const;
 	bool IsHeavyAttacking() const;
+	bool IsJigenAttacking() const;
 	bool IsJumpAttacking() const;
 	bool IsDodgeAttacking() const;
 	bool IsWalking() const;
@@ -221,7 +234,7 @@ public: // Query / State API
 	bool ShouldUseGuardBase() const;
 	EJunDefenseState GetDefenseState() const;
 	int32 GetGuardStartRestartSerial() const { return GuardStartRestartSerial; }
-	bool IsParryWindowOpen();
+	bool IsParryWindowOpen() const;
 	float GetDesiredMoveForward() const;
 	float GetDesiredMoveRight() const;
 	float GetGuardMoveBlendRemainTime() const;
@@ -231,6 +244,10 @@ public: // Query / State API
 	bool IsExecuting() const;
 	bool IsInDeathSequence() const;
 	bool IsWaitingForFakeDeathChoice() const;
+	bool ShouldSuppressLandingAnim() const { return LandingAnimSuppressRemainTime > 0.f; }
+	bool ShouldSuppressAirborneAnim() const { return LandingAnimSuppressRemainTime > 0.f; }
+	bool IsMikiriCounterThreatAvailable() const;
+	bool DidLastParrySuccessUseLeftSide() const { return bLastParrySuccessUsedLeftSide; }
 	float GetCurrentPosture() const { return CurrentPosture; }
 	float GetMaxPosture() const { return MaxPosture; }
 
@@ -328,6 +345,13 @@ protected: // JumpAttack
 	bool HasEnoughAirTimeForJumpAttack() const;
 	float GetDistanceFromGround() const;
 	bool IsJumpCounterEvadeSuccessful() const;
+	void UpdateJumpCounterStompOpportunity();
+	void UpdateJumpCounterStompFollowUp(float DeltaTime);
+	bool CanStartJumpCounterStompFollowUp() const;
+	FVector GetJumpCounterStompTargetLocation(const class AJunMonster* TargetMonster) const;
+	void SetJumpCounterStompTargetCollisionIgnored(class AJunMonster* TargetMonster, bool bIgnore);
+	void RestoreJumpCounterStompTargetCollisionIgnored();
+	void FinishJumpCounterStompFollowUp(bool bApplyBounce);
 	void StartJumpAttack();
 	void RequestJumpAttackEnd();
 	void EnterJumpAttackEnd();
@@ -345,6 +369,9 @@ protected: // JumpAttack
 	UFUNCTION()
 	void OnJumpAttackMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
+	UFUNCTION()
+	void OnJumpCounterStompFollowUpMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
 protected: // Dodge
 	UFUNCTION()
 	void OnDodgeMontageEnded(UAnimMontage* Montage, bool bInterrupted);
@@ -356,6 +383,7 @@ protected: // Dodge
 	bool TryStartDodgeChain();
 	bool CanCancelDodgeIntoRecoveryAction() const;
 	void CancelDodgeForRecoveryTransition(float BlendOutTime);
+	bool TryCancelDashDodgeIntoMove();
 	float GetCurrentDodgeAttackTimelineRate() const;
 	bool CanCancelDodgeAttackIntoMove() const;
 	bool CanCancelDodgeAttackIntoDodge() const;
@@ -367,6 +395,10 @@ protected: // Dodge
 	void CancelDodgeAttackForRecoveryTransition(float BlendOutTime = 0.1f);
 	void AlignActorToDesiredMoveDirectionForDodge();
 	class UAnimMontage* GetDodgeMontageToPlay() const;
+	bool IsDashDodgeMontage(const UAnimMontage* Montage) const;
+	bool IsForwardDashMontage(const UAnimMontage* Montage) const;
+	bool IsBackDashMontage(const UAnimMontage* Montage) const;
+	bool IsSideDashMontage(const UAnimMontage* Montage) const;
 	float GetDodgePlayRateForMontage(const UAnimMontage* Montage) const;
 	float GetDodgeRecoveryCancelOpenTimeForMontage(const UAnimMontage* Montage) const;
 	float GetDodgeMoveCancelOpenTimeForMontage(const UAnimMontage* Montage) const;
@@ -410,6 +442,7 @@ protected: // Death
 	void NotifyBossPlayerRealDeathStarted();
 	void ResetBossesAfterPlayerRealDeath();
 	void RespawnAtPlayerStart();
+	void ClearHitReactRuntimeStateForRevive();
 
 	UFUNCTION()
 	void OnFakeDeathGetUpMontageEnded(UAnimMontage* Montage, bool bInterrupted);
@@ -419,17 +452,28 @@ protected: // Hit
 	bool CanBeInterruptedBy(EHitReactType IncomingHitType) const;
 	bool IsDamageCauserInDefenseAngle(const AActor* DamageCauser) const;
 	ECharacterHitReactDirection DetermineHitReactDirection(const AActor* DamageCauser, const FVector& SwingDirection) const;
+	ECharacterHitReactDirection DetermineHitReactDirection(
+		const AActor* DamageCauser,
+		const FVector& SwingDirection,
+		const FJunAttackDefenseRuleData& DefenseRuleData) const;
 	ECharacterKnockbackDirection DetermineKnockbackDirectionFromDamageCauser(const AActor* DamageCauser) const;
 	UAnimMontage* GetHitReactMontage(EHitReactType HitType, ECharacterHitReactDirection HitDirection) const;
 	EJunAirHitReactType ResolveAirHitReactType() const;
 	UAnimMontage* GetAirHitReactMontage(EJunAirHitReactType AirHitReactType) const;
 	UAnimMontage* GetParrySuccessMontage(const FVector& SwingDirection);
 	UAnimMontage* GetAirParrySuccessMontage();
+	UAnimMontage* GetMikiriParryMontage(const AActor* DamageCauser) const;
+	UAnimMontage* GetMikiriParryReadyMontage(const AActor* ReferenceActor) const;
+	AActor* GetMikiriCounterReferenceActor() const;
 	bool AddPosture(float Amount);
 	bool IsPostureFull() const;
 	void UpdatePostureRecovery(float DeltaTime);
 	bool CanRecoverPosture() const;
 	void StartParrySuccess();
+	bool TryHandleMikiriCounter(AActor* DamageCauser);
+	void StartMikiriCounterSuccess(AActor* DamageCauser);
+	void UpdateMikiriCounterWindow(float DeltaTime);
+	void FinishMikiriCounterReady();
 	void CancelParrySuccessForCancelTransition(float BlendOutTime);
 	void ExecuteBufferedParrySuccessCancelAction();
 	void TryExecuteBufferedParrySuccessCancelAction();
@@ -438,6 +482,7 @@ protected: // Hit
 	void ApplyAirGuardBreakTuning();
 	void StartAirGuardBreakLandMontage();
 	void StartHitReact(EHitReactType HitType, ECharacterHitReactDirection HitDirection);
+	void PlayHitReactMontageWithBlend(class UAnimMontage* HitReactMontage, bool bRestartingHitReact);
 	void UpdateAirHeavyHitReact(float DeltaTime);
 	void StartAirHeavyHitDownStage();
 	void StartAirHeavyHitLandStage();
@@ -454,6 +499,7 @@ protected: // Hit
 		float BrakingFrictionFactorOverride,
 		float OverrideDuration
 	);
+	void ClearCombatInputBuffers();
 	void InterruptActionsForHitReaction();
 	void UpdatePlayerHitState(float DeltaTime);
 	void UpdateGuardBreakVulnerability(float DeltaTime);
@@ -533,6 +579,7 @@ protected: // Jump / Movement Helpers
 	float GetLockOnTargetYawDelta() const;
 	UAnimMontage* ChooseLockOnTurnMontage(float YawDelta) const;
 	float GetCurrentRunMoveSpeed() const;
+	float GetLockOnMoveSpeedMultiplier() const;
 	FRotator GetJumpLaunchBasisRotation() const;
 	FVector BuildJumpLaunchVelocity(const FVector2D& MoveInput) const;
 	FVector GetJumpLaunchDirection(const FVector2D& MoveInput) const;
@@ -546,7 +593,13 @@ private:
 	void SpawnAndAttachDefaultHat();
 	void CacheDefenseEffectComponents();
 	class UNiagaraComponent* FindNiagaraComponentByName(FName ComponentName) const;
-	void PlayDefenseEffect(TObjectPtr<class UNiagaraComponent>& CachedComponent, FName ComponentName);
+	USceneComponent* FindSceneComponentByName(FName ComponentName) const;
+	void PlayDefenseEffect(
+		TObjectPtr<class UNiagaraComponent>& CachedComponent,
+		FName ComponentName,
+		TObjectPtr<class USceneComponent>& CachedLocationComponent,
+		FName LocationComponentName);
+	void PlayDefenseCameraShake(float Scale);
 
 protected: // Target / Facing
 	class AJunCharacter* FindBestLockOnTarget();
@@ -566,6 +619,7 @@ protected: // Camera
 	bool IsLockOnTargetValid() const;
 
 	void UpdateLockOnCamera(float DeltaTime);
+	bool ShouldUseJumpCounterLockOnCameraPitch() const;
 	void StartExecutionCamera(class AJunMonster* Monster);
 	void EndExecutionCamera();
 	void AdvanceExecutionCameraStage();
@@ -604,20 +658,26 @@ protected: // Components
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
 	TObjectPtr<class UAudioComponent> RealDeathAudioComponent;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
+	bool bTestInvincible = false;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX|Defense")
 	FName ParryParticleComponentName = TEXT("Parry_Particle");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX|Defense")
+	FName ParryEffectLocationComponentName = TEXT("Parry_Location");
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX|Defense")
 	FName DeflectParticleComponentName = TEXT("Deflect_Particle");
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX|Defense")
+	FName DeflectEffectLocationComponentName = TEXT("Deflect_Location");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX|Defense")
 	FName GuardBreakParticleComponentName = TEXT("Brake_Particle");
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX|Defense")
-	bool bAutoDeactivateDefenseParticles = true;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX|Defense", meta = (ClampMin = "0"))
-	float DefenseParticleAutoDeactivateDelay = 0.1f;
+	FName GuardBreakEffectLocationComponentName = TEXT("Brake_Location");
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UNiagaraComponent> CachedParryParticleComponent = nullptr;
@@ -627,6 +687,30 @@ protected: // Components
 
 	UPROPERTY(Transient)
 	TObjectPtr<class UNiagaraComponent> CachedGuardBreakParticleComponent = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class USceneComponent> CachedParryEffectLocationComponent = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class USceneComponent> CachedDeflectEffectLocationComponent = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class USceneComponent> CachedGuardBreakEffectLocationComponent = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Defense")
+	TSubclassOf<class UCameraShakeBase> DefenseCameraShakeClass = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Defense", meta = (ClampMin = "0.0"))
+	float PerfectParryCameraShakeScale = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Defense", meta = (ClampMin = "0.0"))
+	float NormalParryCameraShakeScale = 0.75f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Defense", meta = (ClampMin = "0.0"))
+	float GuardHitCameraShakeScale = 0.55f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Defense", meta = (ClampMin = "0.0"))
+	float MikiriParryCameraShakeScale = 1.1f;
 
 protected: // External References
 	UPROPERTY(BlueprintReadOnly)
@@ -686,6 +770,15 @@ protected: // Runtime Camera State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
 	FVector CachedLockOnTargetPoint = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
+	float CachedLockOnRangeAlpha = -1.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
+	FVector CachedLockOnAimDirection2D = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
+	bool bLockOnCloseAimStabilizationActive = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
 	bool bLockOnTurnInProgress = false;
@@ -808,6 +901,48 @@ protected: // Runtime Combat / Defense State
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpCounter")
 	bool bJumpCounterFollowUpDefenseBypassAvailable = false;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpCounter")
+	bool bJumpCounterStompFollowUpAvailable = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpCounter")
+	bool bJumpCounterStompFollowUpActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpCounter")
+	bool bJumpCounterStompJumpAttackWindowOpen = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpCounter")
+	bool bJumpCounterStompInvincibilityActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpCounter")
+	bool bJumpCounterStompOpportunityPending = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpCounter")
+	float JumpCounterStompCorrectionElapsedTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpCounter")
+	FVector JumpCounterStompCorrectionStartLocation = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpCounter")
+	FVector JumpCounterStompCorrectionTargetLocation = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpCounter")
+	float JumpCounterStompBounceMoveRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpCounter")
+	FVector JumpCounterStompBounceMoveDirection = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpCounter")
+	float JumpCounterStompBounceMoveSpeed = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpCounter")
+	TObjectPtr<class AJunMonster> JumpCounterStompTarget;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpCounter")
+	TObjectPtr<class AJunMonster> JumpCounterStompPendingTarget;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "JumpCounter")
+	TObjectPtr<class AJunMonster> JumpCounterStompIgnoredCollisionTarget;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BasicAttack")
 	int32 BasicAttackComboIndex = 0;
 
@@ -850,11 +985,26 @@ protected: // Runtime Combat / Defense State
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dodge")
 	float DodgeElapsedTime = 0.f;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dodge|Camera")
+	bool bDodgeCameraAnchorProjectionActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dodge|Camera")
+	FVector DodgeCameraAnchorStartLocation = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dodge|Camera")
+	FVector DodgeCameraAnchorDirection = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dodge|Camera")
+	float DodgeCameraAnchorProjectedDistance = 0.f;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dodge")
 	bool bDodgeInputReleasedSinceLastDodge = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
 	bool bShowDefenseTimingDebug = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
+	bool bShowDodgeCameraDebug = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dodge")
 	bool bDodgeChainWindowActive = false;
@@ -886,11 +1036,14 @@ protected: // Runtime Combat / Defense State
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float ForwardDodgePlayRate = 1.2f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
-	float BackwardDodgePlayRate = 1.1f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashForwardPlayRate = 1.f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
-	float BackDashPlayRate = 1.f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashBackPlayRate = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashSidePlayRate = 1.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float LeftDodgePlayRate = 1.f;
@@ -901,11 +1054,14 @@ protected: // Runtime Combat / Defense State
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float ForwardDodgeFinishTime = 1.08f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
-	float BackwardDodgeFinishTime = 1.43f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashForwardFinishTime = 1.f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
-	float BackDashFinishTime = 1.f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashBackFinishTime = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashSideFinishTime = 1.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float SideDodgeFinishTime = 0.8f;
@@ -913,11 +1069,14 @@ protected: // Runtime Combat / Defense State
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float ForwardDodgeInternalCooldownDuration = 1.02f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
-	float BackwardDodgeInternalCooldownDuration = 1.375f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashForwardInternalCooldownDuration = 1.f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
-	float BackDashInternalCooldownDuration = 1.f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashBackInternalCooldownDuration = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashSideInternalCooldownDuration = 1.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float SideDodgeInternalCooldownDuration = 0.75f;
@@ -925,11 +1084,14 @@ protected: // Runtime Combat / Defense State
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float ForwardDodgeInvincibleDuration = 0.12f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
-	float BackwardDodgeInvincibleDuration = 0.146667f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashForwardInvincibleDuration = 0.066667f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
-	float BackDashInvincibleDuration = 0.066667f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashBackInvincibleDuration = 0.066667f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashSideInvincibleDuration = 0.066667f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float SideDodgeInvincibleDuration = 0.1f;
@@ -943,20 +1105,32 @@ protected: // Runtime Combat / Defense State
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float ForwardDodgeRecoveryCancelOpenTime = 0.8f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
-	float BackwardDodgeRecoveryCancelOpenTime = 1.1f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashForwardRecoveryCancelOpenTime = 0.4f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
-	float BackDashRecoveryCancelOpenTime = 0.4f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashBackRecoveryCancelOpenTime = 0.4f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
-	float BackDashMoveCancelOpenTime = 0.45f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashSideRecoveryCancelOpenTime = 0.4f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashForwardMoveCancelOpenTime = 0.45f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashSideMoveCancelOpenTime = 0.45f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashBackMoveCancelOpenTime = 0.45f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float DashMoveCancelBlendOutTime = 0.08f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	float LockOnSideDashRotationInterpSpeed = 3.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float ForwardDodgeMoveCancelOpenTime = 0.7f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
-	float BackwardDodgeMoveCancelOpenTime = 1.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float SideDodgeMoveCancelOpenTime = 0.45f;
@@ -1014,6 +1188,12 @@ protected: // Runtime Combat / Defense State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
 	float ParryWindowRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MikiriCounter")
+	bool bMikiriCounterWindowOpen = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MikiriCounter")
+	float MikiriCounterWindowRemainTime = 0.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Guard")
 	float CurrentParryWindowDuration = 0.f;
@@ -1208,6 +1388,9 @@ protected: // Runtime Combat / Defense State
 	bool bNextParrySuccessUsesLeftSide = true;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
+	bool bLastParrySuccessUsedLeftSide = true;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	float KnockbackBrakingOverrideRemainTime = 0.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
@@ -1262,6 +1445,9 @@ protected: // Runtime Movement / Jump State
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Jump")
 	float JumpStartAnimTriggerRemainTime = 0.f;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Jump")
+	float LandingAnimSuppressRemainTime = 0.f;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Target")
 	bool bAttackFacingWindowActive = false;
 
@@ -1283,6 +1469,9 @@ protected: // Camera Tuning
 
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
 	float CameraAnchorDodgeInterpSpeed = 7.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Dodge")
+	bool bProjectDodgeCameraAnchorToDodgeDirection = true;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
 	float SpringArmLocationInterpSpeed = 8.f;
@@ -1417,7 +1606,31 @@ protected: // Camera Tuning
 	float DeathCameraTargetHeight = 45.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
-    float LockOnRotationInterpSpeed = 7.5f;
+    float LockOnRotationInterpSpeed = 5.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float LockOnCloseRotationInterpSpeed = 3.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float LockOnCloseDistance = 250.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float LockOnFarDistance = 1000.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0", ClampMax = "1"))
+	float LockOnCloseTargetBlend = 0.55f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float LockOnRangeAlphaInterpSpeed = 6.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float LockOnCloseAimStabilizeDistance = 260.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float LockOnCloseAimStabilizeReleaseDistance = 340.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float LockOnCloseAimMaxYawDegreesPerSecond = 300.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float LockOnCharacterRotationInterpSpeed = 10.f;
@@ -1439,6 +1652,12 @@ protected: // Camera Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float MaxLockOnCameraPitch = 40.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn|JumpCounter")
+	float JumpCounterLockOnPitchOffset = -55.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn|JumpCounter")
+	float JumpCounterMinLockOnCameraPitch = -65.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float LockOnTargetZRiseInterpSpeed = 12.f;
@@ -1512,6 +1731,21 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
 	float PerfectParryWindowDuration = 0.15f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MikiriCounter", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float MikiriCounterForwardInputThreshold = 0.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MikiriCounter", meta = (ClampMin = "0.0"))
+	float MikiriCounterThreatSearchRadius = 900.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MikiriCounter", meta = (ClampMin = "0.0"))
+	float MikiriCounterReadyMinDuration = 0.25f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MikiriCounter", meta = (ClampMin = "0.0"))
+	float MikiriCounterWindowDuration = 0.3f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MikiriCounter", meta = (ClampMin = "0.0"))
+	float MikiriCounterDodgeBlendOutTime = 0.15f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
 	float ParrySpamPenaltyResetDuration = 0.5f;
@@ -1708,6 +1942,12 @@ protected: // Attack / Defense Tuning
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float HitReactMoveCancelBlendOutTime = 0.25f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
+	float HitReactBlendInTime = 0.08f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
+	float HitReactRestartBlendInTime = 0.12f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float LightHitReactDuration = 0.6f;
 
@@ -1740,6 +1980,12 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float AirHeavyHitKnockbackStrength = 420.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
+	float AirHeavyHitMinGroundDistance = 150.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
+	float AirDeathMinGroundDistance = 150.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
 	float AirHeavyHitSequenceMaxDuration = 4.f;
@@ -2002,6 +2248,45 @@ protected: // Attack / Defense Tuning
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0"))
 	float JumpCounterEvadeMinGroundDistance = 200.f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0"))
+	float JumpCounterStompMaxStartDistance = 380.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0"))
+	float JumpCounterStompOpportunityDistance = 600.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0"))
+	float JumpCounterStompCorrectionDuration = 0.12f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter")
+	float JumpCounterStompTargetForwardOffset = -30.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter")
+	float JumpCounterStompTargetHeightOffset = 85.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0"))
+	float JumpCounterStompCapsuleMargin = 20.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter")
+	bool bJumpCounterStompIgnoreTargetCollisionDuringFollowUp = true;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0", EditCondition = "bJumpCounterStompIgnoreTargetCollisionDuringFollowUp"))
+	float JumpCounterStompMinVisualDistance = 60.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0"))
+	float JumpCounterStompPostureGain = 120.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter")
+	float JumpCounterStompBounceUpVelocity = 650.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter")
+	float JumpCounterStompBounceBackwardVelocity = 180.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0.1"))
+	float JumpCounterStompPlayRate = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0"))
+	float JumpCounterStompJumpAttackCancelBlendOutTime = 0.08f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack", meta = (ClampMin = "0"))
 	float JumpAttackStartForwardImpulseStrength = 200.f;
 
@@ -2111,6 +2396,15 @@ protected: // Movement / Jump Tuning
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement")
 	float LockOnRunMoveSpeed = 500.f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement", meta = (ClampMin = "0.0"))
+	float LockOnForwardMoveSpeedMultiplier = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement", meta = (ClampMin = "0.0"))
+	float LockOnSideMoveSpeedMultiplier = 0.85f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement", meta = (ClampMin = "0.0"))
+	float LockOnBackwardMoveSpeedMultiplier = 0.75f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement")
 	float SprintMoveSpeed = 900.f;
 
@@ -2148,11 +2442,23 @@ protected: // Animation Assets
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack")
 	TObjectPtr<class UAnimMontage> JumpAttackMontage;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter")
+	TObjectPtr<class UAnimMontage> JumpCounterStompFollowUpMontage;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	TObjectPtr<class UAnimMontage> DodgeMontage;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	TObjectPtr<class UAnimMontage> BackDashMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	TObjectPtr<class UAnimMontage> DashForwardMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	TObjectPtr<class UAnimMontage> DashLeftMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
+	TObjectPtr<class UAnimMontage> DashRightMontage;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "DodgeAttack")
 	TObjectPtr<class UAnimMontage> DodgeAttackMontage;
@@ -2186,6 +2492,18 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|LockOn")
 	TObjectPtr<class UAnimMontage> LockOnDodgeLeftMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash|LockOn")
+	TObjectPtr<class UAnimMontage> LockOnDashForwardLeftMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash|LockOn")
+	TObjectPtr<class UAnimMontage> LockOnDashForwardRightMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash|LockOn")
+	TObjectPtr<class UAnimMontage> LockOnDashBackLeftMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash|LockOn")
+	TObjectPtr<class UAnimMontage> LockOnDashBackRightMontage;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "LockOn")
 	TObjectPtr<class UAnimMontage> LockOnTurnLeft90Montage;
@@ -2232,8 +2550,26 @@ protected: // Animation Assets
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	TObjectPtr<class UAnimMontage> ParrySuccessFrontUpLeftMontage;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MikiriCounter")
+	TObjectPtr<class UAnimMontage> MikiriParryMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MikiriCounter")
+	TObjectPtr<class UAnimMontage> MikiriParryRMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MikiriCounter")
+	TObjectPtr<class UAnimMontage> MikiriParryReadyMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MikiriCounter")
+	TObjectPtr<class UAnimMontage> MikiriParryReadyRMontage;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	TObjectPtr<class UAnimMontage> CurrentParrySuccessMontage;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MikiriCounter")
+	TObjectPtr<class UAnimMontage> CurrentMikiriParryReadyMontage;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MikiriCounter")
+	float MikiriCounterReadyRemainTime = 0.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	TObjectPtr<class UAnimMontage> GuardBlockMontage;

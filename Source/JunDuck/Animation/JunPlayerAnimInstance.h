@@ -45,6 +45,12 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Player|Jump")
 	bool bJumpStartTriggered = false;
 
+	UPROPERTY(BlueprintReadOnly, Category = "Player|Jump")
+	bool bSuppressLandingAnim = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Player|Jump")
+	bool bSuppressAirborneAnim = false;
+
 	UPROPERTY(BlueprintReadOnly, Category = "Player|Guard")
 	bool bUseGuardBase = false;
 
@@ -71,6 +77,9 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category = "Player|Guard")
 	bool bGuardStartRestartRequested = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Player|Guard")
+	bool bGuardStartRepeatRequested = false;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Guard")
 	float GuardMovementDirectionInterpSpeed = 2.f;
