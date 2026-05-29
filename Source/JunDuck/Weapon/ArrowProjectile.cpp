@@ -1,5 +1,6 @@
 #include "Weapon/ArrowProjectile.h"
 
+#include "Character/JunMonster.h"
 #include "Character/JunPlayer.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -140,8 +141,8 @@ void AArrowProjectile::OnArrowOverlap(
 		return;
 	}
 
-	AJunPlayer* HitPlayer = Cast<AJunPlayer>(OtherActor);
-	if (!HitPlayer || !OwnerCharacter || !OwnerCharacter->IsEnemyTo(HitPlayer))
+	AJunCharacter* HitCharacter = Cast<AJunCharacter>(OtherActor);
+	if (!HitCharacter || !OwnerCharacter || !OwnerCharacter->IsEnemyTo(HitCharacter))
 	{
 		return;
 	}
@@ -150,6 +151,13 @@ void AArrowProjectile::OnArrowOverlap(
 	const FVector SwingDirection = GetVelocity().GetSafeNormal();
 	FJunAttackDefenseRuleData ResolvedDefenseRuleData = DefenseRuleData;
 	ResolvedDefenseRuleData.bCanBeDodgedByInvincibility = false;
-	HitPlayer->ReceiveHit(HitReactType, DamageData.GetFinalDamage(), OwnerCharacter.Get(), SwingDirection, DefenseKnockbackData, ResolvedDefenseRuleData, false);
+	if (AJunPlayer* HitPlayer = Cast<AJunPlayer>(HitCharacter))
+	{
+		HitPlayer->ReceiveHit(HitReactType, DamageData.GetFinalDamage(), OwnerCharacter.Get(), SwingDirection, DefenseKnockbackData, ResolvedDefenseRuleData, false);
+	}
+	else if (AJunMonster* HitMonster = Cast<AJunMonster>(HitCharacter))
+	{
+		HitMonster->ReceiveHit(HitReactType, DamageData.GetFinalDamage(), OwnerCharacter.Get(), SwingDirection, DefenseKnockbackData, ResolvedDefenseRuleData);
+	}
 	Destroy();
 }

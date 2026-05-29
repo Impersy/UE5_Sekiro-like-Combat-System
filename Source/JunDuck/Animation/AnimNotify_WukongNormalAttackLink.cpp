@@ -25,6 +25,11 @@ void UAnimNotify_WukongNormalAttackLink::Notify(
 				return;
 			}
 
+			if (!Wukong->IsNormalAttackAllowedByCurrentPhase(Candidate.AttackType))
+			{
+				return;
+			}
+
 			if (bExcludeCurrentAttack && Candidate.AttackType == CurrentAttackType)
 			{
 				return;

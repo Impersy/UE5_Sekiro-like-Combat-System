@@ -10,5 +10,8 @@ enum class EJunWeaponNiagaraComponent : uint8
 	SpecialTrail,
 	Aura,
 	Jigen,
+	LightingAura,
+	LightingTrail,
+	LightingSlash,
 	None
 };

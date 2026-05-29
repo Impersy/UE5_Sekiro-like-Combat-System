@@ -195,6 +195,9 @@ void AWeaponActor::DeactivateAllWeaponNiagara()
 	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::SpecialTrail);
 	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::Aura);
 	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::Jigen);
+	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::LightingAura);
+	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::LightingTrail);
+	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::LightingSlash);
 }
 
 void AWeaponActor::SetWeaponEffectsEnabled(bool bEnabled)
@@ -372,6 +375,24 @@ UNiagaraComponent* AWeaponActor::GetWeaponNiagaraComponent(EJunWeaponNiagaraComp
 			CachedJigenNiagaraComponent = FindNiagaraComponentByName(JigenNiagaraComponentName);
 		}
 		return CachedJigenNiagaraComponent;
+	case EJunWeaponNiagaraComponent::LightingAura:
+		if (!CachedLightingAuraNiagaraComponent)
+		{
+			CachedLightingAuraNiagaraComponent = FindNiagaraComponentByName(LightingAuraNiagaraComponentName);
+		}
+		return CachedLightingAuraNiagaraComponent;
+	case EJunWeaponNiagaraComponent::LightingTrail:
+		if (!CachedLightingTrailNiagaraComponent)
+		{
+			CachedLightingTrailNiagaraComponent = FindNiagaraComponentByName(LightingTrailNiagaraComponentName);
+		}
+		return CachedLightingTrailNiagaraComponent;
+	case EJunWeaponNiagaraComponent::LightingSlash:
+		if (!CachedLightingSlashNiagaraComponent)
+		{
+			CachedLightingSlashNiagaraComponent = FindNiagaraComponentByName(LightingSlashNiagaraComponentName);
+		}
+		return CachedLightingSlashNiagaraComponent;
 	default:
 		return nullptr;
 	}

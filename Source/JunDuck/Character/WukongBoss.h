@@ -100,7 +100,8 @@ enum class EWukongNormalAttackType : uint8
 	SlowComeSlash,
 	FakeDownSlash,
 	LionSlash,
-	SpinSlash
+	SpinSlash,
+	LightningSword
 };
 
 UENUM(BlueprintType)
@@ -114,6 +115,14 @@ enum class EWukongCodeMoveStopReason : uint8
 	LostTarget,
 	InvalidMovement,
 	Interrupted
+};
+
+UENUM(BlueprintType)
+enum class EWukongLightningSwordAirMoveMode : uint8
+{
+	LiftAndHover,
+	Hover,
+	Dive
 };
 
 USTRUCT(BlueprintType)
@@ -301,6 +310,14 @@ public:
 	AWukongBoss();
 	void BeginCodeDrivenAttackMoveWindow(EWukongNormalAttackType AttackType);
 	void EndCodeDrivenAttackMoveWindow();
+	void BeginLightningSwordAirMoveWindow(
+		EWukongLightningSwordAirMoveMode MoveMode,
+		float TargetHeightOffset,
+		float RiseSpeed,
+		float DiveSpeed,
+		float DiveGravityScale,
+		bool bLockHorizontalVelocity);
+	void EndLightningSwordAirMoveWindow(EWukongLightningSwordAirMoveMode MoveMode);
 	void BeginAttackSuperArmorWindow();
 	void EndAttackSuperArmorWindow();
 	void BeginAirborneHitReactLockWindow();
@@ -317,8 +334,10 @@ public:
 		bool bUseTestFilter);
 	bool TryForceNormalAttackLinkWhenTriggerChanceFails(float BlendOutTime, float BlendInTime);
 	bool TryExecuteDelayedNormalAttackRangeLinkFromNotify(float BlendOutTimeOverride = -1.f);
+	bool AdvanceVariantNormalAttackFromNotify();
 	EWukongNormalAttackType GetCurrentNormalAttackType() const { return CurrentAttackNormalAttackType; }
 	bool WasNormalAttackRecentlyUsed(EWukongNormalAttackType AttackType, int32 Depth = 1) const;
+	bool IsNormalAttackAllowedByCurrentPhase(EWukongNormalAttackType NormalAttackType) const;
 	void HandleHitTurnDecisionPoint();
 	void FinishParrySuccessStateFromNotify();
 	virtual void NotifyAttackParriedBy(
@@ -350,6 +369,7 @@ protected:
 	virtual void OnHitReactEnded(EHitReactType EndedHitReact) override;
 	virtual void OnExecutionReadyStarted() override;
 	virtual void OnExecutionReadyEnded(bool bMissedExecution) override;
+	virtual void FinishExecutionRecovery() override;
 	virtual bool TryHandleIncomingHitBeforeDamage(
 		EHitReactType HitType,
 		float DamageAmount,
@@ -391,6 +411,9 @@ protected:
 	bool IsMobilityNonAttackType(EWukongPlannedNonAttackType NonAttackType) const;
 	bool IsComboSetEnabledByTestFilter(EWukongComboSet ComboSet) const;
 	bool IsNormalAttackEnabledByTestFilter(EWukongNormalAttackType NormalAttackType) const;
+	bool IsPhaseTwoActive() const;
+	bool IsComboSetAllowedInCurrentPhase(EWukongComboSet ComboSet) const;
+	bool IsNormalAttackAllowedInCurrentPhase(EWukongNormalAttackType NormalAttackType) const;
 	float GetMaxEnabledComboCandidateRange() const;
 	float GetMaxEnabledAttackCandidateRange() const;
 	bool IsFartherThanAllAttackCandidates() const;
@@ -434,6 +457,16 @@ protected:
 	void ResetPendingAttackMotionState();
 	virtual void ResetCurrentAttackRuntimeState() override;
 	void ClearDelayedNormalAttackRangeLink();
+	bool TryStartVariantNormalAttack(EWukongNormalAttackType AttackType, const FWukongNormalAttackData& AttackData);
+	bool PlayVariantNormalAttackDashStep();
+	bool PlayVariantNormalAttackFinalMontage();
+	bool IsVariantNormalAttackType(EWukongNormalAttackType AttackType) const;
+	float GetVariantNormalAttackChance(EWukongNormalAttackType AttackType) const;
+	bool IsWithinVariantNormalAttackDistance(EWukongNormalAttackType AttackType, const FWukongNormalAttackData& AttackData) const;
+	UAnimMontage* GetVariantNormalAttackDashMontage(EWukongNormalAttackType AttackType) const;
+	UAnimMontage* GetVariantNormalAttackFinalMontage(EWukongNormalAttackType AttackType, const FWukongNormalAttackData& AttackData) const;
+	int32 GetVariantNormalAttackRequiredDashCount(EWukongNormalAttackType AttackType) const;
+	void ClearVariantNormalAttackState();
 	bool IsBowNormalAttackType(EWukongNormalAttackType AttackType) const;
 	void BeginBowAttackPresentation();
 	void EndBowAttackPresentation();
@@ -505,6 +538,8 @@ protected:
 	void UpdateCodeDrivenAttackMove(float DeltaTime);
 	void StopCodeDrivenAttackMove(bool bClearVelocity = true, EWukongCodeMoveStopReason StopReason = EWukongCodeMoveStopReason::Interrupted);
 	void CacheCodeDrivenAttackMoveDebug(EWukongCodeMoveStopReason StopReason);
+	void UpdateLightningSwordAirMove(float DeltaTime);
+	void StopLightningSwordAirMove(bool bClearVelocity = true);
 	void ApplyAttackGroundMotionOverride(float Duration);
 	void RestoreAttackGroundMotionOverride();
 	void RecordAction(EWukongActionType ActionType, EWukongComboSet ComboSet = EWukongComboSet::None, int32 ComboLength = 0, EWukongNormalAttackType NormalAttackType = EWukongNormalAttackType::None);
@@ -553,6 +588,9 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack")
 	FWukongNormalAttackData SpinSlashAttack;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack")
+	FWukongNormalAttackData LightningSwordAttack;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Bow")
 	FWukongNormalAttackData Bow4ComboAttack;
 
@@ -585,6 +623,60 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Dodge")
 	TObjectPtr<class UAnimMontage> DodgeRightMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant")
+	TObjectPtr<class UAnimMontage> ChargeVariantDashMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant")
+	TObjectPtr<class UAnimMontage> ChargeVariantFollowUpDashMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant")
+	TObjectPtr<class UAnimMontage> NinjaBVariantDashMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant")
+	TObjectPtr<class UAnimMontage> NinjaBVariantFollowUpDashMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant")
+	TObjectPtr<class UAnimMontage> ChargeVariantAttackMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant")
+	TObjectPtr<class UAnimMontage> NinjaBVariantAttackMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float ChargeVariantChance = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0"))
+	float ChargeVariantMinDistance = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0"))
+	float ChargeVariantMaxDistance = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float NinjaBVariantChance = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0"))
+	float NinjaBVariantMinDistance = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0"))
+	float NinjaBVariantMaxDistance = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0"))
+	float VariantDashBlendOutTime = 0.12f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0"))
+	float VariantDashBlendInTime = 0.12f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.1"))
+	float VariantDashPlayRate = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant")
+	bool bVariantDashFaceTarget = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0"))
+	float VariantDashFacingDuration = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0"))
+	float VariantDashFacingInterpSpeed = 14.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Wukong|Parry")
 	TObjectPtr<class UAnimMontage> ParrySuccessLUpMontage = nullptr;
@@ -881,49 +973,103 @@ protected:
 	bool bTestEnableComboA = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestComboARequiresPhaseTwo = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableComboB = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestComboBRequiresPhaseTwo = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableJumpAttack = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestJumpAttackRequiresPhaseTwo = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableChargeAttack = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestChargeAttackRequiresPhaseTwo = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableDodgeAttack = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestDodgeAttackRequiresPhaseTwo = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableNinjaA = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestNinjaARequiresPhaseTwo = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableNinjaB = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestNinjaBRequiresPhaseTwo = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableExecution = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestExecutionRequiresPhaseTwo = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableFastComeSlash = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestFastComeSlashRequiresPhaseTwo = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableSlowComeSlash = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestSlowComeSlashRequiresPhaseTwo = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableFakeDownSlash = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestFakeDownSlashRequiresPhaseTwo = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableLionSlash = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestLionSlashRequiresPhaseTwo = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableSpinSlash = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestSpinSlashRequiresPhaseTwo = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestEnableLightningSword = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestLightningSwordRequiresPhaseTwo = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableBow4Combo = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestBow4ComboRequiresPhaseTwo = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableBowBackDashAttack = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestBowBackDashAttackRequiresPhaseTwo = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
 	bool bTestEnableBowHeavyAttack = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|PatternTest")
+	bool bTestBowHeavyAttackRequiresPhaseTwo = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement")
 	float EvadeFallbackDuration = 0.6f;
@@ -1092,6 +1238,18 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
 	EWukongNormalAttackType LastStartedNormalAttackType = EWukongNormalAttackType::None;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant")
+	bool bVariantNormalAttackActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant")
+	EWukongNormalAttackType VariantNormalAttackTargetType = EWukongNormalAttackType::None;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant")
+	int32 VariantNormalAttackDashPlayCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant")
+	int32 VariantNormalAttackRequiredDashCount = 0;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|Combat")
 	bool bHasDelayedNormalAttackRangeLink = false;
 
@@ -1154,6 +1312,36 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|AttackMotion")
 	float LastCodeDrivenAttackMoveMaxDistance = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|LightningSword")
+	bool bLightningSwordAirMoveActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|LightningSword")
+	EWukongLightningSwordAirMoveMode LightningSwordAirMoveMode = EWukongLightningSwordAirMoveMode::LiftAndHover;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|LightningSword")
+	float LightningSwordAirMoveTargetZ = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|LightningSword")
+	float LightningSwordAirMoveRiseSpeed = 900.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|LightningSword")
+	float LightningSwordAirMoveDiveSpeed = 2200.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|LightningSword")
+	float LightningSwordAirMoveDiveGravityScale = 1.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|LightningSword")
+	bool bLightningSwordAirMoveLockHorizontalVelocity = true;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|LightningSword")
+	TEnumAsByte<EMovementMode> LightningSwordAirMovePreviousMovementMode = MOVE_Walking;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|LightningSword")
+	uint8 LightningSwordAirMovePreviousCustomMovementMode = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|LightningSword")
+	float LightningSwordAirMovePreviousGravityScale = 1.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wukong|AttackMotion")
 	bool bAttackGroundMotionOverrideActive = false;

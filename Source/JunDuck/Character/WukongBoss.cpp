@@ -134,6 +134,8 @@ namespace
 			return TEXT("LionSlash");
 		case EWukongNormalAttackType::SpinSlash:
 			return TEXT("SpinSlash");
+		case EWukongNormalAttackType::LightningSword:
+			return TEXT("LightningSword");
 		case EWukongNormalAttackType::None:
 		default:
 			return TEXT("None");
@@ -194,7 +196,8 @@ namespace
 		EWukongNormalAttackType::SlowComeSlash,
 		EWukongNormalAttackType::FakeDownSlash,
 		EWukongNormalAttackType::LionSlash,
-		EWukongNormalAttackType::SpinSlash
+		EWukongNormalAttackType::SpinSlash,
+		EWukongNormalAttackType::LightningSword
 	};
 }
 
@@ -260,6 +263,16 @@ AWukongBoss::AWukongBoss()
 	NinjaBAttack.AirTrackInterpSpeed = 8.f;
 	NinjaBAttack.CodeMoveStopDistance = 120.f;
 	NinjaBAttack.CodeMoveMaxDistance = 500.f;
+
+	LightningSwordAttack.MinRange = 500.f;
+	LightningSwordAttack.MaxRange = 1600.f;
+	LightningSwordAttack.CandidateMaxRange = 1800.f;
+	LightningSwordAttack.bFaceTargetDuringAttack = true;
+	LightningSwordAttack.FacingDuration = 0.8f;
+	LightningSwordAttack.FacingInterpSpeed = 10.f;
+	LightningSwordAttack.SelectionWeight = 1;
+	LightningSwordAttack.bTryTurnAfterAttack = true;
+	LightningSwordAttack.PostAttackTurnStartAngle = TurnStartAngle;
 
 	BowBackDashAttack.MinRange = 100.f;
 	BowBackDashAttack.MaxRange = 500.f;
@@ -688,6 +701,11 @@ void AWukongBoss::EnterAttackState()
 		else
 		{
 			bPostBowCloseRangeApproachInProgress = false;
+		}
+
+		if (CurrentNormalAttackData && TryStartVariantNormalAttack(CurrentAttackNormalAttackType, *CurrentNormalAttackData))
+		{
+			return;
 		}
 	}
 	else if (AttackSelection.Montage == GetPlannedComboMontage())
@@ -1508,62 +1526,174 @@ bool AWukongBoss::IsComboSetEnabledByTestFilter(EWukongComboSet ComboSet) const
 {
 	if (!bUseAttackPatternTestFilter)
 	{
-		return true;
+		return IsComboSetAllowedInCurrentPhase(ComboSet);
 	}
 
+	bool bEnabled = false;
 	switch (ComboSet)
 	{
 	case EWukongComboSet::ComboA:
-		return bTestEnableComboA;
+		bEnabled = bTestEnableComboA;
+		break;
 	case EWukongComboSet::ComboB:
-		return bTestEnableComboB;
+		bEnabled = bTestEnableComboB;
+		break;
 	case EWukongComboSet::None:
 	default:
 		return false;
 	}
+
+	return bEnabled && IsComboSetAllowedInCurrentPhase(ComboSet);
 }
 
 bool AWukongBoss::IsNormalAttackEnabledByTestFilter(EWukongNormalAttackType NormalAttackType) const
 {
 	if (!bUseAttackPatternTestFilter)
 	{
-		return true;
+		return IsNormalAttackAllowedInCurrentPhase(NormalAttackType);
 	}
 
+	bool bEnabled = false;
 	switch (NormalAttackType)
 	{
 	case EWukongNormalAttackType::JumpAttack:
-		return bTestEnableJumpAttack;
+		bEnabled = bTestEnableJumpAttack;
+		break;
 	case EWukongNormalAttackType::ChargeAttack:
-		return bTestEnableChargeAttack;
+		bEnabled = bTestEnableChargeAttack;
+		break;
 	case EWukongNormalAttackType::DodgeAttack:
-		return bTestEnableDodgeAttack;
+		bEnabled = bTestEnableDodgeAttack;
+		break;
 	case EWukongNormalAttackType::NinjaA:
-		return bTestEnableNinjaA;
+		bEnabled = bTestEnableNinjaA;
+		break;
 	case EWukongNormalAttackType::NinjaB:
-		return bTestEnableNinjaB;
+		bEnabled = bTestEnableNinjaB;
+		break;
 	case EWukongNormalAttackType::Execution:
-		return bTestEnableExecution;
+		bEnabled = bTestEnableExecution;
+		break;
 	case EWukongNormalAttackType::FastComeSlash:
-		return bTestEnableFastComeSlash;
+		bEnabled = bTestEnableFastComeSlash;
+		break;
 	case EWukongNormalAttackType::SlowComeSlash:
-		return bTestEnableSlowComeSlash;
+		bEnabled = bTestEnableSlowComeSlash;
+		break;
 	case EWukongNormalAttackType::FakeDownSlash:
-		return bTestEnableFakeDownSlash;
+		bEnabled = bTestEnableFakeDownSlash;
+		break;
 	case EWukongNormalAttackType::LionSlash:
-		return bTestEnableLionSlash;
+		bEnabled = bTestEnableLionSlash;
+		break;
 	case EWukongNormalAttackType::SpinSlash:
-		return bTestEnableSpinSlash;
+		bEnabled = bTestEnableSpinSlash;
+		break;
+	case EWukongNormalAttackType::LightningSword:
+		bEnabled = bTestEnableLightningSword;
+		break;
 	case EWukongNormalAttackType::Bow4Combo:
-		return bTestEnableBow4Combo;
+		bEnabled = bTestEnableBow4Combo;
+		break;
 	case EWukongNormalAttackType::BowBackDashAttack:
-		return bTestEnableBowBackDashAttack;
+		bEnabled = bTestEnableBowBackDashAttack;
+		break;
 	case EWukongNormalAttackType::BowHeavyAttack:
-		return bTestEnableBowHeavyAttack;
+		bEnabled = bTestEnableBowHeavyAttack;
+		break;
 	case EWukongNormalAttackType::None:
 	default:
 		return false;
 	}
+
+	return bEnabled && IsNormalAttackAllowedInCurrentPhase(NormalAttackType);
+}
+
+bool AWukongBoss::IsPhaseTwoActive() const
+{
+	return GetCurrentLifeCount() < GetMaxLifeCount();
+}
+
+bool AWukongBoss::IsNormalAttackAllowedByCurrentPhase(EWukongNormalAttackType NormalAttackType) const
+{
+	return IsNormalAttackAllowedInCurrentPhase(NormalAttackType);
+}
+
+bool AWukongBoss::IsComboSetAllowedInCurrentPhase(EWukongComboSet ComboSet) const
+{
+	bool bRequiresPhaseTwo = false;
+	switch (ComboSet)
+	{
+	case EWukongComboSet::ComboA:
+		bRequiresPhaseTwo = bTestComboARequiresPhaseTwo;
+		break;
+	case EWukongComboSet::ComboB:
+		bRequiresPhaseTwo = bTestComboBRequiresPhaseTwo;
+		break;
+	case EWukongComboSet::None:
+	default:
+		return false;
+	}
+
+	return !bRequiresPhaseTwo || IsPhaseTwoActive();
+}
+
+bool AWukongBoss::IsNormalAttackAllowedInCurrentPhase(EWukongNormalAttackType NormalAttackType) const
+{
+	bool bRequiresPhaseTwo = false;
+	switch (NormalAttackType)
+	{
+	case EWukongNormalAttackType::JumpAttack:
+		bRequiresPhaseTwo = bTestJumpAttackRequiresPhaseTwo;
+		break;
+	case EWukongNormalAttackType::ChargeAttack:
+		bRequiresPhaseTwo = bTestChargeAttackRequiresPhaseTwo;
+		break;
+	case EWukongNormalAttackType::DodgeAttack:
+		bRequiresPhaseTwo = bTestDodgeAttackRequiresPhaseTwo;
+		break;
+	case EWukongNormalAttackType::NinjaA:
+		bRequiresPhaseTwo = bTestNinjaARequiresPhaseTwo;
+		break;
+	case EWukongNormalAttackType::NinjaB:
+		bRequiresPhaseTwo = bTestNinjaBRequiresPhaseTwo;
+		break;
+	case EWukongNormalAttackType::Execution:
+		bRequiresPhaseTwo = bTestExecutionRequiresPhaseTwo;
+		break;
+	case EWukongNormalAttackType::FastComeSlash:
+		bRequiresPhaseTwo = bTestFastComeSlashRequiresPhaseTwo;
+		break;
+	case EWukongNormalAttackType::SlowComeSlash:
+		bRequiresPhaseTwo = bTestSlowComeSlashRequiresPhaseTwo;
+		break;
+	case EWukongNormalAttackType::FakeDownSlash:
+		bRequiresPhaseTwo = bTestFakeDownSlashRequiresPhaseTwo;
+		break;
+	case EWukongNormalAttackType::LionSlash:
+		bRequiresPhaseTwo = bTestLionSlashRequiresPhaseTwo;
+		break;
+	case EWukongNormalAttackType::SpinSlash:
+		bRequiresPhaseTwo = bTestSpinSlashRequiresPhaseTwo;
+		break;
+	case EWukongNormalAttackType::LightningSword:
+		bRequiresPhaseTwo = bTestLightningSwordRequiresPhaseTwo;
+		break;
+	case EWukongNormalAttackType::Bow4Combo:
+		bRequiresPhaseTwo = bTestBow4ComboRequiresPhaseTwo;
+		break;
+	case EWukongNormalAttackType::BowBackDashAttack:
+		bRequiresPhaseTwo = bTestBowBackDashAttackRequiresPhaseTwo;
+		break;
+	case EWukongNormalAttackType::BowHeavyAttack:
+		bRequiresPhaseTwo = bTestBowHeavyAttackRequiresPhaseTwo;
+		break;
+	case EWukongNormalAttackType::None:
+	default:
+		return false;
+	}
+
+	return !bRequiresPhaseTwo || IsPhaseTwoActive();
 }
 
 float AWukongBoss::GetMaxEnabledComboCandidateRange() const
@@ -1876,6 +2006,8 @@ const FWukongNormalAttackData* AWukongBoss::GetNormalAttackData(EWukongNormalAtt
 		return &LionSlashAttack;
 	case EWukongNormalAttackType::SpinSlash:
 		return &SpinSlashAttack;
+	case EWukongNormalAttackType::LightningSword:
+		return &LightningSwordAttack;
 	case EWukongNormalAttackType::Bow4Combo:
 		return &Bow4ComboAttack;
 	case EWukongNormalAttackType::BowBackDashAttack:
@@ -2055,6 +2187,7 @@ bool AWukongBoss::TryStartNormalAttackLinkFromNotify(
 		!bNormalParrySuccessLinkAllowed ||
 		IsInHitReact() ||
 		NextAttackType == EWukongNormalAttackType::None ||
+		!IsNormalAttackAllowedInCurrentPhase(NextAttackType) ||
 		(bUseTestFilter && !IsNormalAttackEnabledByTestFilter(NextAttackType)))
 	{
 		return false;
@@ -2190,6 +2323,11 @@ bool AWukongBoss::TryStartNormalAttackLinkFromNotify(
 	LastStartedNormalAttackType = NextAttackType;
 	PlannedAttackType = EWukongPlannedAttackType::NormalAttack;
 	PlannedNormalAttackType = NextAttackType;
+
+	if (TryStartVariantNormalAttack(NextAttackType, *NextAttackData))
+	{
+		return true;
+	}
 
 	CurrentAttackSelection.Montage = NextMontage;
 	CurrentAttackSelection.AttackRange = NextAttackData->MaxRange;
@@ -2670,11 +2808,13 @@ void AWukongBoss::ResetReactiveEvadePressure()
 void AWukongBoss::ResetPendingAttackMotionState()
 {
 	StopCodeDrivenAttackMove(false);
+	StopLightningSwordAirMove(false);
 }
 
 void AWukongBoss::ResetCurrentAttackRuntimeState()
 {
 	ClearDelayedNormalAttackRangeLink();
+	ClearVariantNormalAttackState();
 	EndBowAttackPresentation();
 	bAirborneHitReactLockWindowActive = false;
 	Super::ResetCurrentAttackRuntimeState();
@@ -2691,6 +2831,275 @@ void AWukongBoss::ClearDelayedNormalAttackRangeLink()
 	DelayedNormalAttackRangeLinkBlendOutTime = 0.12f;
 	DelayedNormalAttackRangeLinkBlendInTime = 0.12f;
 	bDelayedNormalAttackRangeLinkUseTestFilter = true;
+}
+
+bool AWukongBoss::TryStartVariantNormalAttack(EWukongNormalAttackType AttackType, const FWukongNormalAttackData& AttackData)
+{
+	if (!IsVariantNormalAttackType(AttackType) ||
+		!AttackData.Montage ||
+		!CurrentTarget ||
+		!IsPhaseTwoActive() ||
+		!IsWithinVariantNormalAttackDistance(AttackType, AttackData) ||
+		FMath::FRand() > FMath::Clamp(GetVariantNormalAttackChance(AttackType), 0.f, 1.f))
+	{
+		return false;
+	}
+
+	UAnimMontage* DashMontage = GetVariantNormalAttackDashMontage(AttackType);
+	if (!DashMontage)
+	{
+		return false;
+	}
+
+	bVariantNormalAttackActive = true;
+	VariantNormalAttackTargetType = AttackType;
+	VariantNormalAttackDashPlayCount = 0;
+	VariantNormalAttackRequiredDashCount = GetVariantNormalAttackRequiredDashCount(AttackType);
+	bPostBowCloseRangeApproachInProgress = false;
+
+	return PlayVariantNormalAttackDashStep();
+}
+
+bool AWukongBoss::AdvanceVariantNormalAttackFromNotify()
+{
+	if (CurrentState != EMonsterState::Combat ||
+		CurrentCombatSubState != EWukongCombatState::Attack ||
+		!bVariantNormalAttackActive ||
+		VariantNormalAttackTargetType == EWukongNormalAttackType::None ||
+		IsInHitReact())
+	{
+		return false;
+	}
+
+	if (VariantNormalAttackDashPlayCount < VariantNormalAttackRequiredDashCount)
+	{
+		return PlayVariantNormalAttackDashStep();
+	}
+
+	return PlayVariantNormalAttackFinalMontage();
+}
+
+bool AWukongBoss::PlayVariantNormalAttackDashStep()
+{
+	UAnimMontage* DashMontage = GetVariantNormalAttackDashMontage(VariantNormalAttackTargetType);
+	UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+	if (!DashMontage || !AnimInstance)
+	{
+		ClearVariantNormalAttackState();
+		return false;
+	}
+
+	if (CurrentAttackMontage)
+	{
+		AnimInstance->Montage_Stop(FMath::Max(0.f, VariantDashBlendOutTime), CurrentAttackMontage);
+	}
+
+	StopAllAttackTraces();
+	ResetPendingAttackMotionState();
+	RestoreAttackGroundMotionOverride();
+	ClearTimedMontageSuperArmor();
+
+	CurrentAttackSelection.Montage = DashMontage;
+	CurrentAttackSelection.AttackRange = 0.f;
+	CurrentAttackSelection.bFaceTargetDuringAttack = bVariantDashFaceTarget;
+	CurrentAttackSelection.FacingDuration = VariantDashFacingDuration;
+	CurrentAttackSelection.FacingInterpSpeed = VariantDashFacingInterpSpeed;
+	CurrentAttackSelection.PlayRate = VariantDashPlayRate;
+	CurrentAttackSelection.bTryTurnAfterAttack = false;
+	CurrentAttackSelection.PostAttackTurnStartAngle = TurnStartAngle;
+	CurrentAttackMontage = DashMontage;
+
+	bIsAttacking = true;
+	bAttackInterruptedByHitReact = false;
+	AttackTime = DashMontage->GetPlayLength() / FMath::Max(VariantDashPlayRate, KINDA_SMALL_NUMBER);
+	AttackFacingRemainTime = CurrentAttackSelection.FacingDuration;
+	CombatMoveInput = FVector2D::ZeroVector;
+	InitiativeState = EWukongInitiativeState::BossPattern;
+
+	AddGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	AddGameplayTag(JunGameplayTags::State_Block_Move);
+
+	StopAIMovement();
+	SetDesiredMoveAxes(0.f, 0.f);
+
+	const FMontageBlendSettings BlendInSettings(FMath::Max(0.f, VariantDashBlendInTime));
+	if (AnimInstance->Montage_PlayWithBlendSettings(DashMontage, BlendInSettings, VariantDashPlayRate) <= 0.f)
+	{
+		ClearVariantNormalAttackState();
+		FinishAttack();
+		return false;
+	}
+
+	++VariantNormalAttackDashPlayCount;
+	return true;
+}
+
+bool AWukongBoss::PlayVariantNormalAttackFinalMontage()
+{
+	const EWukongNormalAttackType AttackType = VariantNormalAttackTargetType;
+	const FWukongNormalAttackData* AttackData = GetNormalAttackData(AttackType);
+	UAnimMontage* TargetAttackMontage = AttackData ? GetVariantNormalAttackFinalMontage(AttackType, *AttackData) : nullptr;
+	UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+	if (!AttackData || !TargetAttackMontage || !AnimInstance)
+	{
+		ClearVariantNormalAttackState();
+		FinishAttack();
+		return false;
+	}
+
+	if (CurrentAttackMontage)
+	{
+		AnimInstance->Montage_Stop(FMath::Max(0.f, VariantDashBlendOutTime), CurrentAttackMontage);
+	}
+
+	StopAllAttackTraces();
+	ResetPendingAttackMotionState();
+	RestoreAttackGroundMotionOverride();
+	ClearTimedMontageSuperArmor();
+	ClearVariantNormalAttackState();
+
+	CurrentCombatSubState = EWukongCombatState::Attack;
+	CombatSubStateElapsedTime = 0.f;
+	CurrentAttackActionType = EWukongActionType::NormalAttack;
+	CurrentAttackComboSet = EWukongComboSet::None;
+	CurrentAttackComboLength = 0;
+	CurrentAttackNormalAttackType = AttackType;
+	LastStartedNormalAttackType = AttackType;
+	PlannedAttackType = EWukongPlannedAttackType::NormalAttack;
+	PlannedNormalAttackType = AttackType;
+
+	CurrentAttackSelection.Montage = TargetAttackMontage;
+	CurrentAttackSelection.AttackRange = AttackData->MaxRange;
+	CurrentAttackSelection.bFaceTargetDuringAttack = AttackData->bFaceTargetDuringAttack;
+	CurrentAttackSelection.FacingDuration = AttackData->bUseAnimNotifyTiming ? 0.f : AttackData->FacingDuration;
+	CurrentAttackSelection.FacingInterpSpeed = AttackData->FacingInterpSpeed;
+	CurrentAttackSelection.PlayRate = AttackData->PlayRate;
+	CurrentAttackSelection.bTryTurnAfterAttack = AttackData->bTryTurnAfterAttack;
+	CurrentAttackSelection.PostAttackTurnStartAngle = AttackData->PostAttackTurnStartAngle;
+	CurrentAttackMontage = TargetAttackMontage;
+
+	bIsAttacking = true;
+	bAttackInterruptedByHitReact = false;
+	AttackTime = TargetAttackMontage->GetPlayLength() / FMath::Max(AttackData->PlayRate, KINDA_SMALL_NUMBER);
+	AttackFacingRemainTime = CurrentAttackSelection.FacingDuration;
+	CombatMoveInput = FVector2D::ZeroVector;
+	InitiativeState = EWukongInitiativeState::BossPattern;
+	bPostBowCloseRangeApproachInProgress = false;
+
+	AddGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	AddGameplayTag(JunGameplayTags::State_Block_Move);
+
+	StopAIMovement();
+	SetDesiredMoveAxes(0.f, 0.f);
+
+	if (!AttackData->bUseAnimNotifyTiming)
+	{
+		if (AttackData->MoveSpeed > 0.f)
+		{
+			const float MoveStartTime = AttackData->MoveStartTimeAtPlayRateOne;
+			QueueCodeDrivenAttackMove(AttackType, MoveStartTime / FMath::Max(AttackData->PlayRate, KINDA_SMALL_NUMBER));
+		}
+
+		ApplyTimedMontageSuperArmor(AttackTime);
+	}
+
+	const FMontageBlendSettings BlendInSettings(FMath::Max(0.f, VariantDashBlendInTime));
+	if (AnimInstance->Montage_PlayWithBlendSettings(TargetAttackMontage, BlendInSettings, AttackData->PlayRate) <= 0.f)
+	{
+		FinishAttack();
+		return false;
+	}
+
+	return true;
+}
+
+bool AWukongBoss::IsVariantNormalAttackType(EWukongNormalAttackType AttackType) const
+{
+	return AttackType == EWukongNormalAttackType::ChargeAttack ||
+		AttackType == EWukongNormalAttackType::NinjaB;
+}
+
+float AWukongBoss::GetVariantNormalAttackChance(EWukongNormalAttackType AttackType) const
+{
+	switch (AttackType)
+	{
+	case EWukongNormalAttackType::ChargeAttack:
+		return ChargeVariantChance;
+	case EWukongNormalAttackType::NinjaB:
+		return NinjaBVariantChance;
+	default:
+		return 0.f;
+	}
+}
+
+bool AWukongBoss::IsWithinVariantNormalAttackDistance(EWukongNormalAttackType AttackType, const FWukongNormalAttackData& AttackData) const
+{
+	float MinDistance = AttackData.MinRange;
+	float MaxDistance = AttackData.CandidateMaxRange > 0.f ? AttackData.CandidateMaxRange : AttackData.MaxRange;
+
+	switch (AttackType)
+	{
+	case EWukongNormalAttackType::ChargeAttack:
+		MinDistance = ChargeVariantMinDistance > 0.f ? ChargeVariantMinDistance : MinDistance;
+		MaxDistance = ChargeVariantMaxDistance > 0.f ? ChargeVariantMaxDistance : MaxDistance;
+		break;
+	case EWukongNormalAttackType::NinjaB:
+		MinDistance = NinjaBVariantMinDistance > 0.f ? NinjaBVariantMinDistance : MinDistance;
+		MaxDistance = NinjaBVariantMaxDistance > 0.f ? NinjaBVariantMaxDistance : MaxDistance;
+		break;
+	default:
+		break;
+	}
+
+	const float TargetDistance = GetTargetDistance2D();
+	return TargetDistance >= MinDistance && (MaxDistance <= 0.f || TargetDistance <= MaxDistance);
+}
+
+UAnimMontage* AWukongBoss::GetVariantNormalAttackDashMontage(EWukongNormalAttackType AttackType) const
+{
+	switch (AttackType)
+	{
+	case EWukongNormalAttackType::ChargeAttack:
+		if (bVariantNormalAttackActive && VariantNormalAttackDashPlayCount > 0 && ChargeVariantFollowUpDashMontage)
+		{
+			return ChargeVariantFollowUpDashMontage.Get();
+		}
+		return ChargeVariantDashMontage.Get();
+	case EWukongNormalAttackType::NinjaB:
+		if (bVariantNormalAttackActive && VariantNormalAttackDashPlayCount > 0 && NinjaBVariantFollowUpDashMontage)
+		{
+			return NinjaBVariantFollowUpDashMontage.Get();
+		}
+		return NinjaBVariantDashMontage.Get();
+	default:
+		return nullptr;
+	}
+}
+
+UAnimMontage* AWukongBoss::GetVariantNormalAttackFinalMontage(EWukongNormalAttackType AttackType, const FWukongNormalAttackData& AttackData) const
+{
+	switch (AttackType)
+	{
+	case EWukongNormalAttackType::ChargeAttack:
+		return ChargeVariantAttackMontage ? ChargeVariantAttackMontage.Get() : AttackData.Montage.Get();
+	case EWukongNormalAttackType::NinjaB:
+		return NinjaBVariantAttackMontage ? NinjaBVariantAttackMontage.Get() : AttackData.Montage.Get();
+	default:
+		return AttackData.Montage.Get();
+	}
+}
+
+int32 AWukongBoss::GetVariantNormalAttackRequiredDashCount(EWukongNormalAttackType AttackType) const
+{
+	return AttackType == EWukongNormalAttackType::NinjaB ? 2 : 1;
+}
+
+void AWukongBoss::ClearVariantNormalAttackState()
+{
+	bVariantNormalAttackActive = false;
+	VariantNormalAttackTargetType = EWukongNormalAttackType::None;
+	VariantNormalAttackDashPlayCount = 0;
+	VariantNormalAttackRequiredDashCount = 0;
 }
 
 bool AWukongBoss::IsBowNormalAttackType(EWukongNormalAttackType AttackType) const
@@ -4057,6 +4466,39 @@ void AWukongBoss::OnExecutionReadyEnded(bool bMissedExecution)
 	}
 }
 
+void AWukongBoss::FinishExecutionRecovery()
+{
+	Super::FinishExecutionRecovery();
+
+	if (CurrentState != EMonsterState::Combat || Is_Dead())
+	{
+		return;
+	}
+
+	RestoreAttackGroundMotionOverride();
+	StopCodeDrivenAttackMove(true);
+	EndBowAttackPresentation();
+	ClearTimedMontageSuperArmor();
+	ClearPlayerPressure();
+	ResetReactiveActionState();
+	ResetActiveReactiveActionState();
+	ResetReactiveEvadePressure();
+	ResetPendingAttackMotionState();
+	ResetCurrentAttackRuntimeState();
+	ResetPlannedCombatPlan();
+	ClearNoAttackCandidateApproach();
+	ResetParryExchangeCycle();
+
+	bAttackInterruptedByHitReact = false;
+	bPostBowCloseRangeApproachInProgress = false;
+	bUseNonAttackFallbackUntilAttackCandidateAppears = false;
+	CombatMoveInput = FVector2D::ZeroVector;
+	SetDesiredMoveAxes(0.f, 0.f);
+	bRunLocomotionRequested = false;
+
+	SetWukongCombatState(EWukongCombatState::Idle);
+}
+
 FString AWukongBoss::GetMonsterDebugExtraText() const
 {
 	return FString::Printf(
@@ -4269,6 +4711,7 @@ void AWukongBoss::OnAttackTick(float DeltaTime)
 	}
 
 	UpdateCodeDrivenAttackMove(DeltaTime);
+	UpdateLightningSwordAirMove(DeltaTime);
 
 	if (bAttackGroundMotionOverrideActive)
 	{
@@ -4319,6 +4762,70 @@ void AWukongBoss::BeginCodeDrivenAttackMoveWindow(EWukongNormalAttackType Attack
 void AWukongBoss::EndCodeDrivenAttackMoveWindow()
 {
 	StopCodeDrivenAttackMove(true, EWukongCodeMoveStopReason::DurationEnd);
+}
+
+void AWukongBoss::BeginLightningSwordAirMoveWindow(
+	EWukongLightningSwordAirMoveMode MoveMode,
+	float TargetHeightOffset,
+	float RiseSpeed,
+	float DiveSpeed,
+	float DiveGravityScale,
+	bool bLockHorizontalVelocity)
+{
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent)
+	{
+		return;
+	}
+
+	if (!bLightningSwordAirMoveActive)
+	{
+		LightningSwordAirMovePreviousMovementMode = MovementComponent->MovementMode;
+		LightningSwordAirMovePreviousCustomMovementMode = MovementComponent->CustomMovementMode;
+		LightningSwordAirMovePreviousGravityScale = MovementComponent->GravityScale;
+	}
+
+	bLightningSwordAirMoveActive = true;
+	LightningSwordAirMoveMode = MoveMode;
+	LightningSwordAirMoveTargetZ = (MoveMode == EWukongLightningSwordAirMoveMode::Hover)
+		? GetActorLocation().Z
+		: GetActorLocation().Z + FMath::Max(0.f, TargetHeightOffset);
+	LightningSwordAirMoveRiseSpeed = FMath::Max(0.f, RiseSpeed);
+	LightningSwordAirMoveDiveSpeed = FMath::Max(0.f, DiveSpeed);
+	LightningSwordAirMoveDiveGravityScale = FMath::Max(0.f, DiveGravityScale);
+	bLightningSwordAirMoveLockHorizontalVelocity = bLockHorizontalVelocity;
+
+	FVector NewVelocity = MovementComponent->Velocity;
+	if (bLightningSwordAirMoveLockHorizontalVelocity)
+	{
+		NewVelocity.X = 0.f;
+		NewVelocity.Y = 0.f;
+	}
+
+	if (MoveMode == EWukongLightningSwordAirMoveMode::Dive)
+	{
+		MovementComponent->GravityScale = LightningSwordAirMoveDiveGravityScale;
+		MovementComponent->SetMovementMode(MOVE_Falling);
+		NewVelocity.Z = -LightningSwordAirMoveDiveSpeed;
+	}
+	else
+	{
+		MovementComponent->GravityScale = 0.f;
+		MovementComponent->SetMovementMode(MOVE_Flying);
+		NewVelocity.Z = 0.f;
+	}
+
+	MovementComponent->Velocity = NewVelocity;
+}
+
+void AWukongBoss::EndLightningSwordAirMoveWindow(EWukongLightningSwordAirMoveMode MoveMode)
+{
+	if (!bLightningSwordAirMoveActive || LightningSwordAirMoveMode != MoveMode)
+	{
+		return;
+	}
+
+	StopLightningSwordAirMove(true);
 }
 
 void AWukongBoss::StartCodeDrivenAttackMove(EWukongNormalAttackType AttackType)
@@ -4484,6 +4991,125 @@ void AWukongBoss::CacheCodeDrivenAttackMoveDebug(EWukongCodeMoveStopReason StopR
 	{
 		LastCodeDrivenAttackMoveTargetDistance = 0.f;
 	}
+}
+
+void AWukongBoss::UpdateLightningSwordAirMove(float DeltaTime)
+{
+	if (!bLightningSwordAirMoveActive)
+	{
+		return;
+	}
+
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent)
+	{
+		StopLightningSwordAirMove(false);
+		return;
+	}
+
+	FVector NewVelocity = MovementComponent->Velocity;
+	if (bLightningSwordAirMoveLockHorizontalVelocity)
+	{
+		NewVelocity.X = 0.f;
+		NewVelocity.Y = 0.f;
+	}
+
+	switch (LightningSwordAirMoveMode)
+	{
+	case EWukongLightningSwordAirMoveMode::LiftAndHover:
+	{
+		if (MovementComponent->MovementMode != MOVE_Flying)
+		{
+			MovementComponent->SetMovementMode(MOVE_Flying);
+		}
+
+		const float ZDelta = LightningSwordAirMoveTargetZ - GetActorLocation().Z;
+		if (ZDelta > 1.f && DeltaTime > KINDA_SMALL_NUMBER)
+		{
+			NewVelocity.Z = FMath::Min(LightningSwordAirMoveRiseSpeed, ZDelta / DeltaTime);
+		}
+		else
+		{
+			NewVelocity.Z = 0.f;
+		}
+		break;
+	}
+	case EWukongLightningSwordAirMoveMode::Hover:
+	{
+		if (MovementComponent->MovementMode != MOVE_Flying)
+		{
+			MovementComponent->SetMovementMode(MOVE_Flying);
+		}
+
+		NewVelocity.Z = 0.f;
+		break;
+	}
+	case EWukongLightningSwordAirMoveMode::Dive:
+	{
+		if (MovementComponent->IsMovingOnGround())
+		{
+			StopLightningSwordAirMove(true);
+			return;
+		}
+
+		if (MovementComponent->MovementMode != MOVE_Falling)
+		{
+			MovementComponent->SetMovementMode(MOVE_Falling);
+		}
+
+		NewVelocity.Z = FMath::Min(NewVelocity.Z, -LightningSwordAirMoveDiveSpeed);
+		break;
+	}
+	default:
+		break;
+	}
+
+	MovementComponent->Velocity = NewVelocity;
+}
+
+void AWukongBoss::StopLightningSwordAirMove(bool bClearVelocity)
+{
+	if (!bLightningSwordAirMoveActive)
+	{
+		return;
+	}
+
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	bLightningSwordAirMoveActive = false;
+	LightningSwordAirMoveMode = EWukongLightningSwordAirMoveMode::LiftAndHover;
+	LightningSwordAirMoveTargetZ = 0.f;
+
+	if (MovementComponent)
+	{
+		MovementComponent->GravityScale = LightningSwordAirMovePreviousGravityScale;
+
+		if (MovementComponent->IsMovingOnGround())
+		{
+			MovementComponent->SetMovementMode(MOVE_Walking);
+		}
+		else
+		{
+			MovementComponent->SetMovementMode(
+				LightningSwordAirMovePreviousMovementMode,
+				LightningSwordAirMovePreviousCustomMovementMode);
+		}
+
+		if (bClearVelocity)
+		{
+			FVector NewVelocity = MovementComponent->Velocity;
+			if (bLightningSwordAirMoveLockHorizontalVelocity)
+			{
+				NewVelocity.X = 0.f;
+				NewVelocity.Y = 0.f;
+			}
+			NewVelocity.Z = 0.f;
+			MovementComponent->Velocity = NewVelocity;
+		}
+	}
+
+	LightningSwordAirMovePreviousMovementMode = MOVE_Walking;
+	LightningSwordAirMovePreviousCustomMovementMode = 0;
+	LightningSwordAirMovePreviousGravityScale = 1.f;
 }
 
 void AWukongBoss::ApplyAttackGroundMotionOverride(float Duration)

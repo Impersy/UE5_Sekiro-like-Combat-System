@@ -248,6 +248,7 @@ public: // Query / State API
 	bool ShouldSuppressAirborneAnim() const { return LandingAnimSuppressRemainTime > 0.f; }
 	bool IsMikiriCounterThreatAvailable() const;
 	bool DidLastParrySuccessUseLeftSide() const { return bLastParrySuccessUsedLeftSide; }
+	EHitReactType GetLastIncomingHitReactType() const { return LastIncomingHitReactType; }
 	float GetCurrentPosture() const { return CurrentPosture; }
 	float GetMaxPosture() const { return MaxPosture; }
 
@@ -483,6 +484,7 @@ protected: // Hit
 	void StartAirGuardBreakLandMontage();
 	void StartHitReact(EHitReactType HitType, ECharacterHitReactDirection HitDirection);
 	void PlayHitReactMontageWithBlend(class UAnimMontage* HitReactMontage, bool bRestartingHitReact);
+	void RequestPlayerHitReactHitStop();
 	void UpdateAirHeavyHitReact(float DeltaTime);
 	void StartAirHeavyHitDownStage();
 	void StartAirHeavyHitLandStage();
@@ -773,6 +775,18 @@ protected: // Runtime Camera State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
 	float CachedLockOnRangeAlpha = -1.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
+	float SmoothedLockOnDistance2D = -1.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
+	float SmoothedLockOnPitchOffset = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
+	bool bLockOnClosePitchModeActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
+	float SmoothedLockOnOcclusionLateralOffset = 0.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
 	FVector CachedLockOnAimDirection2D = FVector::ZeroVector;
@@ -1343,6 +1357,9 @@ protected: // Runtime Combat / Defense State
 	EHitReactType CurrentHitReactType = EHitReactType::None;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
+	EHitReactType LastIncomingHitReactType = EHitReactType::None;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	ECharacterHitReactDirection CurrentHitReactDirection = ECharacterHitReactDirection::Front_F;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
@@ -1545,6 +1562,18 @@ protected: // Camera Tuning
 	UPROPERTY(EditDefaultsOnly, Category = "Camera|LockOn")
 	FVector LockOnCameraSocketOffset = FVector(0.f, 25.f, 0.f);
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn|Crossing", meta = (ClampMin = "0"))
+	float LockOnOcclusionAvoidDistance = 260.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn|Crossing", meta = (ClampMin = "0"))
+	float LockOnOcclusionLineDistance = 90.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn|Crossing", meta = (ClampMin = "0"))
+	float LockOnOcclusionShoulderOffset = 70.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn|Crossing", meta = (ClampMin = "0"))
+	float LockOnOcclusionOffsetInterpSpeed = 6.f;
+
 	UPROPERTY(EditDefaultsOnly, Category = "Camera|Execution")
 	FVector ExecutionCameraSocketOffset = FVector(0.f, 25.f, 0.f);
 
@@ -1622,6 +1651,18 @@ protected: // Camera Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
 	float LockOnRangeAlphaInterpSpeed = 6.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float LockOnDistanceInterpSpeed = 7.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float LockOnClosePitchEnterDistance = 280.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float LockOnClosePitchExitDistance = 420.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float LockOnPitchOffsetInterpSpeed = 5.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
 	float LockOnCloseAimStabilizeDistance = 260.f;
@@ -2028,6 +2069,12 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float LargeHitLongControlLockDuration = 0.8f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	float LightingShockDuration = 1.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	float LightingShockControlLockDuration = 1.5f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float GuardBlockKnockbackStrength = 250.f;
@@ -2445,6 +2492,18 @@ protected: // Animation Assets
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter")
 	TObjectPtr<class UAnimMontage> JumpCounterStompFollowUpMontage;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitStop|PlayerHit")
+	bool bEnablePlayerHitReactHitStop = true;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitStop|PlayerHit", meta = (ClampMin = "0.0"))
+	float PlayerHitReactHitStopDuration = 0.035f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitStop|PlayerHit", meta = (ClampMin = "0.001", ClampMax = "1.0"))
+	float PlayerHitReactHitStopTimeScale = 0.05f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitStop|PlayerHit")
+	int32 PlayerHitReactHitStopPriority = 0;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	TObjectPtr<class UAnimMontage> DodgeMontage;
 
@@ -2636,6 +2695,9 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	TObjectPtr<class UAnimMontage> AirHitFHeavyLandMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
+	TObjectPtr<class UAnimMontage> LightingShockMontage;
 
 protected: // Weapon Assets
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")

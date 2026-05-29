@@ -28,6 +28,7 @@
 #include "GameFramework/PlayerStart.h"
 #include "System/JunBGMManager.h"
 #include "System/JunCombatVFXSubsystem.h"
+#include "System/JunTimeEffectSubsystem.h"
 #include "UObject/UnrealType.h"
 
 namespace
@@ -2239,6 +2240,7 @@ void AJunPlayer::ReceiveHit(
 	}
 
 	LastIncomingSwingDirection = SwingDirection;
+	LastIncomingHitReactType = HitType;
 	LastIncomingKnockbackDirection = DetermineKnockbackDirectionFromDamageCauser(DamageCauser);
 	LastIncomingDefenseKnockbackData = DefenseKnockbackData;
 	LastIncomingDefenseRuleData = DefenseRuleData;
@@ -6799,7 +6801,8 @@ bool AJunPlayer::CanBeInterruptedBy(EHitReactType IncomingHitType) const
 
 	if (IncomingHitType == EHitReactType::LightHit ||
 		IsLargeHitType(IncomingHitType) ||
-		IsHeavyHitType(IncomingHitType))
+		IsHeavyHitType(IncomingHitType) ||
+		IncomingHitType == EHitReactType::Lighting_Shock)
 	{
 		return true;
 	}
@@ -7015,6 +7018,8 @@ UAnimMontage* AJunPlayer::GetHitReactMontage(EHitReactType HitType, ECharacterHi
 			LargeHitLeftMontage,
 			LargeHitRightMontage
 		);
+	case EHitReactType::Lighting_Shock:
+		return LightingShockMontage;
 	default:
 		return nullptr;
 	}
@@ -7574,23 +7579,31 @@ void AJunPlayer::StartGuardBreak()
 		CachedGuardBreakEffectLocationComponent,
 		GuardBreakEffectLocationComponentName);
 
+	const bool bUseLightingShockGuardBreak =
+		LastIncomingHitReactType == EHitReactType::Lighting_Shock &&
+		LightingShockMontage != nullptr;
 	const bool bUseAirGuardBreak =
 		GetCharacterMovement() &&
 		GetCharacterMovement()->IsFalling() &&
-		AirGuardBreakMontage;
-	UAnimMontage* GuardBreakMontageToPlay = bUseAirGuardBreak
+		AirGuardBreakMontage &&
+		!bUseLightingShockGuardBreak;
+	UAnimMontage* GuardBreakMontageToPlay = bUseLightingShockGuardBreak
+		? LightingShockMontage.Get()
+		: (bUseAirGuardBreak
 		? AirGuardBreakMontage.Get()
-		: GuardBreakMontage.Get();
+		: GuardBreakMontage.Get());
 
 	CurrentPosture = 0.f;
 	PostureRecoveryDelayRemainTime = 0.f;
 	CurrentHitState = EJunPlayerHitState::GuardBreak;
 	PlayerHitStateRemainTime = bUseAirGuardBreak
 		? FMath::Max(AirGuardBreakAirborneMaxDuration, GuardBreakControlLockDuration)
-		: (GuardBreakMontageToPlay ? GuardBreakMontageToPlay->GetPlayLength() : GuardBreakDuration);
+		: (bUseLightingShockGuardBreak
+			? (GuardBreakMontageToPlay ? GuardBreakMontageToPlay->GetPlayLength() : LightingShockDuration)
+			: (GuardBreakMontageToPlay ? GuardBreakMontageToPlay->GetPlayLength() : GuardBreakDuration));
 	PlayerHitControlLockRemainTime = bUseAirGuardBreak
 		? FMath::Max(AirGuardBreakAirborneMaxDuration, GuardBreakControlLockDuration)
-		: GuardBreakControlLockDuration;
+		: (bUseLightingShockGuardBreak ? LightingShockControlLockDuration : GuardBreakControlLockDuration);
 	GuardBreakVulnerableRemainTime = PlayerHitControlLockRemainTime;
 	ChainParryWindowRemainTime = 0.f;
 	bParryWindowOpen = false;
@@ -7598,9 +7611,11 @@ void AJunPlayer::StartGuardBreak()
 	ParrySuccessElapsedTime = 0.f;
 	BufferedParrySuccessCancelAction = EJunBufferedParrySuccessCancelAction::None;
 	CurrentParrySuccessMontage = nullptr;
-	CurrentHitReactType = EHitReactType::None;
+	CurrentHitReactType = bUseLightingShockGuardBreak ? EHitReactType::Lighting_Shock : EHitReactType::None;
 	CurrentHitReactDirection = ECharacterHitReactDirection::Front_F;
-	CurrentHitReactMontage = bUseAirGuardBreak ? AirHitFLightMontage.Get() : nullptr;
+	CurrentHitReactMontage = bUseLightingShockGuardBreak
+		? LightingShockMontage.Get()
+		: (bUseAirGuardBreak ? AirHitFLightMontage.Get() : nullptr);
 	bCurrentHitReactUsesAirMontage = bUseAirGuardBreak;
 	ResetAirHeavyHitReactState();
 	bAirGuardBreakLandMontagePending = bUseAirGuardBreak;
@@ -7638,7 +7653,7 @@ void AJunPlayer::StartGuardBreak()
 		JunPlayerController->StartPlayerPostureBreakHidePresentation();
 	}
 
-	if (GuardBreakMontageToPlay && !bUseAirGuardBreak)
+	if (GuardBreakMontageToPlay && (!bUseAirGuardBreak || bUseLightingShockGuardBreak))
 	{
 		PlayHitReactMontageWithBlend(GuardBreakMontageToPlay, bRestartingGuardBreak);
 	}
@@ -7826,6 +7841,11 @@ void AJunPlayer::StartHitReact(EHitReactType HitType, ECharacterHitReactDirectio
 		PlayerHitStateRemainTime = LargeHitLongReactDuration;
 		PlayerHitControlLockRemainTime = LargeHitLongControlLockDuration;
 	}
+	else if (HitType == EHitReactType::Lighting_Shock)
+	{
+		PlayerHitStateRemainTime = HitReactMontage ? HitReactMontage->GetPlayLength() : LightingShockDuration;
+		PlayerHitControlLockRemainTime = LightingShockControlLockDuration;
+	}
 	else
 	{
 		PlayerHitStateRemainTime = HitReactMontage ? HitReactMontage->GetPlayLength() : HitReactDuration;
@@ -7868,7 +7888,31 @@ void AJunPlayer::StartHitReact(EHitReactType HitType, ECharacterHitReactDirectio
 
 	if (HitReactMontage)
 	{
+		RequestPlayerHitReactHitStop();
 		PlayHitReactMontageWithBlend(HitReactMontage, bRestartingHitReact);
+	}
+}
+
+void AJunPlayer::RequestPlayerHitReactHitStop()
+{
+	if (!bEnablePlayerHitReactHitStop || !GetWorld() || PlayerHitReactHitStopDuration <= 0.f)
+	{
+		return;
+	}
+
+	AActor* AttackerActor = HitReactFacingTarget.Get();
+	if (!IsValid(AttackerActor) || AttackerActor == this)
+	{
+		return;
+	}
+
+	if (UJunTimeEffectSubsystem* TimeEffectSubsystem = GetWorld()->GetSubsystem<UJunTimeEffectSubsystem>())
+	{
+		TimeEffectSubsystem->RequestHitStopForActors(
+			{ this, AttackerActor },
+			PlayerHitReactHitStopDuration,
+			PlayerHitReactHitStopTimeScale,
+			PlayerHitReactHitStopPriority);
 	}
 }
 
@@ -9333,6 +9377,7 @@ void AJunPlayer::UpdateJunCamera(float DeltaTime)
 	else if (bLockOnActive)
 	{
 		TargetSocketOffset = LockOnCameraSocketOffset;
+		TargetSocketOffset.Y += SmoothedLockOnOcclusionLateralOffset;
 	}
 
 	if (!bLockOnActive && HasGameplayTag(JunGameplayTags::State_Action_Dodge))
@@ -9474,6 +9519,10 @@ void AJunPlayer::StartLockOn(AJunCharacter* NewTarget)
 	CameraMode = EJunCameraMode::LockOn;
 	CachedLockOnTargetPoint = FVector::ZeroVector;
 	CachedLockOnRangeAlpha = -1.f;
+	SmoothedLockOnDistance2D = -1.f;
+	SmoothedLockOnPitchOffset = LockOnPitchOffset;
+	bLockOnClosePitchModeActive = false;
+	SmoothedLockOnOcclusionLateralOffset = 0.f;
 	CachedLockOnAimDirection2D = FVector::ZeroVector;
 	bLockOnCloseAimStabilizationActive = false;
 
@@ -9487,6 +9536,10 @@ void AJunPlayer::EndLockOn()
 	CameraMode = EJunCameraMode::Free;
 	CachedLockOnTargetPoint = FVector::ZeroVector;
 	CachedLockOnRangeAlpha = -1.f;
+	SmoothedLockOnDistance2D = -1.f;
+	SmoothedLockOnPitchOffset = LockOnPitchOffset;
+	bLockOnClosePitchModeActive = false;
+	SmoothedLockOnOcclusionLateralOffset = 0.f;
 	CachedLockOnAimDirection2D = FVector::ZeroVector;
 	bLockOnCloseAimStabilizationActive = false;
 	CancelLockOnTurn(0.05f);
@@ -9531,8 +9584,21 @@ void AJunPlayer::UpdateLockOnCamera(float DeltaTime)
 
 	const FVector TargetPoint = GetFilteredLockOnTargetPoint();
 	const float PlayerTargetDistance2D = FVector::Dist2D(GetActorLocation(), LockOnTarget->GetActorLocation());
+	if (SmoothedLockOnDistance2D < 0.f)
+	{
+		SmoothedLockOnDistance2D = PlayerTargetDistance2D;
+	}
+	else
+	{
+		SmoothedLockOnDistance2D = FMath::FInterpTo(
+			SmoothedLockOnDistance2D,
+			PlayerTargetDistance2D,
+			DeltaTime,
+			LockOnDistanceInterpSpeed);
+	}
+
 	const float RawCloseRangeAlpha = FMath::Clamp(
-		(PlayerTargetDistance2D - LockOnCloseDistance) / FMath::Max(LockOnFarDistance - LockOnCloseDistance, 1.f),
+		(SmoothedLockOnDistance2D - LockOnCloseDistance) / FMath::Max(LockOnFarDistance - LockOnCloseDistance, 1.f),
 		0.f,
 		1.f
 	);
@@ -9623,15 +9689,40 @@ void AJunPlayer::UpdateLockOnCamera(float DeltaTime)
 
 	const float LockOnDistanceAlpha = CloseRangeAlpha;
 	const bool bUseJumpCounterPitch = ShouldUseJumpCounterLockOnCameraPitch();
-	const float DynamicLockOnPitchOffset = bUseJumpCounterPitch
-		? JumpCounterLockOnPitchOffset
-		: FMath::Lerp(
-			LockOnClosePitchOffset,
-			LockOnPitchOffset,
-			LockOnDistanceAlpha
-		);
+	const float ClosePitchEnterDistance = FMath::Max(0.f, LockOnClosePitchEnterDistance);
+	const float ClosePitchExitDistance = FMath::Max(ClosePitchEnterDistance, LockOnClosePitchExitDistance);
+	if (!bLockOnClosePitchModeActive && SmoothedLockOnDistance2D <= ClosePitchEnterDistance)
+	{
+		bLockOnClosePitchModeActive = true;
+	}
+	else if (bLockOnClosePitchModeActive && SmoothedLockOnDistance2D >= ClosePitchExitDistance)
+	{
+		bLockOnClosePitchModeActive = false;
+	}
 
-	DesiredRot.Pitch = DynamicLockOnPitchOffset + TargetPitchDeg;
+	const float TargetLockOnPitchOffset = bUseJumpCounterPitch
+		? JumpCounterLockOnPitchOffset
+		: (bLockOnClosePitchModeActive
+			? LockOnClosePitchOffset
+			: FMath::Lerp(
+				LockOnClosePitchOffset,
+				LockOnPitchOffset,
+				LockOnDistanceAlpha
+			));
+	if (!FMath::IsFinite(SmoothedLockOnPitchOffset))
+	{
+		SmoothedLockOnPitchOffset = TargetLockOnPitchOffset;
+	}
+	else
+	{
+		SmoothedLockOnPitchOffset = FMath::FInterpTo(
+			SmoothedLockOnPitchOffset,
+			TargetLockOnPitchOffset,
+			DeltaTime,
+			LockOnPitchOffsetInterpSpeed);
+	}
+
+	DesiredRot.Pitch = SmoothedLockOnPitchOffset + TargetPitchDeg;
 
 	const FRotator CurrentRot = Controller->GetControlRotation();
 
@@ -9644,6 +9735,50 @@ void AJunPlayer::UpdateLockOnCamera(float DeltaTime)
 		? JumpCounterMinLockOnCameraPitch
 		: MinLockOnCameraPitch;
 	DesiredRot.Pitch = FMath::Clamp(DesiredRot.Pitch, ResolvedMinPitch, MaxLockOnCameraPitch);
+
+	float TargetOcclusionLateralOffset = 0.f;
+	if (Camera && PlayerTargetDistance2D <= FMath::Max(0.f, LockOnOcclusionAvoidDistance))
+	{
+		FVector PlayerPoint = GetActorLocation();
+		PlayerPoint.Z += 50.f;
+		const FVector CameraPoint = Camera->GetComponentLocation();
+		FVector CameraToPlayer = PlayerPoint - CameraPoint;
+		CameraToPlayer.Z = 0.f;
+
+		FVector CameraToTarget = LockOnTarget->GetActorLocation() - CameraPoint;
+		CameraToTarget.Z = 0.f;
+
+		const float SegmentLengthSq = CameraToPlayer.SizeSquared();
+		if (SegmentLengthSq > KINDA_SMALL_NUMBER)
+		{
+			const float AlongSegment = FMath::Clamp(
+				FVector::DotProduct(CameraToTarget, CameraToPlayer) / SegmentLengthSq,
+				0.f,
+				1.f);
+			const FVector ClosestPoint = CameraPoint + CameraToPlayer * AlongSegment;
+			const float DistanceToSightLine = FVector::Dist2D(LockOnTarget->GetActorLocation(), ClosestPoint);
+
+			if (AlongSegment > 0.f &&
+				AlongSegment < 1.f &&
+				DistanceToSightLine <= FMath::Max(0.f, LockOnOcclusionLineDistance))
+			{
+				const FVector CameraRight = FRotationMatrix(CurrentRot).GetUnitAxis(EAxis::Y).GetSafeNormal2D();
+				const FVector PlayerToTarget = (LockOnTarget->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
+				float SideSign = FVector::DotProduct(PlayerToTarget, CameraRight) >= 0.f ? -1.f : 1.f;
+				if (!FMath::IsNearlyZero(SmoothedLockOnOcclusionLateralOffset))
+				{
+					SideSign = FMath::Sign(SmoothedLockOnOcclusionLateralOffset);
+				}
+
+				TargetOcclusionLateralOffset = SideSign * FMath::Max(0.f, LockOnOcclusionShoulderOffset);
+			}
+		}
+	}
+	SmoothedLockOnOcclusionLateralOffset = FMath::FInterpTo(
+		SmoothedLockOnOcclusionLateralOffset,
+		TargetOcclusionLateralOffset,
+		DeltaTime,
+		LockOnOcclusionOffsetInterpSpeed);
 
 	const float DynamicLockOnRotationInterpSpeed = FMath::Lerp(
 		LockOnCloseRotationInterpSpeed,

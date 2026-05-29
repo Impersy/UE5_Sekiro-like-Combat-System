@@ -60,6 +60,11 @@ namespace
 			|| HitType == EHitReactType::LargeHit_Long;
 	}
 
+	bool IsLightingShockHitType(const EHitReactType HitType)
+	{
+		return HitType == EHitReactType::Lighting_Shock;
+	}
+
 	bool IsFrontHitReactDirection(const ECharacterHitReactDirection HitDirection)
 	{
 		return HitDirection == ECharacterHitReactDirection::Front_F ||
@@ -2902,7 +2907,9 @@ bool AJunMonster::CanBeInterruptedBy(EHitReactType IncomingHitReact) const
 
 	if (HasGameplayTag(JunGameplayTags::State_Condition_SuperArmor))
 	{
-		return IsHeavyHitType(IncomingHitReact) || IncomingHitReact == EHitReactType::LargeHit_Long;
+		return IsHeavyHitType(IncomingHitReact) ||
+			IncomingHitReact == EHitReactType::LargeHit_Long ||
+			IsLightingShockHitType(IncomingHitReact);
 	}
 
 	return true;
@@ -2927,6 +2934,8 @@ float AJunMonster::GetHitReactDuration(EHitReactType HitType) const
 		return LargeHitDuration;
 	case EHitReactType::LargeHit_Long:
 		return LargeHitLongDuration;
+	case EHitReactType::Lighting_Shock:
+		return LightingShockMontage ? LightingShockMontage->GetPlayLength() : LightingShockDuration;
 	default:
 		return 0.f;
 	}
@@ -3085,6 +3094,8 @@ UAnimMontage* AJunMonster::GetHitReactMontage(EHitReactType HitType, ECharacterH
 			LargeHitLeftMontage,
 			LargeHitRightMontage
 		);
+	case EHitReactType::Lighting_Shock:
+		return LightingShockMontage;
 	default:
 		return nullptr;
 	}

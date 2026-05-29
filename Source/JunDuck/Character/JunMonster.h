@@ -314,7 +314,7 @@ protected:
 	float GetPostureRecoveryVitalityScale() const;
 	void StartExecutionReady();
 	void EndExecutionReady();
-	void FinishExecutionRecovery();
+	virtual void FinishExecutionRecovery();
 	void UpdateExecutionFacing(float DeltaTime);
 	void ResetExecutionRuntimeState();
 	float GetExecutionMontageDuration(const UAnimMontage* Montage, float FallbackDuration) const;
@@ -791,6 +791,9 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact")
 	float LargeHitLongDuration = 0.8f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float LightingShockDuration = 1.5f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact", meta = (ClampMin = "0.0"))
 	float HitReactBlendInTime = 0.08f;
 
@@ -841,4 +844,7 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
 	TObjectPtr<class UAnimMontage> LightHitRightMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> LightingShockMontage = nullptr;
 };

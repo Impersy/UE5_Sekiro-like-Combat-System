@@ -28,6 +28,7 @@ enum class EHitReactType : uint8
 	HeavyHit_C,
 	LargeHit_Short,
 	LargeHit_Long,
+	Lighting_Shock,
 	Airborne,
 	Knockdown,
 	Execution,

@@ -115,6 +115,15 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX")
 	FName JigenNiagaraComponentName = TEXT("NS_Jigen");
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX")
+	FName LightingAuraNiagaraComponentName = TEXT("Lighting_Aura");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX")
+	FName LightingTrailNiagaraComponentName = TEXT("Lighting_Trail");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX")
+	FName LightingSlashNiagaraComponentName = TEXT("Lighting_Slash");
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace")
 	float TraceRadius = 10.f;
 
@@ -179,5 +188,14 @@ protected:
 
 	UPROPERTY(Transient)
 	mutable TObjectPtr<class UNiagaraComponent> CachedJigenNiagaraComponent = nullptr;
+
+	UPROPERTY(Transient)
+	mutable TObjectPtr<class UNiagaraComponent> CachedLightingAuraNiagaraComponent = nullptr;
+
+	UPROPERTY(Transient)
+	mutable TObjectPtr<class UNiagaraComponent> CachedLightingTrailNiagaraComponent = nullptr;
+
+	UPROPERTY(Transient)
+	mutable TObjectPtr<class UNiagaraComponent> CachedLightingSlashNiagaraComponent = nullptr;
 
 };
