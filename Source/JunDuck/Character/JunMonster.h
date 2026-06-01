@@ -111,7 +111,8 @@ public:
 		AActor* DamageCauser,
 		const FVector& SwingDirection,
 		const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
-		const FJunAttackDefenseRuleData& DefenseRuleData = FJunAttackDefenseRuleData());
+		const FJunAttackDefenseRuleData& DefenseRuleData = FJunAttackDefenseRuleData(),
+		float PostureDamageAmount = 0.f);
 	virtual void OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker) override;
 	virtual void NotifyAttackParriedBy(
 		class AJunPlayer* Parrier,
@@ -565,9 +566,6 @@ protected:
 	bool bDisablePostureGain = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0"))
-	float PostureGainPerDamage = 1.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0"))
 	float ParriedPostureGain = 35.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|PostureRecovery", meta = (ClampMin = "0"))
@@ -581,6 +579,24 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0.1"))
 	float ExecutionReadyDuration = 1.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion")
+	bool bEnableExecutionReadySlowMotion = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
+	float ExecutionReadySlowMotionDuration = 0.22f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0.001", ClampMax = "1"))
+	float ExecutionReadySlowMotionTimeScale = 0.18f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
+	float ExecutionReadySlowMotionBlendInTime = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
+	float ExecutionReadySlowMotionBlendOutTime = 0.1f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion")
+	int32 ExecutionReadySlowMotionPriority = 30;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0", ClampMax = "1"))
 	float MissedExecutionPostureRatio = 0.99f;

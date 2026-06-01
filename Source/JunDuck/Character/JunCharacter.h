@@ -202,7 +202,7 @@ struct FJunAttackDamageData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Damage")
 	float DamageMultiplier = 1.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Damage")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Damage", meta = (DisplayName = "Posture Damage"))
 	float PoiseDamage = 0.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Damage")
@@ -363,6 +363,7 @@ protected:
 	void RequestDefenseHitStop(AJunCharacter* OtherCharacter);
 	void PlayDefenseSound(EJunDefenseSoundType SoundType);
 	void SetPendingDefenseSoundType(EJunDefenseSoundType NewSoundType, bool bPlayImmediately = true);
+	void PlayHitDamageSound() const;
 	void UpdatePhysicalHitReaction(float DeltaTime);
 	void StopPhysicalHitReaction();
 
@@ -451,6 +452,12 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sound|Defense")
 	bool bPlayDefenseSoundImmediately = true;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sound|Hit")
+	TArray<TObjectPtr<class USoundBase>> HitDamageSounds;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sound|Hit", meta = (ClampMin = "0"))
+	float HitDamageSoundVolume = 1.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitStop")
 	bool bEnablePlayerAttackHitStop = true;

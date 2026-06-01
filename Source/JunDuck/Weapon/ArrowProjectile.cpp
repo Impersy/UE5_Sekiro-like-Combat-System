@@ -157,7 +157,14 @@ void AArrowProjectile::OnArrowOverlap(
 	}
 	else if (AJunMonster* HitMonster = Cast<AJunMonster>(HitCharacter))
 	{
-		HitMonster->ReceiveHit(HitReactType, DamageData.GetFinalDamage(), OwnerCharacter.Get(), SwingDirection, DefenseKnockbackData, ResolvedDefenseRuleData);
+		HitMonster->ReceiveHit(
+			HitReactType,
+			DamageData.GetFinalDamage(),
+			OwnerCharacter.Get(),
+			SwingDirection,
+			DefenseKnockbackData,
+			ResolvedDefenseRuleData,
+			DamageData.PoiseDamage);
 	}
 	Destroy();
 }

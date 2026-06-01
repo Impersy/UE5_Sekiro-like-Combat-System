@@ -14,6 +14,7 @@
 #include "NavigationSystem.h"
 #include "Player/JunPlayerController.h"
 #include "System/JunBGMManager.h"
+#include "System/JunTimeEffectSubsystem.h"
 #include "Weapon/ArrowProjectile.h"
 #include "Weapon/WeaponActor.h"
 
@@ -347,7 +348,7 @@ void AJunMonster::ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* 
 
 void AJunMonster::ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* DamageCauser, const FVector& SwingDirection)
 {
-	ReceiveHit(HitType, DamageAmount, DamageCauser, SwingDirection, FJunAttackDefenseKnockbackData());
+	ReceiveHit(HitType, DamageAmount, DamageCauser, SwingDirection, FJunAttackDefenseKnockbackData(), FJunAttackDefenseRuleData(), 0.f);
 }
 
 void AJunMonster::ReceiveHit(
@@ -356,7 +357,8 @@ void AJunMonster::ReceiveHit(
 	AActor* DamageCauser,
 	const FVector& SwingDirection,
 	const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
-	const FJunAttackDefenseRuleData& DefenseRuleData)
+	const FJunAttackDefenseRuleData& DefenseRuleData,
+	float PostureDamageAmount)
 {
 	if (CurrentState == EMonsterState::Dead || bBeingExecuted)
 	{
@@ -375,6 +377,13 @@ void AJunMonster::ReceiveHit(
 
 	// 데미지 적용 (기존 시스템 활용)
 	OnDamaged(FMath::RoundToInt(DamageAmount), AttackerCharacter);
+
+	if (bExecutionReady || bBeingExecuted)
+	{
+		return;
+	}
+
+	AddPosture(PostureDamageAmount);
 
 	if (bExecutionReady || bBeingExecuted)
 	{
@@ -478,7 +487,7 @@ void AJunMonster::OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker)
 
 	if (AppliedDamage > 0)
 	{
-		AddPosture(static_cast<float>(AppliedDamage) * PostureGainPerDamage);
+		PlayHitDamageSound();
 	}
 
 	if (Hp <= 0)
@@ -3264,6 +3273,19 @@ void AJunMonster::StartExecutionReady()
 	if (ReadyExecutedMontage)
 	{
 		PlayAnimMontage(ReadyExecutedMontage);
+	}
+
+	if (bEnableExecutionReadySlowMotion && GetWorld())
+	{
+		if (UJunTimeEffectSubsystem* TimeEffectSubsystem = GetWorld()->GetSubsystem<UJunTimeEffectSubsystem>())
+		{
+			TimeEffectSubsystem->RequestSlowMotion(
+				ExecutionReadySlowMotionDuration,
+				ExecutionReadySlowMotionTimeScale,
+				ExecutionReadySlowMotionBlendInTime,
+				ExecutionReadySlowMotionBlendOutTime,
+				ExecutionReadySlowMotionPriority);
+		}
 	}
 
 	OnExecutionReadyStarted();

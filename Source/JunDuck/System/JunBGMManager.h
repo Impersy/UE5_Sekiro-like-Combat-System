@@ -34,10 +34,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BGM|Ducking")
 	void SetBGMDucked(bool bDucked);
 
+	UFUNCTION(BlueprintCallable, Category = "BGM|Ducking")
+	void SetExecutionBGMDucked(bool bDucked);
+
 protected:
 	void PlayBGMComponent(UAudioComponent* AudioComponent, USoundBase* Sound, float FadeInTime, float Volume);
 	void FadeOutBGMComponent(UAudioComponent* AudioComponent, float FadeOutTime);
 	void ApplyCurrentBGMVolume(float FadeTime);
+	float GetCurrentBGMTargetVolume() const;
 
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BGM")
@@ -61,6 +65,12 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BGM|Ducking", meta = (ClampMin = "0"))
 	float DuckFadeTime = 0.5f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BGM|Ducking|Execution", meta = (ClampMin = "0"))
+	float ExecutionDuckedBGMVolume = 0.12f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BGM|Ducking|Execution", meta = (ClampMin = "0"))
+	float ExecutionDuckFadeTime = 0.15f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BGM", meta = (ClampMin = "0"))
 	float MapBGMFadeInTime = 1.0f;
 
@@ -78,4 +88,7 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BGM|Ducking")
 	bool bBGMDucked = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BGM|Ducking|Execution")
+	bool bExecutionBGMDucked = false;
 };

@@ -297,6 +297,7 @@ protected: // HeavyAttack
 	void TryAdvanceHeavyAttackCombo();
 	void UpdateHeavyAttackInput(float DeltaTime);
 	bool CanStartHeavyAttack() const;
+	void BeginHeavyAttackHoldInput();
 	void ResetHeavyAttackChargeInput();
 	void StartHeavyAttackTap();
 	void StartHeavyAttackCharge();
@@ -467,6 +468,7 @@ protected: // Hit
 	UAnimMontage* GetMikiriParryReadyMontage(const AActor* ReferenceActor) const;
 	AActor* GetMikiriCounterReferenceActor() const;
 	bool AddPosture(float Amount);
+	void ReducePosture(float Amount);
 	bool IsPostureFull() const;
 	void UpdatePostureRecovery(float DeltaTime);
 	bool CanRecoverPosture() const;
@@ -1399,6 +1401,9 @@ protected: // Runtime Combat / Defense State
 	EJunBufferedParrySuccessCancelAction BufferedParrySuccessCancelAction = EJunBufferedParrySuccessCancelAction::None;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
+	bool bParrySuccessHeavyAttackInputHeld = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	bool bHasSelectedInitialParrySuccessSide = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
@@ -1638,7 +1643,13 @@ protected: // Camera Tuning
     float LockOnRotationInterpSpeed = 5.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float LockOnPitchRotationInterpSpeed = 5.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
 	float LockOnCloseRotationInterpSpeed = 3.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float LockOnClosePitchRotationInterpSpeed = 3.5f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
 	float LockOnCloseDistance = 250.f;
@@ -1688,6 +1699,15 @@ protected: // Camera Tuning
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float LockOnClosePitchOffset = -35.f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn|ExecutionReady")
+	float ExecutionReadyLockOnPitchOffset = -28.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn|ExecutionReady", meta = (ClampMin = "0"))
+	float ExecutionReadyLockOnArmLength = 360.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn|ExecutionReady", meta = (ClampMin = "1"))
+	float ExecutionReadyLockOnFOV = 68.f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float MinLockOnCameraPitch = -35.f;
 
@@ -1711,6 +1731,9 @@ protected: // Camera Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float LockOnTargetXYIgnoreThreshold = 5.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float LockOnTargetXYInterpSpeed = 18.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float LockOnTurnStartAngle = 55.f;
@@ -1883,6 +1906,12 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "0"))
 	float NormalParryPostureGain = 30.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "0"))
+	float PerfectAirParryPostureReduction = 20.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "0"))
+	float NormalAirParryPostureReduction = 10.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "0"))
 	float GuardBlockPostureGain = 60.f;
@@ -2202,6 +2231,9 @@ protected: // Attack / Defense Tuning
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
 	float HeavyAttackComboBlendInTime = 0.2f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
+	float HeavyAttackStartBlendInTime = 0.2f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen", meta = (ClampMin = "0.1"))
 	float JigenPlayRate = 1.f;
 
@@ -2213,6 +2245,9 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
 	float JigenComboBlendInTime = 0.2f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
+	float JigenStartBlendInTime = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
 	float JigenDodgeCancelOpenTime = 1.4f;
@@ -2251,7 +2286,7 @@ protected: // Attack / Defense Tuning
 	float JigenHeavyAttackCancelBlendOutTime = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
-	float BasicAttackJigenCancelBlendOutTime = 0.12f;
+	float BasicAttackJigenCancelBlendOutTime = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
 	TArray<float> BasicAttackJigenCancelOpenTimes = { 0.5f, 0.5f, 0.6f, 0.6f };
@@ -2411,7 +2446,7 @@ protected: // Attack / Defense Tuning
 	float BasicAttackMoveCancelBlendOutTime = 0.25f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
-	float BasicAttackHeavyAttackCancelBlendOutTime = 0.12f;
+	float BasicAttackHeavyAttackCancelBlendOutTime = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
 	float BasicAttackRestartBlendOutTime = 0.2f;
@@ -2527,6 +2562,45 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution")
 	TObjectPtr<class UAnimMontage> ExecutionFinishMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|Sound")
+	TObjectPtr<class USoundBase> ExecutionStartSound = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|Sound", meta = (ClampMin = "0"))
+	float ExecutionStartSoundVolume = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion")
+	bool bEnableExecutionStartSlowMotion = true;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
+	float ExecutionStartSlowMotionDuration = 0.18f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0.001", ClampMax = "1"))
+	float ExecutionStartSlowMotionTimeScale = 0.18f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
+	float ExecutionStartSlowMotionBlendInTime = 0.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
+	float ExecutionStartSlowMotionBlendOutTime = 0.08f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion")
+	bool bEnableExecutionFinishStartSlowMotion = true;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
+	float ExecutionFinishStartSlowMotionDuration = 0.28f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0.001", ClampMax = "1"))
+	float ExecutionFinishStartSlowMotionTimeScale = 0.12f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
+	float ExecutionFinishStartSlowMotionBlendInTime = 0.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
+	float ExecutionFinishStartSlowMotionBlendOutTime = 0.12f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion")
+	int32 ExecutionStartSlowMotionPriority = 40;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death")
 	TObjectPtr<class UAnimMontage> FakeDeathMontage;

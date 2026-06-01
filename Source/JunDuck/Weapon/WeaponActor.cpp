@@ -552,7 +552,14 @@ void AWeaponActor::ApplyDamageToHitCharacter(AActor* HitActor, const FVector& Sw
 
 		if (HitMonster)
 		{
-			HitMonster->ReceiveHit(AttackHitReactType, FinalDamage, AttackerCharacter, SwingDirection, AttackDefenseKnockbackData, AttackDefenseRuleData);
+			HitMonster->ReceiveHit(
+				AttackHitReactType,
+				FinalDamage,
+				AttackerCharacter,
+				SwingDirection,
+				AttackDefenseKnockbackData,
+				AttackDefenseRuleData,
+				AttackDamageData.PoiseDamage);
 		}
 		else if (AJunPlayer* HitPlayer = Cast<AJunPlayer>(VictimCharacter))
 		{

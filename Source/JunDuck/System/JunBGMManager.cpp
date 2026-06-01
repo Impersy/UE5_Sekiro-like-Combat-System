@@ -88,6 +88,17 @@ void AJunBGMManager::SetBGMDucked(bool bDucked)
 	ApplyCurrentBGMVolume(DuckFadeTime);
 }
 
+void AJunBGMManager::SetExecutionBGMDucked(bool bDucked)
+{
+	if (bExecutionBGMDucked == bDucked)
+	{
+		return;
+	}
+
+	bExecutionBGMDucked = bDucked;
+	ApplyCurrentBGMVolume(ExecutionDuckFadeTime);
+}
+
 void AJunBGMManager::PlayBGMComponent(UAudioComponent* AudioComponent, USoundBase* Sound, float FadeInTime, float Volume)
 {
 	if (!AudioComponent || !Sound)
@@ -104,7 +115,7 @@ void AJunBGMManager::PlayBGMComponent(UAudioComponent* AudioComponent, USoundBas
 		return;
 	}
 
-	const float TargetVolume = bBGMDucked ? DuckedBGMVolume : Volume;
+	const float TargetVolume = GetCurrentBGMTargetVolume();
 	AudioComponent->SetSound(Sound);
 	AudioComponent->bAllowSpatialization = false;
 	if (FadeInTime > 0.f)
@@ -142,7 +153,7 @@ void AJunBGMManager::FadeOutBGMComponent(UAudioComponent* AudioComponent, float 
 
 void AJunBGMManager::ApplyCurrentBGMVolume(float FadeTime)
 {
-	const float TargetVolume = bBGMDucked ? DuckedBGMVolume : BGMVolume;
+	const float TargetVolume = GetCurrentBGMTargetVolume();
 
 	if (MapBGMComponent && MapBGMComponent->IsPlaying())
 	{
@@ -167,4 +178,14 @@ void AJunBGMManager::ApplyCurrentBGMVolume(float FadeTime)
 			CombatBGMComponent->SetVolumeMultiplier(TargetVolume);
 		}
 	}
+}
+
+float AJunBGMManager::GetCurrentBGMTargetVolume() const
+{
+	if (bExecutionBGMDucked)
+	{
+		return ExecutionDuckedBGMVolume;
+	}
+
+	return bBGMDucked ? DuckedBGMVolume : BGMVolume;
 }

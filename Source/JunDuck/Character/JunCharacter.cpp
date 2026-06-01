@@ -68,7 +68,12 @@ void AJunCharacter::Tick(float DeltaTime)
 
 void AJunCharacter::OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker)
 {
+	const int32 PreviousHp = Hp;
 	Hp = FMath::Clamp(Hp - Damage, 0, MaxHp);
+	if (PreviousHp > Hp)
+	{
+		PlayHitDamageSound();
+	}
 
 	if (Hp == 0) 
 	{
@@ -615,6 +620,26 @@ void AJunCharacter::PlayRandomDefenseSound(const TArray<TObjectPtr<USoundBase>>&
 
 	USoundBase* SoundToPlay = ValidSounds[FMath::RandRange(0, ValidSounds.Num() - 1)];
 	UGameplayStatics::PlaySoundAtLocation(this, SoundToPlay, GetActorLocation());
+}
+
+void AJunCharacter::PlayHitDamageSound() const
+{
+	TArray<USoundBase*> ValidSounds;
+	for (USoundBase* Sound : HitDamageSounds)
+	{
+		if (Sound)
+		{
+			ValidSounds.Add(Sound);
+		}
+	}
+
+	if (ValidSounds.Num() <= 0)
+	{
+		return;
+	}
+
+	USoundBase* SoundToPlay = ValidSounds[FMath::RandRange(0, ValidSounds.Num() - 1)];
+	UGameplayStatics::PlaySoundAtLocation(this, SoundToPlay, GetActorLocation(), HitDamageSoundVolume);
 }
 
 

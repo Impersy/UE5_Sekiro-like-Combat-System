@@ -714,6 +714,7 @@ void AJunPlayerController::Input_HeavyAttackReleased(const FInputActionValue& In
 
 	if (JunPlayer->IsInParrySuccess())
 	{
+		JunPlayer->OnHeavyAttackReleased();
 		return;
 	}
 
