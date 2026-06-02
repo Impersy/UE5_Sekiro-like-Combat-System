@@ -1,5 +1,6 @@
 #include "UI/JunLockOnMarkerWidget.h"
 
+#include "Blueprint/WidgetTree.h"
 #include "Components/Widget.h"
 
 void UJunLockOnMarkerWidget::NativeConstruct()
@@ -56,12 +57,49 @@ ESlateVisibility UJunLockOnMarkerWidget::GetLockOnMarkerSlateVisibility() const
 
 void UJunLockOnMarkerWidget::ApplyLockOnMarkerVisibility()
 {
-	SetVisibility(GetLockOnMarkerSlateVisibility());
+	ApplyLockOnMarkerVisualVisibility();
+
+	const bool bExecutionReadyMarkerVisible =
+		ExecutionReadyMarkerAlpha > 0.01f ||
+		TargetExecutionReadyMarkerAlpha > 0.f;
+	SetVisibility(
+		(bLockOnMarkerVisible || bExecutionReadyMarkerVisible)
+			? ESlateVisibility::HitTestInvisible
+			: ESlateVisibility::Hidden);
+}
+
+void UJunLockOnMarkerWidget::ApplyLockOnMarkerVisualVisibility()
+{
+	const ESlateVisibility TargetVisibility = GetLockOnMarkerSlateVisibility();
+
+	if (!LockOnMarkerRoot)
+	{
+		LockOnMarkerRoot = ResolveOptionalWidget(TEXT("LockOnMarkerRoot"));
+	}
+	if (!LockOnMarker)
+	{
+		LockOnMarker = ResolveOptionalWidget(TEXT("LockOnMarker"));
+	}
+
+	if (LockOnMarkerRoot)
+	{
+		LockOnMarkerRoot->SetVisibility(TargetVisibility);
+	}
+	if (LockOnMarker && LockOnMarker != LockOnMarkerRoot)
+	{
+		LockOnMarker->SetVisibility(TargetVisibility);
+	}
+}
+
+UWidget* UJunLockOnMarkerWidget::ResolveOptionalWidget(FName WidgetName) const
+{
+	return WidgetTree ? WidgetTree->FindWidget(WidgetName) : nullptr;
 }
 
 void UJunLockOnMarkerWidget::ApplyExecutionReadyMarkerAlpha()
 {
 	const bool bShouldShow = ExecutionReadyMarkerAlpha > 0.01f || TargetExecutionReadyMarkerAlpha > 0.f;
+	ApplyLockOnMarkerVisibility();
 	if (ExecutionReadyRoot)
 	{
 		ExecutionReadyRoot->SetRenderOpacity(ExecutionReadyMarkerAlpha);

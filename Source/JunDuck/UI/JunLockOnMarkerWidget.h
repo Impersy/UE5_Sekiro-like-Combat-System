@@ -34,8 +34,16 @@ protected:
 
 	void ApplyLockOnMarkerVisibility();
 	void ApplyExecutionReadyMarkerAlpha();
+	void ApplyLockOnMarkerVisualVisibility();
+	class UWidget* ResolveOptionalWidget(FName WidgetName) const;
 
 private:
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<class UWidget> LockOnMarkerRoot;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<class UWidget> LockOnMarker;
+
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<class UWidget> ExecutionReadyRoot;
 

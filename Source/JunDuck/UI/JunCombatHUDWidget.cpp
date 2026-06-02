@@ -3,6 +3,7 @@
 #include "Components/ProgressBar.h"
 #include "Components/Image.h"
 #include "Components/SizeBox.h"
+#include "Components/TextBlock.h"
 #include "Components/Widget.h"
 
 void UJunCombatHUDWidget::NativeConstruct()
@@ -18,6 +19,8 @@ void UJunCombatHUDWidget::NativeConstruct()
 	ApplyPlayerHealthBars();
 	ApplyBossHealthBars();
 	ApplyPostureBars();
+	ApplyPotionWidgets();
+	ApplyControlsVisibility();
 	ApplyBossHealthVisibility();
 	ApplyBossLifeWidgets();
 	if (Player_RedGlow_Root)
@@ -51,6 +54,18 @@ void UJunCombatHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 	UpdatePostureVisibility(InDeltaTime);
 	UpdateBossClearUI(InDeltaTime);
 	UpdateDeathUI(InDeltaTime);
+}
+
+void UJunCombatHUDWidget::SetPotionCount(int32 CurrentPotionCount)
+{
+	PotionCount = FMath::Max(0, CurrentPotionCount);
+	ApplyPotionWidgets();
+}
+
+void UJunCombatHUDWidget::ToggleControlsVisibility()
+{
+	bControlsVisible = !bControlsVisible;
+	ApplyControlsVisibility();
 }
 
 void UJunCombatHUDWidget::SetPlayerHealth(int32 CurrentHealth, int32 MaxHealth)
@@ -796,5 +811,37 @@ void UJunCombatHUDWidget::ApplyBossLifeWidget(int32 LifeIndex, UWidget* RootWidg
 	if (GrayWidget)
 	{
 		GrayWidget->SetVisibility(bActiveLifeSlot && !bLifeRemaining ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
+}
+
+void UJunCombatHUDWidget::ApplyPotionWidgets()
+{
+	if (Potion_Root)
+	{
+		Potion_Root->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+
+	const bool bHasPotion = PotionCount > 0;
+	if (Potion_Image)
+	{
+		Potion_Image->SetVisibility(bHasPotion ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
+
+	if (Empty_Potion_Image)
+	{
+		Empty_Potion_Image->SetVisibility(bHasPotion ? ESlateVisibility::Hidden : ESlateVisibility::HitTestInvisible);
+	}
+
+	if (Potion_Count)
+	{
+		Potion_Count->SetText(FText::AsNumber(PotionCount));
+	}
+}
+
+void UJunCombatHUDWidget::ApplyControlsVisibility()
+{
+	if (Controls_Root)
+	{
+		Controls_Root->SetVisibility(bControlsVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
 	}
 }

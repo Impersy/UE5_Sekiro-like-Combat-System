@@ -68,6 +68,7 @@ enum class EJunBufferedParrySuccessCancelAction : uint8
 	BasicAttack,
 	HeavyAttack,
 	Jigen,
+	Defense,
 	Jump,
 	Dodge,
 	Move
@@ -196,6 +197,7 @@ public: // External Gameplay API
 	bool TryStartExecution();
 	bool TryChooseFakeDeathDie();
 	bool TryChooseFakeDeathRevive();
+	bool TryStartDrinkPotion();
 	bool TryStartJigen();
 	void ApplyJumpCounterStompBounce(float UpVelocity, float BackwardVelocity);
 	void ApplyJumpCounterStompBounce(float UpVelocity, float BackwardVelocity, float BackwardMoveDuration);
@@ -220,6 +222,7 @@ public: // Query / State API
 	bool IsJigenAttacking() const;
 	bool IsJumpAttacking() const;
 	bool IsDodgeAttacking() const;
+	bool IsDrinkingPotion() const { return bIsDrinkingPotion; }
 	bool IsWalking() const;
 	bool IsSprinting() const;
 	bool IsInParrySuccess() const;
@@ -251,9 +254,12 @@ public: // Query / State API
 	EHitReactType GetLastIncomingHitReactType() const { return LastIncomingHitReactType; }
 	float GetCurrentPosture() const { return CurrentPosture; }
 	float GetMaxPosture() const { return MaxPosture; }
+	int32 GetCurrentDrinkPotionCharges() const { return CurrentDrinkPotionCharges; }
+	int32 GetMaxDrinkPotionCharges() const { return MaxDrinkPotionCharges; }
 
 	void ToggleWalkingState();
 	void SetWalkRequested(bool bNewWalkRequested);
+	void RestoreDrinkPotionWeaponVisibility();
 	void SetDesiredMoveAxes(float NewForward, float NewRight);
 	void OnMoveInputReleased();
 	void BufferBasicAttackRecoveryAction(EJunBufferedRecoveryAction Action);
@@ -445,9 +451,25 @@ protected: // Death
 	void ResetBossesAfterPlayerRealDeath();
 	void RespawnAtPlayerStart();
 	void ClearHitReactRuntimeStateForRevive();
+	void ScheduleFakeDeathReviveAutoLockOn();
+	void UpdateFakeDeathReviveAutoLockOn(float DeltaTime);
+	void ClearFakeDeathReviveAutoLockOn();
+	void StartLockOnAfterFakeDeathRevive(class AJunCharacter* NewTarget);
 
 	UFUNCTION()
 	void OnFakeDeathGetUpMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+protected: // Drink
+	bool CanStartDrinkPotion() const;
+	void RefillDrinkPotionCharges();
+	void ApplyDrinkPotionHeal();
+	void UpdateDrinkPotionHeal(float DeltaTime);
+	void CancelDrinkPotionHeal();
+	void HideWeaponForDrinkPotion();
+	void FinishDrinkPotion(bool bInterrupted);
+
+	UFUNCTION()
+	void OnDrinkPotionMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
 protected: // Hit
 	EJunPlayerHitResolveResult ResolveIncomingHitResult(EHitReactType IncomingHitType, const AActor* DamageCauser) const;
@@ -798,6 +820,12 @@ protected: // Runtime Camera State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
 	bool bLockOnTurnInProgress = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
+	float FakeDeathReviveAutoLockOnRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
+	TWeakObjectPtr<class AJunCharacter> PendingFakeDeathReviveLockOnTarget;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|Execution")
 	EJunCameraMode CameraModeBeforeExecution = EJunCameraMode::Free;
@@ -1346,6 +1374,30 @@ protected: // Runtime Combat / Defense State
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Posture")
 	bool bAirGuardBreakLandMontagePending = false;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drink")
+	int32 CurrentDrinkPotionCharges = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drink")
+	bool bIsDrinkingPotion = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drink")
+	bool bDrinkPotionSavedWalkRequested = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drink")
+	bool bDrinkPotionWeaponHidden = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drink")
+	bool bDrinkPotionSavedWeaponHidden = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drink")
+	float DrinkPotionHealRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drink")
+	float DrinkPotionPendingHealAmount = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drink")
+	float DrinkPotionHealAccumulator = 0.f;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	float PlayerHitControlLockRemainTime = 0.f;
 
@@ -1354,6 +1406,9 @@ protected: // Runtime Combat / Defense State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	float ParrySuccessElapsedTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
+	float ParrySuccessDefenseHoldElapsedTime = 0.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	EHitReactType CurrentHitReactType = EHitReactType::None;
@@ -1693,6 +1748,9 @@ protected: // Camera Tuning
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float LockOnBreakDistance = 150000.f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float FakeDeathReviveAutoLockOnDelay = 0.18f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float LockOnPitchOffset = -10.f;
 
@@ -1876,6 +1934,9 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float ParrySuccessDefenseCancelOpenTime = 0.1f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
+	float ParrySuccessDefenseHoldConfirmTime = 0.18f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float ParrySuccessBasicAttackCancelBlendOutTime = 0.15f;
@@ -2502,6 +2563,24 @@ protected: // Movement / Jump Tuning
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement")
 	float FreeRunSlideMinStartSpeed = 300.f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Drink", meta = (ClampMin = "0"))
+	int32 MaxDrinkPotionCharges = 5;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Drink", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float DrinkPotionHealRatio = 0.4f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Drink", meta = (ClampMin = "0.0"))
+	float DrinkPotionHealDuration = 0.55f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Drink", meta = (ClampMin = "0.001"))
+	float DrinkPotionPlayRate = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Drink", meta = (ClampMin = "0.0"))
+	float DrinkPotionBlendInTime = 0.12f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Drink", meta = (ClampMin = "0.0"))
+	float DrinkPotionInterruptBlendOutTime = 0.08f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jump")
 	float LockOnJumpMinimumHorizontalSpeed = 350.f;
 
@@ -2520,6 +2599,9 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
 	TObjectPtr<class UAnimMontage> JigenMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Drink")
+	TObjectPtr<class UAnimMontage> DrinkMontage;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack")
 	TObjectPtr<class UAnimMontage> JumpAttackMontage;

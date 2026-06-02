@@ -43,7 +43,8 @@ private:
 	void UpdateCombatWidgets();
 	void UpdateDangerMarkerWidget();
 	class AJunMonster* FindActiveCombatBoss() const;
-	void UpdateLockOnMarkerWidget(class AJunCharacter* CurrentLockOnTarget);
+	void UpdateLockOnMarkerWidget(class AJunCharacter* CurrentLockOnTarget, class AJunMonster* ActiveCombatBoss);
+	FVector GetLockOnMarkerWorldPointForTarget(const class AJunCharacter* Target) const;
 
 	void Input_Move(const FInputActionValue& InputValue);
 	void Input_MoveReleased(const FInputActionValue& InputValue);
@@ -60,6 +61,8 @@ private:
 	void Input_RunStarted(const FInputActionValue& InputValue);
 	void Input_RunReleased(const FInputActionValue& InputValue);
 	void Input_WalkToggle(const FInputActionValue& InputValue);
+	void Input_Drink(const FInputActionValue& InputValue);
+	void Input_ControlsToggle(const FInputActionValue& InputValue);
 
 	bool bDodgeInputHeld = false;
 	float LastDodgeInputTime = -FLT_MAX;

@@ -9,6 +9,7 @@
 #include "Character/JunCharacter.h"
 #include "Character/JunMonster.h"
 #include "Character/JunPlayer.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "EngineUtils.h"
 #include "UI/JunCombatHUDWidget.h"
 #include "UI/JunDangerMarkerWidget.h"
@@ -84,6 +85,12 @@ void AJunPlayerController::SetupInputComponent()
 
 			auto WalkToggleAction = InputData->FindInputActionByTag(JunGameplayTags::Input_Action_WalkToggle);
 			EnhancedInputComponent->BindAction(WalkToggleAction, ETriggerEvent::Started, this, &ThisClass::Input_WalkToggle);
+
+			auto DrinkAction = InputData->FindInputActionByTag(JunGameplayTags::Input_Action_Drink);
+			EnhancedInputComponent->BindAction(DrinkAction, ETriggerEvent::Started, this, &ThisClass::Input_Drink);
+
+			auto ControlsToggleAction = InputData->FindInputActionByTag(JunGameplayTags::Input_Action_ControlsToggle);
+			EnhancedInputComponent->BindAction(ControlsToggleAction, ETriggerEvent::Started, this, &ThisClass::Input_ControlsToggle);
 		}
 	}
 	
@@ -146,6 +153,7 @@ void AJunPlayerController::UpdateCombatWidgets()
 	if (CombatHUDWidget)
 	{
 		CombatHUDWidget->SetPlayerHealth(JunPlayer->GetHp(), JunPlayer->GetMaxHp());
+		CombatHUDWidget->SetPotionCount(JunPlayer->GetCurrentDrinkPotionCharges());
 		CombatHUDWidget->SetPlayerPosture(JunPlayer->GetCurrentPosture(), JunPlayer->GetMaxPosture());
 		CombatHUDWidget->SetBossHealthVisible(ActiveCombatBoss != nullptr);
 
@@ -163,7 +171,7 @@ void AJunPlayerController::UpdateCombatWidgets()
 	}
 
 	UpdateDangerMarkerWidget();
-	UpdateLockOnMarkerWidget(CurrentLockOnTarget);
+	UpdateLockOnMarkerWidget(CurrentLockOnTarget, ActiveCombatBoss);
 }
 
 void AJunPlayerController::PlayPlayerPostureBreakGlow()
@@ -332,7 +340,24 @@ AJunMonster* AJunPlayerController::FindActiveCombatBoss() const
 	return nullptr;
 }
 
-void AJunPlayerController::UpdateLockOnMarkerWidget(AJunCharacter* CurrentLockOnTarget)
+FVector AJunPlayerController::GetLockOnMarkerWorldPointForTarget(const AJunCharacter* Target) const
+{
+	if (!Target)
+	{
+		return FVector::ZeroVector;
+	}
+
+	USkeletalMeshComponent* TargetMesh = Target->GetMesh();
+	static const FName LockOnBoneName(TEXT("spine_03"));
+	if (TargetMesh && TargetMesh->GetBoneIndex(LockOnBoneName) != INDEX_NONE)
+	{
+		return TargetMesh->GetBoneLocation(LockOnBoneName);
+	}
+
+	return Target->GetLockOnTargetPoint();
+}
+
+void AJunPlayerController::UpdateLockOnMarkerWidget(AJunCharacter* CurrentLockOnTarget, AJunMonster* ActiveCombatBoss)
 {
 	if (!LockOnMarkerWidget)
 	{
@@ -346,6 +371,18 @@ void AJunPlayerController::UpdateLockOnMarkerWidget(AJunCharacter* CurrentLockOn
 		return;
 	}
 
+	AJunMonster* ExecutionReadyMonster = nullptr;
+	if (AJunMonster* LockOnMonster = Cast<AJunMonster>(CurrentLockOnTarget))
+	{
+		ExecutionReadyMonster = LockOnMonster->IsExecutionReady() ? LockOnMonster : nullptr;
+	}
+	if (!ExecutionReadyMonster && ActiveCombatBoss && ActiveCombatBoss->IsExecutionReady())
+	{
+		ExecutionReadyMonster = ActiveCombatBoss;
+	}
+
+	AJunCharacter* MarkerTarget = CurrentLockOnTarget ? CurrentLockOnTarget : ExecutionReadyMonster;
+
 	const bool bTargetChanged = CurrentLockOnTarget != PreviousLockOnMarkerTarget;
 	if (bTargetChanged)
 	{
@@ -355,7 +392,7 @@ void AJunPlayerController::UpdateLockOnMarkerWidget(AJunCharacter* CurrentLockOn
 			: 0.f;
 	}
 
-	if (!CurrentLockOnTarget)
+	if (!MarkerTarget)
 	{
 		LockOnMarkerWidget->SetExecutionReadyMarkerVisible(false);
 		LockOnMarkerWidget->SetLockOnMarkerVisible(false);
@@ -365,7 +402,10 @@ void AJunPlayerController::UpdateLockOnMarkerWidget(AJunCharacter* CurrentLockOn
 	LockOnMarkerShowDelayRemainTime = FMath::Max(0.f, LockOnMarkerShowDelayRemainTime - GetWorld()->GetDeltaSeconds());
 
 	FVector2D ScreenPosition = FVector2D::ZeroVector;
-	const bool bProjected = ProjectWorldLocationToScreen(JunPlayer->GetLockOnMarkerWorldPoint(), ScreenPosition, true);
+	const FVector MarkerWorldPoint = CurrentLockOnTarget
+		? JunPlayer->GetLockOnMarkerWorldPoint()
+		: GetLockOnMarkerWorldPointForTarget(MarkerTarget);
+	const bool bProjected = ProjectWorldLocationToScreen(MarkerWorldPoint, ScreenPosition, true);
 	if (!bProjected)
 	{
 		LockOnMarkerWidget->SetExecutionReadyMarkerVisible(false);
@@ -375,11 +415,9 @@ void AJunPlayerController::UpdateLockOnMarkerWidget(AJunCharacter* CurrentLockOn
 
 	LockOnMarkerWidget->SetPositionInViewport(ScreenPosition, true);
 
-	const bool bShowLockOnMarker = LockOnMarkerShowDelayRemainTime <= 0.f;
+	const bool bShowLockOnMarker = CurrentLockOnTarget && LockOnMarkerShowDelayRemainTime <= 0.f;
 	LockOnMarkerWidget->SetLockOnMarkerVisible(bShowLockOnMarker);
-
-	const AJunMonster* LockOnMonster = Cast<AJunMonster>(CurrentLockOnTarget);
-	LockOnMarkerWidget->SetExecutionReadyMarkerVisible(bShowLockOnMarker && LockOnMonster && LockOnMonster->IsExecutionReady());
+	LockOnMarkerWidget->SetExecutionReadyMarkerVisible(ExecutionReadyMonster != nullptr);
 }
 
 void AJunPlayerController::Input_Move(const FInputActionValue& InputValue)
@@ -472,6 +510,11 @@ void AJunPlayerController::Input_Jump(const FInputActionValue& InputValue)
 		return;
 	}
 
+	if (JunPlayer->IsDrinkingPotion())
+	{
+		return;
+	}
+
 	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Action_Dodge))
 	{
 		JunPlayer->TryCancelDodgeIntoJump();
@@ -534,6 +577,11 @@ void AJunPlayerController::Input_Jump(const FInputActionValue& InputValue)
 void AJunPlayerController::Input_Dodge(const FInputActionValue& InputValue)
 {
 	if (!JunPlayer)
+	{
+		return;
+	}
+
+	if (JunPlayer->IsDrinkingPotion())
 	{
 		return;
 	}
@@ -612,6 +660,11 @@ void AJunPlayerController::Input_DodgeReleased(const FInputActionValue& InputVal
 void AJunPlayerController::Input_BasicAttack(const FInputActionValue& InputValue)
 {
 	if (!JunPlayer)
+	{
+		return;
+	}
+
+	if (JunPlayer->IsDrinkingPotion())
 	{
 		return;
 	}
@@ -696,6 +749,11 @@ void AJunPlayerController::Input_HeavyAttackStarted(const FInputActionValue& Inp
 		return;
 	}
 
+	if (JunPlayer->IsDrinkingPotion())
+	{
+		return;
+	}
+
 	if (JunPlayer->IsInParrySuccess())
 	{
 		JunPlayer->BufferParrySuccessCancelAction(EJunBufferedParrySuccessCancelAction::HeavyAttack);
@@ -734,6 +792,11 @@ void AJunPlayerController::Input_LockOn(const FInputActionValue& InputValue)
 void AJunPlayerController::Input_Defense(const FInputActionValue& InputValue)
 {
 	if (!JunPlayer)
+	{
+		return;
+	}
+
+	if (JunPlayer->IsDrinkingPotion())
 	{
 		return;
 	}
@@ -782,4 +845,22 @@ void AJunPlayerController::Input_WalkToggle(const FInputActionValue& InputValue)
 	}
 
 	JunPlayer->ToggleWalkingState();
+}
+
+void AJunPlayerController::Input_Drink(const FInputActionValue& InputValue)
+{
+	if (!JunPlayer)
+	{
+		return;
+	}
+
+	JunPlayer->TryStartDrinkPotion();
+}
+
+void AJunPlayerController::Input_ControlsToggle(const FInputActionValue& InputValue)
+{
+	if (CombatHUDWidget)
+	{
+		CombatHUDWidget->ToggleControlsVisibility();
+	}
 }

@@ -8,6 +8,7 @@ class UWidget;
 class UProgressBar;
 class USizeBox;
 class UImage;
+class UTextBlock;
 
 UCLASS()
 class JUNDUCK_API UJunCombatHUDWidget : public UUserWidget
@@ -17,6 +18,12 @@ class JUNDUCK_API UJunCombatHUDWidget : public UUserWidget
 public:
 	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
 	void SetPlayerHealth(int32 CurrentHealth, int32 MaxHealth);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
+	void SetPotionCount(int32 CurrentPotionCount);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
+	void ToggleControlsVisibility();
 
 	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
 	void SetBossHealth(int32 CurrentHealth, int32 MaxHealth);
@@ -142,6 +149,8 @@ private:
 	void ApplyBossHealthVisibility();
 	void ApplyBossLifeWidgets();
 	void ApplyBossLifeWidget(int32 LifeIndex, UWidget* RootWidget, UWidget* GrayWidget, UWidget* RedWidget) const;
+	void ApplyPotionWidgets();
+	void ApplyControlsVisibility();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHUD", meta = (AllowPrivateAccess = "true"))
 	float PlayerHealthPercent = 1.f;
@@ -230,6 +239,8 @@ private:
 	bool bPlayerPostureEverShown = false;
 	bool bBossPostureEverShown = false;
 	bool bPlayerPostureBreakHidePresentationActive = false;
+	int32 PotionCount = 0;
+	bool bControlsVisible = true;
 	float PlayerPostureFrameOpacity = 1.f;
 	float DimBlackOpacity = 0.f;
 	float FullBlackOpacity = 0.f;
@@ -365,4 +376,19 @@ private:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> Life_3_Red;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Potion_Root;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Potion_Image;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Empty_Potion_Image;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Potion_Count;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Controls_Root;
 };

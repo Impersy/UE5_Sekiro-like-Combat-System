@@ -19,6 +19,8 @@ UE_DECLARE_GAMEPLAY_TAG_EXTERN(Input_Action_LockOn);
 UE_DECLARE_GAMEPLAY_TAG_EXTERN(Input_Action_Run);
 UE_DECLARE_GAMEPLAY_TAG_EXTERN(Input_Action_WalkToggle);
 UE_DECLARE_GAMEPLAY_TAG_EXTERN(Input_Action_Defense);
+UE_DECLARE_GAMEPLAY_TAG_EXTERN(Input_Action_Drink);
+UE_DECLARE_GAMEPLAY_TAG_EXTERN(Input_Action_ControlsToggle);
 
 UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Notify_BasicAttack_ComboWindow);
 UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Notify_BasicAttack_ComboAdvance);

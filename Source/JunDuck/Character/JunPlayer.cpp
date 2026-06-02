@@ -116,6 +116,7 @@ void AJunPlayer::BeginPlay()
 
 	SetTeamTag(JunGameplayTags::Team_Player);
 	CurrentReviveCount = FMath::Max(0, MaxReviveCount);
+	RefillDrinkPotionCharges();
 	SpawnAndAttachWeapon();
 	SpawnAndAttachScabbard();
 	SpawnAndAttachDefaultHat();
@@ -251,17 +252,20 @@ void AJunPlayer::Tick(float DeltaTime)
 
 	if (DeathState != EJunPlayerDeathState::Alive)
 	{
+		CancelDrinkPotionHeal();
 		UpdateAirHeavyHitReact(DeltaTime);
 		UpdateDeathState(DeltaTime);
 		return;
 	}
 
 	ValidateLockOnTarget();
+	UpdateFakeDeathReviveAutoLockOn(DeltaTime);
 
 	UpdateCharacterRotationForCurrentCameraMode(DeltaTime);
 	UpdateHitReactFacing(DeltaTime);
 
 	UpdateMovementSpeed(DeltaTime);
+	UpdateDrinkPotionHeal(DeltaTime);
 
 	ApplyRunningStateToAnimInstance(ShouldUseRunningAnim());
 
@@ -308,6 +312,7 @@ void AJunPlayer::OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker)
 	if (PreviousHp > Hp)
 	{
 		PlayHitDamageSound();
+		FinishDrinkPotion(true);
 	}
 	if (Hp > 0)
 	{
@@ -321,6 +326,218 @@ void AJunPlayer::OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker)
 	}
 
 	EnterRealDeath();
+}
+
+bool AJunPlayer::TryStartDrinkPotion()
+{
+	if (!CanStartDrinkPotion())
+	{
+		return false;
+	}
+
+	UAnimInstance* PlayerAnimInstance = GetPlayerAnimInstance();
+	if (!PlayerAnimInstance || !DrinkMontage)
+	{
+		return false;
+	}
+
+	bIsDrinkingPotion = true;
+	bDrinkPotionSavedWalkRequested = bWalkRequested;
+	SetWalkRequested(true);
+	HideWeaponForDrinkPotion();
+
+	PlayerAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnDrinkPotionMontageEnded);
+	PlayerAnimInstance->OnMontageEnded.AddDynamic(this, &AJunPlayer::OnDrinkPotionMontageEnded);
+
+	const float PlayResult = PlayerAnimInstance->Montage_PlayWithBlendIn(
+		DrinkMontage,
+		FAlphaBlendArgs(FMath::Max(0.f, DrinkPotionBlendInTime)),
+		FMath::Max(DrinkPotionPlayRate, KINDA_SMALL_NUMBER));
+	if (PlayResult <= 0.f)
+	{
+		FinishDrinkPotion(true);
+		return false;
+	}
+
+	CurrentDrinkPotionCharges = FMath::Max(0, CurrentDrinkPotionCharges - 1);
+	ApplyDrinkPotionHeal();
+	return true;
+}
+
+bool AJunPlayer::CanStartDrinkPotion() const
+{
+	if (!DrinkMontage || CurrentDrinkPotionCharges <= 0)
+	{
+		return false;
+	}
+
+	if (bIsDrinkingPotion ||
+		DeathState != EJunPlayerDeathState::Alive ||
+		Is_Dead() ||
+		bIsExecuting ||
+		IsInDeathSequence() ||
+		CurrentHitState != EJunPlayerHitState::None)
+	{
+		return false;
+	}
+
+	if (bIsBasicAttacking ||
+		bIsHeavyAttacking ||
+		bIsJigenAttacking ||
+		bIsJumpAttacking ||
+		bIsDodgeAttacking ||
+		DefenseState != EJunDefenseState::None ||
+		HasGameplayTag(JunGameplayTags::State_Action_Dodge) ||
+		HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked) ||
+		HasGameplayTag(JunGameplayTags::State_Block_Input))
+	{
+		return false;
+	}
+
+	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (MovementComponent && MovementComponent->IsFalling())
+	{
+		return false;
+	}
+
+	return true;
+}
+
+void AJunPlayer::RefillDrinkPotionCharges()
+{
+	CurrentDrinkPotionCharges = FMath::Max(0, MaxDrinkPotionCharges);
+}
+
+void AJunPlayer::ApplyDrinkPotionHeal()
+{
+	if (MaxHp <= 0 || DrinkPotionHealRatio <= 0.f)
+	{
+		return;
+	}
+
+	const int32 HealAmount = FMath::RoundToInt(static_cast<float>(MaxHp) * DrinkPotionHealRatio);
+	if (HealAmount <= 0)
+	{
+		return;
+	}
+
+	if (DrinkPotionHealDuration <= 0.f)
+	{
+		Hp = FMath::Clamp(Hp + HealAmount, 0, MaxHp);
+		return;
+	}
+
+	DrinkPotionPendingHealAmount += HealAmount;
+	DrinkPotionHealRemainTime = FMath::Max(DrinkPotionHealRemainTime, DrinkPotionHealDuration);
+}
+
+void AJunPlayer::UpdateDrinkPotionHeal(float DeltaTime)
+{
+	if (DrinkPotionHealRemainTime <= 0.f || DrinkPotionPendingHealAmount <= 0.f)
+	{
+		return;
+	}
+
+	if (Hp >= MaxHp)
+	{
+		CancelDrinkPotionHeal();
+		return;
+	}
+
+	const float StepRatio = DrinkPotionHealRemainTime > KINDA_SMALL_NUMBER
+		? FMath::Clamp(DeltaTime / DrinkPotionHealRemainTime, 0.f, 1.f)
+		: 1.f;
+	const float StepHeal = DrinkPotionPendingHealAmount * StepRatio;
+	DrinkPotionPendingHealAmount = FMath::Max(0.f, DrinkPotionPendingHealAmount - StepHeal);
+	DrinkPotionHealRemainTime = FMath::Max(0.f, DrinkPotionHealRemainTime - DeltaTime);
+
+	DrinkPotionHealAccumulator += StepHeal;
+	const int32 HealToApply = FMath::FloorToInt(DrinkPotionHealAccumulator);
+	if (HealToApply > 0)
+	{
+		const int32 PreviousHp = Hp;
+		Hp = FMath::Clamp(Hp + HealToApply, 0, MaxHp);
+		DrinkPotionHealAccumulator -= static_cast<float>(Hp - PreviousHp);
+	}
+
+	if (DrinkPotionHealRemainTime <= 0.f && DrinkPotionPendingHealAmount > 0.f)
+	{
+		const int32 FinalHealToApply = FMath::CeilToInt(DrinkPotionPendingHealAmount + DrinkPotionHealAccumulator);
+		if (FinalHealToApply > 0)
+		{
+			Hp = FMath::Clamp(Hp + FinalHealToApply, 0, MaxHp);
+		}
+		CancelDrinkPotionHeal();
+	}
+}
+
+void AJunPlayer::CancelDrinkPotionHeal()
+{
+	DrinkPotionHealRemainTime = 0.f;
+	DrinkPotionPendingHealAmount = 0.f;
+	DrinkPotionHealAccumulator = 0.f;
+}
+
+void AJunPlayer::HideWeaponForDrinkPotion()
+{
+	bDrinkPotionWeaponHidden = false;
+	bDrinkPotionSavedWeaponHidden = false;
+
+	if (!EquippedWeapon)
+	{
+		return;
+	}
+
+	bDrinkPotionSavedWeaponHidden = EquippedWeapon->IsHidden();
+	EquippedWeapon->SetActorHiddenInGame(true);
+	EquippedWeapon->SetWeaponEffectsEnabled(false);
+	bDrinkPotionWeaponHidden = true;
+}
+
+void AJunPlayer::RestoreDrinkPotionWeaponVisibility()
+{
+	if (!bDrinkPotionWeaponHidden)
+	{
+		return;
+	}
+
+	if (EquippedWeapon)
+	{
+		EquippedWeapon->SetActorHiddenInGame(bDrinkPotionSavedWeaponHidden);
+		EquippedWeapon->SetWeaponEffectsEnabled(!bDrinkPotionSavedWeaponHidden);
+	}
+
+	bDrinkPotionWeaponHidden = false;
+}
+
+void AJunPlayer::FinishDrinkPotion(bool bInterrupted)
+{
+	if (bInterrupted)
+	{
+		CancelDrinkPotionHeal();
+	}
+
+	if (!bIsDrinkingPotion && !bDrinkPotionWeaponHidden)
+	{
+		return;
+	}
+
+	if (UAnimInstance* PlayerAnimInstance = GetPlayerAnimInstance())
+	{
+		PlayerAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnDrinkPotionMontageEnded);
+	if (bInterrupted && DrinkMontage && PlayerAnimInstance->Montage_IsPlaying(DrinkMontage))
+		{
+			PlayerAnimInstance->Montage_Stop(FMath::Max(0.f, DrinkPotionInterruptBlendOutTime), DrinkMontage);
+		}
+	}
+
+	RestoreDrinkPotionWeaponVisibility();
+	if (bIsDrinkingPotion)
+	{
+		SetWalkRequested(bDrinkPotionSavedWalkRequested);
+	}
+
+	bIsDrinkingPotion = false;
 }
 
 bool AJunPlayer::Is_Invincible() const
@@ -1517,6 +1734,8 @@ void AJunPlayer::OnDefenseStarted()
 {
 	if (bIsDodgeAttacking)
 	{
+		bDefenseButtonHeld = true;
+		bHoldRequestedForCurrentDeflect = true;
 		TryCancelDodgeAttackIntoDefense();
 		return;
 	}
@@ -1531,20 +1750,24 @@ void AJunPlayer::OnDefenseStarted()
 
 	if (CurrentHitState == EJunPlayerHitState::ParrySuccess)
 	{
+		bDefenseButtonHeld = true;
+		bHoldRequestedForCurrentDeflect = true;
 		if (ChainParryWindowRemainTime > 0.f)
 		{
-			bDefenseButtonHeld = true;
-			bHoldRequestedForCurrentDeflect = true;
 			OpenParryWindow(true);
-			return;
 		}
 
 		if (ParrySuccessElapsedTime >= ParrySuccessDefenseCancelOpenTime)
 		{
-			bDefenseButtonHeld = true;
-			bHoldRequestedForCurrentDeflect = true;
-			CancelParrySuccessForCancelTransition(ParrySuccessDefenseCancelBlendOutTime);
-			StartDefenseSequence();
+			if (ParrySuccessDefenseHoldElapsedTime >= ParrySuccessDefenseHoldConfirmTime)
+			{
+				CancelParrySuccessForCancelTransition(ParrySuccessDefenseCancelBlendOutTime);
+				EnterGuardLoop();
+			}
+		}
+		else
+		{
+			ParrySuccessDefenseHoldElapsedTime = 0.f;
 		}
 		return;
 	}
@@ -1581,9 +1804,11 @@ void AJunPlayer::OnDefenseStarted()
 
 	if (HasGameplayTag(JunGameplayTags::State_Action_Dodge))
 	{
+		bDefenseButtonHeld = true;
+		bHoldRequestedForCurrentDeflect = true;
 		if (!TryCancelDodgeIntoDefense())
 		{
-			bDefenseButtonHeld = true;
+			bHoldRequestedForCurrentDeflect = false;
 		}
 		return;
 	}
@@ -1623,6 +1848,13 @@ void AJunPlayer::OnDefenseReleased()
 	// BlockGuard transitions into Ending immediately on release.
 	bDefenseButtonHeld = false;
 	bHoldRequestedForCurrentDeflect = false;
+
+	if (CurrentHitState == EJunPlayerHitState::ParrySuccess &&
+		BufferedParrySuccessCancelAction == EJunBufferedParrySuccessCancelAction::Defense)
+	{
+		BufferedParrySuccessCancelAction = EJunBufferedParrySuccessCancelAction::None;
+	}
+	ParrySuccessDefenseHoldElapsedTime = 0.f;
 
 	if (CurrentHitState == EJunPlayerHitState::GuardBlock)
 	{
@@ -2008,6 +2240,8 @@ bool AJunPlayer::CanBufferParrySuccessCancel(EJunBufferedParrySuccessCancelActio
 		return ParrySuccessElapsedTime >= ParrySuccessHeavyAttackCancelOpenTime;
 	case EJunBufferedParrySuccessCancelAction::Jigen:
 		return ParrySuccessElapsedTime >= ParrySuccessHeavyAttackCancelOpenTime;
+	case EJunBufferedParrySuccessCancelAction::Defense:
+		return ParrySuccessElapsedTime >= ParrySuccessDefenseCancelOpenTime;
 	case EJunBufferedParrySuccessCancelAction::Jump:
 		return ParrySuccessElapsedTime >= ParrySuccessJumpCancelOpenTime;
 	case EJunBufferedParrySuccessCancelAction::Dodge:
@@ -4535,6 +4769,10 @@ void AJunPlayer::ExecuteBufferedParrySuccessCancelAction()
 		CancelParrySuccessForCancelTransition(ParrySuccessHeavyAttackCancelBlendOutTime);
 		StartJigen();
 		break;
+	case EJunBufferedParrySuccessCancelAction::Defense:
+		CancelParrySuccessForCancelTransition(ParrySuccessDefenseCancelBlendOutTime);
+		EnterGuardLoop();
+		break;
 	case EJunBufferedParrySuccessCancelAction::Jump:
 		CancelParrySuccessForCancelTransition(ParrySuccessJumpCancelBlendOutTime);
 		Jump();
@@ -5759,6 +5997,16 @@ void AJunPlayer::OnDodgeAttackMontageEnded(UAnimMontage* Montage, bool bInterrup
 	}
 }
 
+void AJunPlayer::OnDrinkPotionMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	if (Montage != DrinkMontage)
+	{
+		return;
+	}
+
+	FinishDrinkPotion(bInterrupted);
+}
+
 void AJunPlayer::OnLockOnTurnMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
 	if (Montage != CurrentLockOnTurnMontage)
@@ -6296,6 +6544,12 @@ void AJunPlayer::FinishFakeDeathRevive()
 		JunPlayerController->ResetPlayerPostureVisibilityState();
 		JunPlayerController->HideDeathUI();
 	}
+
+	if (AJunCharacter* ReviveLockOnTarget = FindBestLockOnTarget())
+	{
+		PendingFakeDeathReviveLockOnTarget = ReviveLockOnTarget;
+		ScheduleFakeDeathReviveAutoLockOn();
+	}
 }
 
 void AJunPlayer::UpdateDeathState(float DeltaTime)
@@ -6460,6 +6714,7 @@ void AJunPlayer::StopRealDeathSound()
 
 void AJunPlayer::ApplyDeathControlLock()
 {
+	FinishDrinkPotion(true);
 	InterruptActionsForHitReaction();
 	ClearCombatInputBuffers();
 	CancelLockOnTurn();
@@ -6556,6 +6811,7 @@ void AJunPlayer::RespawnAtPlayerStart()
 {
 	StopFakeDeathSound();
 	StopRealDeathSound();
+	ClearFakeDeathReviveAutoLockOn();
 
 	if (UAnimInstance* PlayerAnimInstance = GetPlayerAnimInstance())
 	{
@@ -6599,6 +6855,7 @@ void AJunPlayer::RespawnAtPlayerStart()
 
 	Hp = MaxHp;
 	CurrentReviveCount = FMath::Max(0, MaxReviveCount);
+	RefillDrinkPotionCharges();
 	CurrentPosture = 0.f;
 	DeathState = EJunPlayerDeathState::Alive;
 	LandingAnimSuppressRemainTime = 0.25f;
@@ -6661,6 +6918,87 @@ void AJunPlayer::RespawnAtPlayerStart()
 	}
 }
 
+void AJunPlayer::ScheduleFakeDeathReviveAutoLockOn()
+{
+	if (!PendingFakeDeathReviveLockOnTarget.IsValid())
+	{
+		ClearFakeDeathReviveAutoLockOn();
+		return;
+	}
+
+	FakeDeathReviveAutoLockOnRemainTime = FMath::Max(0.f, FakeDeathReviveAutoLockOnDelay);
+	if (FakeDeathReviveAutoLockOnRemainTime <= 0.f)
+	{
+		AJunCharacter* LockOnCharacter = PendingFakeDeathReviveLockOnTarget.Get();
+		ClearFakeDeathReviveAutoLockOn();
+		StartLockOnAfterFakeDeathRevive(LockOnCharacter);
+	}
+}
+
+void AJunPlayer::UpdateFakeDeathReviveAutoLockOn(float DeltaTime)
+{
+	if (FakeDeathReviveAutoLockOnRemainTime <= 0.f)
+	{
+		return;
+	}
+
+	FakeDeathReviveAutoLockOnRemainTime = FMath::Max(0.f, FakeDeathReviveAutoLockOnRemainTime - DeltaTime);
+	if (FakeDeathReviveAutoLockOnRemainTime > 0.f)
+	{
+		return;
+	}
+
+	AJunCharacter* LockOnCharacter = PendingFakeDeathReviveLockOnTarget.Get();
+	ClearFakeDeathReviveAutoLockOn();
+	if (!LockOnCharacter || !IsValid(LockOnCharacter))
+	{
+		return;
+	}
+
+	StartLockOnAfterFakeDeathRevive(LockOnCharacter);
+}
+
+void AJunPlayer::ClearFakeDeathReviveAutoLockOn()
+{
+	FakeDeathReviveAutoLockOnRemainTime = 0.f;
+	PendingFakeDeathReviveLockOnTarget = nullptr;
+}
+
+void AJunPlayer::StartLockOnAfterFakeDeathRevive(AJunCharacter* NewTarget)
+{
+	if (!NewTarget)
+	{
+		return;
+	}
+
+	StartLockOn(NewTarget);
+
+	CachedLockOnTargetPoint = GetRawLockOnCapsulePoint();
+	if (LockOnTarget)
+	{
+		const FVector TargetLockOnPoint = LockOnTarget->GetLockOnTargetPoint();
+		CachedLockOnTargetPoint.Z = TargetLockOnPoint.Z;
+	}
+
+	SmoothedLockOnDistance2D = FVector::Dist2D(GetActorLocation(), NewTarget->GetActorLocation());
+	CachedLockOnRangeAlpha = FMath::Clamp(
+		(SmoothedLockOnDistance2D - LockOnCloseDistance) / FMath::Max(LockOnFarDistance - LockOnCloseDistance, 1.f),
+		0.f,
+		1.f);
+
+	bLockOnClosePitchModeActive = SmoothedLockOnDistance2D <= FMath::Max(0.f, LockOnClosePitchEnterDistance);
+	const bool bUseJumpCounterPitch = ShouldUseJumpCounterLockOnCameraPitch();
+	const AJunMonster* LockOnMonster = Cast<AJunMonster>(LockOnTarget.Get());
+	const bool bTargetExecutionReady = LockOnMonster && LockOnMonster->IsExecutionReady();
+	SmoothedLockOnPitchOffset = bTargetExecutionReady
+		? ExecutionReadyLockOnPitchOffset
+		: (bUseJumpCounterPitch
+			? JumpCounterLockOnPitchOffset
+			: (bLockOnClosePitchModeActive
+				? LockOnClosePitchOffset
+				: FMath::Lerp(LockOnClosePitchOffset, LockOnPitchOffset, CachedLockOnRangeAlpha)));
+}
+
 void AJunPlayer::ClearHitReactRuntimeStateForRevive()
 {
 	CurrentHitState = EJunPlayerHitState::None;
@@ -6668,6 +7006,7 @@ void AJunPlayer::ClearHitReactRuntimeStateForRevive()
 	PlayerHitControlLockRemainTime = 0.f;
 	ChainParryWindowRemainTime = 0.f;
 	ParrySuccessElapsedTime = 0.f;
+	ParrySuccessDefenseHoldElapsedTime = 0.f;
 	CurrentHitReactType = EHitReactType::None;
 	CurrentHitReactDirection = ECharacterHitReactDirection::Front_F;
 	CurrentHitReactMontage = nullptr;
@@ -7527,6 +7866,7 @@ void AJunPlayer::StartMikiriCounterSuccess(AActor* DamageCauser)
 	CurrentHitState = EJunPlayerHitState::ParrySuccess;
 	ChainParryWindowRemainTime = ChainParryWindowDuration;
 	ParrySuccessElapsedTime = 0.f;
+	ParrySuccessDefenseHoldElapsedTime = 0.f;
 	BufferedParrySuccessCancelAction = EJunBufferedParrySuccessCancelAction::None;
 	bParrySuccessHeavyAttackInputHeld = false;
 	AddGameplayTag(JunGameplayTags::State_Block_Move);
@@ -7620,6 +7960,7 @@ void AJunPlayer::StartParrySuccess()
 	CurrentHitState = EJunPlayerHitState::ParrySuccess;
 	ChainParryWindowRemainTime = ChainParryWindowDuration;
 	ParrySuccessElapsedTime = 0.f;
+	ParrySuccessDefenseHoldElapsedTime = 0.f;
 	BufferedParrySuccessCancelAction = EJunBufferedParrySuccessCancelAction::None;
 	bParrySuccessHeavyAttackInputHeld = false;
 	AddGameplayTag(JunGameplayTags::State_Block_Move);
@@ -7737,6 +8078,7 @@ void AJunPlayer::StartGuardBreak()
 	bParryWindowOpen = false;
 	ParryWindowRemainTime = 0.f;
 	ParrySuccessElapsedTime = 0.f;
+	ParrySuccessDefenseHoldElapsedTime = 0.f;
 	BufferedParrySuccessCancelAction = EJunBufferedParrySuccessCancelAction::None;
 	bParrySuccessHeavyAttackInputHeld = false;
 	CurrentParrySuccessMontage = nullptr;
@@ -8318,6 +8660,8 @@ void AJunPlayer::ApplyCommonKnockback(
 
 void AJunPlayer::InterruptActionsForHitReaction()
 {
+	FinishDrinkPotion(true);
+
 	if (EquippedWeapon)
 	{
 		EquippedWeapon->StopAttackTrace();
@@ -8431,6 +8775,19 @@ void AJunPlayer::UpdatePlayerHitState(float DeltaTime)
 	if (CurrentHitState == EJunPlayerHitState::ParrySuccess)
 	{
 		ParrySuccessElapsedTime += DeltaTime;
+		if (bDefenseButtonHeld)
+		{
+			ParrySuccessDefenseHoldElapsedTime += DeltaTime;
+			if (ParrySuccessDefenseHoldElapsedTime >= ParrySuccessDefenseHoldConfirmTime &&
+				BufferedParrySuccessCancelAction == EJunBufferedParrySuccessCancelAction::None)
+			{
+				BufferParrySuccessCancelAction(EJunBufferedParrySuccessCancelAction::Defense);
+			}
+		}
+		else
+		{
+			ParrySuccessDefenseHoldElapsedTime = 0.f;
+		}
 
 		if (BufferedParrySuccessCancelAction != EJunBufferedParrySuccessCancelAction::None)
 		{
@@ -8602,6 +8959,7 @@ void AJunPlayer::FinishPlayerHitState()
 	PlayerHitControlLockRemainTime = 0.f;
 	ChainParryWindowRemainTime = 0.f;
 	ParrySuccessElapsedTime = 0.f;
+	ParrySuccessDefenseHoldElapsedTime = 0.f;
 	CurrentHitReactType = EHitReactType::None;
 	CurrentHitReactDirection = ECharacterHitReactDirection::Front_F;
 	CurrentHitReactMontage = nullptr;
