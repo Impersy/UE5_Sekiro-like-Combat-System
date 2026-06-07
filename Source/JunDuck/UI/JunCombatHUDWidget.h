@@ -25,6 +25,27 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
 	void ToggleControlsVisibility();
 
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Dialogue")
+	void ShowDialogue(const FText& DialogueText, const FText& SpeakerName = FText::GetEmpty());
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Dialogue")
+	void HideDialogue();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Dialogue")
+	void SetDialogueLine(const FText& DialogueText, const FText& SpeakerName = FText::GetEmpty());
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Tutorial")
+	void StartTutorialDimBlackFadeIn();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Tutorial")
+	void StartTutorialDimBlackFadeOut();
+
+	UFUNCTION(BlueprintPure, Category = "CombatHUD|Tutorial")
+	bool IsTutorialDimBlackOpaque() const;
+
+	UFUNCTION(BlueprintPure, Category = "CombatHUD|Tutorial")
+	bool IsTutorialDimBlackHidden() const;
+
 	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
 	void SetBossHealth(int32 CurrentHealth, int32 MaxHealth);
 
@@ -137,8 +158,12 @@ private:
 	void ApplyBossPostureFillVisibility(bool bVisible);
 	void UpdateBossClearUI(float DeltaTime);
 	void UpdateDeathUI(float DeltaTime);
+	void UpdateDialogueUI(float DeltaTime);
+	void UpdateTutorialDimBlackUI(float DeltaTime);
 	void ApplyWidgetOpacity(UWidget* Widget, float Opacity, bool bHideWhenZero = true) const;
 	void SetDeathRootVisible(bool bVisible);
+	void ApplyDialogueVisibility();
+	void ApplyDialogueText();
 	void ApplyPlayerHealthBars();
 	void ApplyBossHealthBars();
 	void ApplyPostureBars();
@@ -253,6 +278,21 @@ private:
 	float BossClearOpacity = 0.f;
 	float TargetBossClearOpacity = 0.f;
 	float BossClearHoldRemainTime = 0.f;
+	float DialogueBackgroundOpacity = 0.f;
+	float TargetDialogueBackgroundOpacity = 0.f;
+	float TutorialDimBlackOpacity = 0.f;
+	float TargetTutorialDimBlackOpacity = 0.f;
+	FText CurrentDialogueText;
+	FText CurrentDialogueSpeakerName;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Dialogue", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float DialogueBackgroundFadeSpeed = 6.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Dialogue", meta = (AllowPrivateAccess = "true", ClampMin = "0", ClampMax = "1"))
+	float DialogueBackgroundTargetOpacity = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Tutorial", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float TutorialDimBlackFadeSpeed = 2.5f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|BossClear", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
 	float BossClearFadeInSpeed = 2.5f;
@@ -391,4 +431,19 @@ private:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> Controls_Root;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Dialog_Root;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Dialog_Background;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Dialog_Text_1;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Dialog_Text_2;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Tutorial_DimBlack;
 };

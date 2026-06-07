@@ -58,7 +58,8 @@ enum class EJunBufferedDefenseCancelAction : uint8
 	BasicAttack,
 	Jump,
 	Dodge,
-	Move
+	Move,
+	HeavyAttack
 };
 
 UENUM(BlueprintType)
@@ -166,6 +167,7 @@ public: // External Gameplay API
 	const FJunAttackDefenseRuleData& DefenseRuleData = FJunAttackDefenseRuleData(),
 	bool bCanBuildAttackerPostureOnParry = true);
 	void AddCameraLookInput(const FVector2D& Input);
+	void SnapCameraToLookAt(const FVector& WorldTarget, float Pitch = -24.f);
 	void ToggleLockOn();
 	bool TryCancelJumpAttackEndIntoMove();
 	bool TryCancelJumpAttackEndIntoDodge();
@@ -257,6 +259,8 @@ public: // Query / State API
 	int32 GetCurrentDrinkPotionCharges() const { return CurrentDrinkPotionCharges; }
 	int32 GetMaxDrinkPotionCharges() const { return MaxDrinkPotionCharges; }
 
+	void BeginTutorialControlLock();
+	void EndTutorialControlLock();
 	void ToggleWalkingState();
 	void SetWalkRequested(bool bNewWalkRequested);
 	void RestoreDrinkPotionWeaponVisibility();
@@ -419,7 +423,7 @@ protected: // Execution
 	bool CanStartExecution(const class AJunMonster* Monster) const;
 	void StartExecution(class AJunMonster* Monster);
 	void TriggerExecutionTargetMontage();
-	void FinishExecution();
+	void FinishExecution(bool bInterrupted = false);
 	void SetExecutionCapsuleCollisionIgnore(class AJunMonster* Monster, bool bIgnore);
 	void ReduceExecutionCapsuleRadius(class AJunMonster* Monster);
 	void RestoreExecutionCapsuleRadius(class AJunMonster* Monster);
@@ -727,16 +731,16 @@ protected: // Components
 	TSubclassOf<class UCameraShakeBase> DefenseCameraShakeClass = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Defense", meta = (ClampMin = "0.0"))
-	float PerfectParryCameraShakeScale = 1.f;
+	float PerfectParryCameraShakeScale = 3.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Defense", meta = (ClampMin = "0.0"))
-	float NormalParryCameraShakeScale = 0.75f;
+	float NormalParryCameraShakeScale = 2.5f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Defense", meta = (ClampMin = "0.0"))
-	float GuardHitCameraShakeScale = 0.55f;
+	float GuardHitCameraShakeScale = 3.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Defense", meta = (ClampMin = "0.0"))
-	float MikiriParryCameraShakeScale = 1.1f;
+	float MikiriParryCameraShakeScale = 6.f;
 
 protected: // External References
 	UPROPERTY(BlueprintReadOnly)
@@ -808,6 +812,9 @@ protected: // Runtime Camera State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
 	bool bLockOnClosePitchModeActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
+	bool bLockOnFarPitchModeActive = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|LockOn")
 	float SmoothedLockOnOcclusionLateralOffset = 0.f;
@@ -1045,7 +1052,7 @@ protected: // Runtime Combat / Defense State
 	bool bDodgeInputReleasedSinceLastDodge = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
-	bool bShowDefenseTimingDebug = true;
+	bool bShowDefenseTimingDebug = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
 	bool bShowDodgeCameraDebug = false;
@@ -1081,13 +1088,13 @@ protected: // Runtime Combat / Defense State
 	float ForwardDodgePlayRate = 1.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
-	float DashForwardPlayRate = 1.f;
+	float DashForwardPlayRate = 1.4f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
-	float DashBackPlayRate = 1.f;
+	float DashBackPlayRate = 1.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
-	float DashSidePlayRate = 1.f;
+	float DashSidePlayRate = 1.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float LeftDodgePlayRate = 1.f;
@@ -1129,13 +1136,13 @@ protected: // Runtime Combat / Defense State
 	float ForwardDodgeInvincibleDuration = 0.12f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
-	float DashForwardInvincibleDuration = 0.066667f;
+	float DashForwardInvincibleDuration = 0.12f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
-	float DashBackInvincibleDuration = 0.066667f;
+	float DashBackInvincibleDuration = 0.12f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
-	float DashSideInvincibleDuration = 0.066667f;
+	float DashSideInvincibleDuration = 0.12f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge")
 	float SideDodgeInvincibleDuration = 0.1f;
@@ -1159,16 +1166,16 @@ protected: // Runtime Combat / Defense State
 	float DashSideRecoveryCancelOpenTime = 0.4f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
-	float DashForwardMoveCancelOpenTime = 0.45f;
+	float DashForwardMoveCancelOpenTime = 0.85f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
-	float DashSideMoveCancelOpenTime = 0.45f;
+	float DashSideMoveCancelOpenTime = 0.7f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
-	float DashBackMoveCancelOpenTime = 0.45f;
+	float DashBackMoveCancelOpenTime = 0.6f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
-	float DashMoveCancelBlendOutTime = 0.08f;
+	float DashMoveCancelBlendOutTime = 0.25f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Dash")
 	float LockOnSideDashRotationInterpSpeed = 3.f;
@@ -1400,6 +1407,9 @@ protected: // Runtime Combat / Defense State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	float PlayerHitControlLockRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Tutorial")
+	bool bTutorialControlLocked = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	float ChainParryWindowRemainTime = 0.f;
@@ -1647,13 +1657,13 @@ protected: // Camera Tuning
 	float ExecutionFinishCameraArmLength = 350.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
-	float ExecutionCameraApplyArmLength = 180.f;
+	float ExecutionCameraApplyArmLength = 200.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
 	float ExecutionFinishCameraApplyArmLength = 200.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
-	float ExecutionFinishCameraPullInArmLength = 100.f;
+	float ExecutionFinishCameraPullInArmLength = 130.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Execution")
 	float ExecutionCameraRotationInterpSpeed = 9.f;
@@ -1695,13 +1705,13 @@ protected: // Camera Tuning
 	float DeathCameraTargetHeight = 45.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
-    float LockOnRotationInterpSpeed = 5.f;
+    float LockOnRotationInterpSpeed = 8.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
-	float LockOnPitchRotationInterpSpeed = 5.f;
+	float LockOnPitchRotationInterpSpeed = 6.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
-	float LockOnCloseRotationInterpSpeed = 3.5f;
+	float LockOnCloseRotationInterpSpeed = 6.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
 	float LockOnClosePitchRotationInterpSpeed = 3.5f;
@@ -1713,7 +1723,7 @@ protected: // Camera Tuning
 	float LockOnFarDistance = 1000.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0", ClampMax = "1"))
-	float LockOnCloseTargetBlend = 0.55f;
+	float LockOnCloseTargetBlend = 0.8f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
 	float LockOnRangeAlphaInterpSpeed = 6.f;
@@ -1726,6 +1736,12 @@ protected: // Camera Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
 	float LockOnClosePitchExitDistance = 420.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float LockOnFarPitchEnterDistance = 1000.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
+	float LockOnFarPitchExitDistance = 800.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
 	float LockOnPitchOffsetInterpSpeed = 5.f;
@@ -1743,13 +1759,13 @@ protected: // Camera Tuning
 	float LockOnCharacterRotationInterpSpeed = 10.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
-	float LockOnAcquireDistance = 2000.f;
+	float LockOnAcquireDistance = 3000.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float LockOnBreakDistance = 150000.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
-	float FakeDeathReviveAutoLockOnDelay = 0.18f;
+	float FakeDeathReviveAutoLockOnDelay = 0.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float LockOnPitchOffset = -10.f;
@@ -1758,13 +1774,13 @@ protected: // Camera Tuning
 	float LockOnClosePitchOffset = -35.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn|ExecutionReady")
-	float ExecutionReadyLockOnPitchOffset = -28.f;
+	float ExecutionReadyLockOnPitchOffset = -15.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn|ExecutionReady", meta = (ClampMin = "0"))
 	float ExecutionReadyLockOnArmLength = 360.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn|ExecutionReady", meta = (ClampMin = "1"))
-	float ExecutionReadyLockOnFOV = 68.f;
+	float ExecutionReadyLockOnFOV = 75.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float MinLockOnCameraPitch = -35.f;
@@ -1777,6 +1793,9 @@ protected: // Camera Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn|JumpCounter")
 	float JumpCounterMinLockOnCameraPitch = -65.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn|JumpCounter", meta = (ClampMin = "0"))
+	float JumpCounterLockOnPitchMaxDistance = 600.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float LockOnTargetZRiseInterpSpeed = 12.f;
@@ -1791,7 +1810,7 @@ protected: // Camera Tuning
 	float LockOnTargetXYIgnoreThreshold = 5.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn", meta = (ClampMin = "0"))
-	float LockOnTargetXYInterpSpeed = 18.f;
+	float LockOnTargetXYInterpSpeed = 14.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|LockOn")
 	float LockOnTurnStartAngle = 55.f;
@@ -1822,7 +1841,7 @@ protected: // Attack / Defense Tuning
 	float GuardStartRestartBlendDuration = 0.035f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard|Air")
-	float AirGuardStartPlayRate = 1.3f;
+	float AirGuardStartPlayRate = 0.7f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard|Air")
 	float AirGuardStartVisualRestartMinInterval = 0.08f;
@@ -1834,7 +1853,7 @@ protected: // Attack / Defense Tuning
 	float AirGuardLandCancelBlendOutTime = 0.06f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
-	float GuardEndPlayRate = 1.2f;
+	float GuardEndPlayRate = 1.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
 	float GuardEndStateDuration = 0.2f;
@@ -1849,10 +1868,10 @@ protected: // Attack / Defense Tuning
 	float GuardMoveBlendDuration = 0.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
-	float DefaultParryWindowDuration = 0.25f; // 기본 패리 판정 시간
+	float DefaultParryWindowDuration = 0.3f; // 기본 패리 판정 시간
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Guard")
-	float PerfectParryWindowDuration = 0.15f;
+	float PerfectParryWindowDuration = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MikiriCounter", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float MikiriCounterForwardInputThreshold = 0.5f;
@@ -1864,7 +1883,7 @@ protected: // Attack / Defense Tuning
 	float MikiriCounterReadyMinDuration = 0.25f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MikiriCounter", meta = (ClampMin = "0.0"))
-	float MikiriCounterWindowDuration = 0.3f;
+	float MikiriCounterWindowDuration = 0.35f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MikiriCounter", meta = (ClampMin = "0.0"))
 	float MikiriCounterDodgeBlendOutTime = 0.15f;
@@ -1936,7 +1955,7 @@ protected: // Attack / Defense Tuning
 	float ParrySuccessDefenseCancelOpenTime = 0.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
-	float ParrySuccessDefenseHoldConfirmTime = 0.18f;
+	float ParrySuccessDefenseHoldConfirmTime = 0.3f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float ParrySuccessBasicAttackCancelBlendOutTime = 0.15f;
@@ -1960,25 +1979,25 @@ protected: // Attack / Defense Tuning
 	float GuardBlockDuration = 0.3f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "1"))
-	float MaxPosture = 240.f;
+	float MaxPosture = 300.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "0"))
-	float PerfectParryPostureGain = 15.f;
+	float PerfectParryPostureGain = 10.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "0"))
-	float NormalParryPostureGain = 30.f;
+	float NormalParryPostureGain = 40.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "0"))
-	float PerfectAirParryPostureReduction = 20.f;
+	float PerfectAirParryPostureReduction = 30.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "0"))
-	float NormalAirParryPostureReduction = 10.f;
+	float NormalAirParryPostureReduction = 15.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "0"))
-	float GuardBlockPostureGain = 60.f;
+	float GuardBlockPostureGain = 100.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "0"))
-	float HitReactPostureGain = 60.f;
+	float HitReactPostureGain = 25.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture")
 	float GuardBreakDuration = 1.f;
@@ -1990,31 +2009,31 @@ protected: // Attack / Defense Tuning
 	float GuardBreakDamageMultiplier = 2.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air", meta = (ClampMin = "0"))
-	float AirGuardBreakKnockbackStrength = 360.f;
+	float AirGuardBreakKnockbackStrength = 500.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air", meta = (ClampMin = "0"))
-	float AirGuardBreakGravityScale = 2.0f;
+	float AirGuardBreakGravityScale = 1.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air", meta = (ClampMin = "0"))
-	float AirGuardBreakFallingLateralFriction = 0.3f;
+	float AirGuardBreakFallingLateralFriction = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air")
-	float AirGuardBreakDownwardVelocity = -520.f;
+	float AirGuardBreakDownwardVelocity = -180.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air", meta = (ClampMin = "0"))
 	float AirGuardBreakAirborneMaxDuration = 4.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air", meta = (ClampMin = "0"))
-	float AirGuardBreakLandingBrakingDeceleration = 80.f;
+	float AirGuardBreakLandingBrakingDeceleration = 60.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air", meta = (ClampMin = "0"))
-	float AirGuardBreakLandingGroundFriction = 0.2f;
+	float AirGuardBreakLandingGroundFriction = 0.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air", meta = (ClampMin = "0"))
 	float AirGuardBreakLandingBrakingFrictionFactor = 0.08f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Air", meta = (ClampMin = "0"))
-	float AirGuardBreakLandingSlideDuration = 0.35f;
+	float AirGuardBreakLandingSlideDuration = 0.8f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death")
 	int32 MaxReviveCount = 1;
@@ -2026,7 +2045,7 @@ protected: // Attack / Defense Tuning
 	float RealDeathUIHoldDuration = 2.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death", meta = (ClampMin = "0"))
-	float RealDeathFullBlackHoldDuration = 0.5f;
+	float RealDeathFullBlackHoldDuration = 1.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Death")
 	FName DeathLoopSectionName = TEXT("Death");
@@ -2059,13 +2078,13 @@ protected: // Attack / Defense Tuning
 	float PostureRecoveryDelay = 1.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Recovery", meta = (ClampMin = "0"))
-	float PostureRecoveryRate = 20.f;
+	float PostureRecoveryRate = 50.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Recovery", meta = (ClampMin = "0"))
 	float GuardPostureRecoveryMultiplier = 2.5f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Recovery", meta = (ClampMin = "0"))
-	float RunPostureRecoveryMultiplier = 0.333333f;
+	float RunPostureRecoveryMultiplier = 0.5f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float HitReactDuration = 0.5f;
@@ -2092,16 +2111,16 @@ protected: // Attack / Defense Tuning
 	float AirLightHitControlLockDuration = 0.12f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
-	float AirLightHitKnockbackStrength = 140.f;
+	float AirLightHitKnockbackStrength = 200.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
-	float AirLightHitGravityScale = 1.5f;
+	float AirLightHitGravityScale = 1.3f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
 	float AirLightHitFallingLateralFriction = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
-	float AirLightHitInitialDownwardVelocity = -180.f;
+	float AirLightHitInitialDownwardVelocity = -300.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float AirHeavyHitReactDuration = 0.65f;
@@ -2110,31 +2129,31 @@ protected: // Attack / Defense Tuning
 	float AirHeavyHitControlLockDuration = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
-	float AirHeavyHitKnockbackStrength = 420.f;
+	float AirHeavyHitKnockbackStrength = 700.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
-	float AirHeavyHitMinGroundDistance = 150.f;
+	float AirHeavyHitMinGroundDistance = 50.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
-	float AirDeathMinGroundDistance = 150.f;
+	float AirDeathMinGroundDistance = 100.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
 	float AirHeavyHitSequenceMaxDuration = 4.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
-	float AirHeavyHitLaunchStageMaxDuration = 0.28f;
+	float AirHeavyHitLaunchStageMaxDuration = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
-	float AirHeavyHitGravityScale = 2.5f;
+	float AirHeavyHitGravityScale = 1.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
-	float AirHeavyHitFallingLateralFriction = 0.35f;
+	float AirHeavyHitFallingLateralFriction = 0.3f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
-	float AirHeavyHitInitialDownwardVelocity = -420.f;
+	float AirHeavyHitInitialDownwardVelocity = -300.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
-	float AirHeavyHitDownwardVelocity = -1000.f;
+	float AirHeavyHitDownwardVelocity = -500.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float HeavyHitReactDuration = 0.5f;
@@ -2161,10 +2180,10 @@ protected: // Attack / Defense Tuning
 	float LargeHitLongControlLockDuration = 0.8f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
-	float LightingShockDuration = 1.5f;
+	float LightingShockDuration = 2.8f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
-	float LightingShockControlLockDuration = 1.5f;
+	float LightingShockControlLockDuration = 2.7f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float GuardBlockKnockbackStrength = 250.f;
@@ -2284,7 +2303,10 @@ protected: // Attack / Defense Tuning
 	float HeavyAttackMoveCancelBlendOutTime = 0.18f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
-	float HeavyAttackBasicAttackCancelBlendOutTime = 0.12f;
+	float HeavyAttackBasicAttackCancelBlendOutTime = 0.25f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
+	float HeavyAttackHeavyAttackCancelBlendOutTime = 0.25f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HeavyAttack")
 	float HeavyAttackRestartBlendOutTime = 0.2f;
@@ -2296,7 +2318,7 @@ protected: // Attack / Defense Tuning
 	float HeavyAttackStartBlendInTime = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen", meta = (ClampMin = "0.1"))
-	float JigenPlayRate = 1.f;
+	float JigenPlayRate = 1.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
 	FName JigenFirstSectionName = TEXT("1");
@@ -2326,7 +2348,7 @@ protected: // Attack / Defense Tuning
 	float JigenBasicAttackCancelOpenTime = 1.4f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
-	float JigenHeavyAttackCancelOpenTime = 1.4f;
+	float JigenHeavyAttackCancelOpenTime = 1.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
 	float JigenDodgeCancelBlendOutTime = 0.12f;
@@ -2344,7 +2366,7 @@ protected: // Attack / Defense Tuning
 	float JigenBasicAttackCancelBlendOutTime = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
-	float JigenHeavyAttackCancelBlendOutTime = 0.2f;
+	float JigenHeavyAttackCancelBlendOutTime = 0.25f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
 	float BasicAttackJigenCancelBlendOutTime = 0.2f;
@@ -2353,13 +2375,13 @@ protected: // Attack / Defense Tuning
 	TArray<float> BasicAttackJigenCancelOpenTimes = { 0.5f, 0.5f, 0.6f, 0.6f };
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
-	float HeavyAttackTapJigenCancelOpenTime = 1.3f;
+	float HeavyAttackTapJigenCancelOpenTime = 1.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
 	float HeavyAttackChargeEndJigenCancelOpenTime = 0.5f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
-	float HeavyAttackJigenCancelBlendOutTime = 0.12f;
+	float HeavyAttackJigenCancelBlendOutTime = 0.25f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Jigen")
 	float JumpAttackEndJigenCancelOpenTime = 0.4f;
@@ -2389,13 +2411,13 @@ protected: // Attack / Defense Tuning
 	float JumpAttackMinGroundDistance = 600.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0"))
-	float JumpCounterEvadeMinGroundDistance = 200.f;
+	float JumpCounterEvadeMinGroundDistance = 150.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0"))
-	float JumpCounterStompMaxStartDistance = 380.f;
+	float JumpCounterStompMaxStartDistance = 150.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0"))
-	float JumpCounterStompOpportunityDistance = 600.f;
+	float JumpCounterStompOpportunityDistance = 300.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0"))
 	float JumpCounterStompCorrectionDuration = 0.12f;
@@ -2407,16 +2429,16 @@ protected: // Attack / Defense Tuning
 	float JumpCounterStompTargetHeightOffset = 85.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0"))
-	float JumpCounterStompCapsuleMargin = 20.f;
+	float JumpCounterStompCapsuleMargin = 0.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter")
-	bool bJumpCounterStompIgnoreTargetCollisionDuringFollowUp = true;
+	bool bJumpCounterStompIgnoreTargetCollisionDuringFollowUp = false;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0", EditCondition = "bJumpCounterStompIgnoreTargetCollisionDuringFollowUp"))
-	float JumpCounterStompMinVisualDistance = 60.f;
+	float JumpCounterStompMinVisualDistance = 120.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0"))
-	float JumpCounterStompPostureGain = 120.f;
+	float JumpCounterStompPostureGain = 80.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter")
 	float JumpCounterStompBounceUpVelocity = 650.f;
@@ -2476,7 +2498,7 @@ protected: // Attack / Defense Tuning
 	float JumpAttackEndHeavyAttackCancelBlendOutTime = 0.25f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack", meta = (ClampMin = "0.1"))
-	float BasicAttackPlayRate = 1.3f;
+	float BasicAttackPlayRate = 1.f;
 
 	// Cancel open times are authored in montage timeline seconds at PlayRate 1.0.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BasicAttack")
@@ -2537,7 +2559,7 @@ protected: // Movement / Jump Tuning
 	float FreeRunTurnAngleExponent = 1.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement")
-	float LockOnRunMoveSpeed = 500.f;
+	float LockOnRunMoveSpeed = 600.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement", meta = (ClampMin = "0.0"))
 	float LockOnForwardMoveSpeedMultiplier = 1.f;
@@ -2649,37 +2671,37 @@ protected: // Animation Assets
 	TObjectPtr<class USoundBase> ExecutionStartSound = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|Sound", meta = (ClampMin = "0"))
-	float ExecutionStartSoundVolume = 1.f;
+	float ExecutionStartSoundVolume = 1.8f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion")
 	bool bEnableExecutionStartSlowMotion = true;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
-	float ExecutionStartSlowMotionDuration = 0.18f;
+	float ExecutionStartSlowMotionDuration = 0.4f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0.001", ClampMax = "1"))
-	float ExecutionStartSlowMotionTimeScale = 0.18f;
+	float ExecutionStartSlowMotionTimeScale = 0.6f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
 	float ExecutionStartSlowMotionBlendInTime = 0.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
-	float ExecutionStartSlowMotionBlendOutTime = 0.08f;
+	float ExecutionStartSlowMotionBlendOutTime = 0.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion")
 	bool bEnableExecutionFinishStartSlowMotion = true;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
-	float ExecutionFinishStartSlowMotionDuration = 0.28f;
+	float ExecutionFinishStartSlowMotionDuration = 0.4f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0.001", ClampMax = "1"))
-	float ExecutionFinishStartSlowMotionTimeScale = 0.12f;
+	float ExecutionFinishStartSlowMotionTimeScale = 0.5f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
 	float ExecutionFinishStartSlowMotionBlendInTime = 0.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
-	float ExecutionFinishStartSlowMotionBlendOutTime = 0.12f;
+	float ExecutionFinishStartSlowMotionBlendOutTime = 0.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|SlowMotion")
 	int32 ExecutionStartSlowMotionPriority = 40;
@@ -2863,7 +2885,7 @@ protected: // Weapon Assets
 	TSubclassOf<class AWeaponActor> DefaultScabbardClass;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
-	FName WeaponSocketName = TEXT("WeaponSocket_R");
+	FName WeaponSocketName = TEXT("Weapon_r");
 
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
 	FName ScabbardSocketName = TEXT("ScabSocket");

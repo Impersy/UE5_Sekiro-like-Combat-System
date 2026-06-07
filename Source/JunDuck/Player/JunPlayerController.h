@@ -8,6 +8,15 @@
 
 struct FInputActionValue;
 
+UENUM()
+enum class EJunTutorialTransitionState : uint8
+{
+	None,
+	FadingIn,
+	FadingOut,
+	WaitingForEquip
+};
+
 /**
  * 
  */
@@ -32,6 +41,7 @@ public:
 	void SetLockOnMarkerSuppressed(bool bSuppressed);
 	void ResetPlayerPostureVisibilityState();
 	void PlayDangerMarkerOnPlayer();
+	bool IsTutorialTransitionActive() const { return TutorialTransitionState != EJunTutorialTransitionState::None; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -63,9 +73,22 @@ private:
 	void Input_WalkToggle(const FInputActionValue& InputValue);
 	void Input_Drink(const FInputActionValue& InputValue);
 	void Input_ControlsToggle(const FInputActionValue& InputValue);
+	void Input_Interact(const FInputActionValue& InputValue);
+	class AJunTutorialNPC* FindAvailableDialogueNPC() const;
+	void ShowDialogueLineFromNPC(class AJunTutorialNPC* NPC);
+	void StartTutorialTransition(class AJunTutorialNPC* NPC);
+	void UpdateTutorialTransition(float DeltaTime);
+	void FinishTutorialTransitionMove();
 
 	bool bDodgeInputHeld = false;
 	float LastDodgeInputTime = -FLT_MAX;
+	TWeakObjectPtr<class AJunTutorialNPC> ActiveDialogueNPC;
+	TWeakObjectPtr<class AJunTutorialNPC> PendingTutorialNPC;
+	EJunTutorialTransitionState TutorialTransitionState = EJunTutorialTransitionState::None;
+	float TutorialEquipDelayRemainTime = 0.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Tutorial", meta = (ClampMin = "0"))
+	float TutorialEquipDelayAfterFadeOut = 1.f;
 
 protected:
 	TObjectPtr<class AJunPlayer> JunPlayer;

@@ -134,10 +134,11 @@ public:
 	// Animation or external gameplay code queries these states.
 	bool HasCombatTarget();
 	bool IsGuardOn() const;
-	bool IsInCombat();
+	virtual bool IsInCombat();
 	bool IsAttacking();
 	bool IsRunning() const;
 	bool ShouldUseRunLocomotion() const;
+	virtual bool ShouldShowBossCombatHUD() const { return true; }
 	EMonsterState GetCurrentState() const;
 	EMonsterMoveState GetMoveState() const;
 	int32 GetCurrentLifeCount() const;
@@ -301,7 +302,7 @@ protected:
 		const FVector& SwingDirection,
 		const FJunAttackDefenseRuleData& DefenseRuleData) const;
 	UAnimMontage* GetHitReactMontage(EHitReactType HitType, ECharacterHitReactDirection HitDirection) const;
-	bool CanUpdateBehavior() const;
+	virtual bool CanUpdateBehavior() const;
 	ECharacterKnockbackDirection DetermineKnockbackDirectionFromDamageCauser(const AActor* DamageCauser) const;
 	void ApplyHitReactKnockback(AActor* DamageCauser, const FJunDefenseKnockbackData& KnockbackData, UAnimMontage* HitReactMontage);
 	void UpdateHitReactKnockbackBraking(float DeltaTime);
@@ -366,7 +367,7 @@ protected:
 	float CutsceneWaitEquipBlendInTime = 0.25f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cutscene", meta = (ClampMin = "0"))
-	float CutsceneTriggerRange = 1300.f;
+	float CutsceneTriggerRange = 2000.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Cutscene")
 	bool bCutsceneTriggered = false;
@@ -407,7 +408,7 @@ protected:
 	TObjectPtr<class USoundBase> CombatBGM = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio|BGM", meta = (ClampMin = "0"))
-	float CombatBGMFadeInTime = 0.5f;
+	float CombatBGMFadeInTime = 0.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio|BGM", meta = (ClampMin = "0"))
 	float CombatBGMFadeOutTime = 1.0f;
@@ -489,7 +490,7 @@ protected:
 	bool bRunLocomotionRequested = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement")
-	float CombatFacingInterpSpeed = 7.f;
+	float CombatFacingInterpSpeed = 4.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement")
 	float AttackFacingInterpSpeed = 8.f;
@@ -498,7 +499,7 @@ protected:
 	float CombatTurnStartAngle = 55.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat")
-	float CombatTurn180Threshold = 135.f;
+	float CombatTurn180Threshold = 95.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat")
 	float CombatTurnMaxGroundSpeed = 10.f;
@@ -510,10 +511,10 @@ protected:
 	bool bEarlyBlendOutCombatTurnOnTargetYaw = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Turn", meta = (ClampMin = "0.0"))
-	float CombatTurnEarlyBlendOutYawTolerance = 8.f;
+	float CombatTurnEarlyBlendOutYawTolerance = 10.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Turn", meta = (ClampMin = "0.0"))
-	float CombatTurnEarlyBlendOutTime = 0.25f;
+	float CombatTurnEarlyBlendOutTime = 0.2f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Debug")
 	bool bDebugCombatTurnYaw = false;
@@ -548,13 +549,13 @@ protected:
 protected:
 	// Execution / posture system shared by normal monsters and bosses.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "1"))
-	int32 MaxLifeCount = 1;
+	int32 MaxLifeCount = 2;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
 	int32 CurrentLifeCount = 1;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "1"))
-	float MaxPosture = 100.f;
+	float MaxPosture = 700.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
 	float CurrentPosture = 0.f;
@@ -566,28 +567,28 @@ protected:
 	bool bDisablePostureGain = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0"))
-	float ParriedPostureGain = 35.f;
+	float ParriedPostureGain = 30.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|PostureRecovery", meta = (ClampMin = "0"))
-	float PostureRecoveryDelay = 0.6f;
+	float PostureRecoveryDelay = 3.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|PostureRecovery", meta = (ClampMin = "0"))
-	float PostureRecoveryRate = 25.f;
+	float PostureRecoveryRate = 40.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|PostureRecovery", meta = (ClampMin = "0"))
-	float AttackPosturePressureDistance = 700.f;
+	float AttackPosturePressureDistance = 800.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0.1"))
-	float ExecutionReadyDuration = 1.5f;
+	float ExecutionReadyDuration = 2.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion")
 	bool bEnableExecutionReadySlowMotion = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
-	float ExecutionReadySlowMotionDuration = 0.22f;
+	float ExecutionReadySlowMotionDuration = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0.001", ClampMax = "1"))
-	float ExecutionReadySlowMotionTimeScale = 0.18f;
+	float ExecutionReadySlowMotionTimeScale = 0.3f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
 	float ExecutionReadySlowMotionBlendInTime = 0.f;
@@ -722,10 +723,10 @@ protected:
 	TSubclassOf<class AWeaponActor> DefaultKickWeaponRightClass;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
-	FName WeaponSocketName = TEXT("WeaponSocket_R");
+	FName WeaponSocketName = TEXT("Weapon_r");
 
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
-	FName SheathedWeaponSocketName = TEXT("WeaponSocket_Scabbard");
+	FName SheathedWeaponSocketName = TEXT("katana_ScabSocket");
 
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
 	FName ScabbardSocketName = TEXT("ScabSocket");
@@ -737,10 +738,10 @@ protected:
 	FName ArrowSocketName = TEXT("Arrow_r");
 
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
-	FName KickWeaponSocketName = TEXT("foot_rSocket");
+	FName KickWeaponSocketName = TEXT("Foot_L");
 
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
-	FName KickWeaponRightSocketName = TEXT("foot_lSocket");
+	FName KickWeaponRightSocketName = TEXT("Foot_R");
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
 	int32 KickWeaponTraceSampleCount = 2;
@@ -796,25 +797,25 @@ protected:
 	float DefaultMonsterBrakingFrictionFactor = 0.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact")
-	float LightHitDuration = 0.2f;
+	float LightHitDuration = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact")
 	float HeavyHitDuration = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact")
-	float LargeHitDuration = 0.35f;
+	float LargeHitDuration = 0.6f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact")
 	float LargeHitLongDuration = 0.8f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact")
-	float LightingShockDuration = 1.5f;
+	float LightingShockDuration = 1.8f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact", meta = (ClampMin = "0.0"))
-	float HitReactBlendInTime = 0.08f;
+	float HitReactBlendInTime = 0.15f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact", meta = (ClampMin = "0.0"))
-	float HitReactRestartBlendInTime = 0.12f;
+	float HitReactRestartBlendInTime = 0.15f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
 	TObjectPtr<class UAnimMontage> HeavyHitFront_AMontage = nullptr;

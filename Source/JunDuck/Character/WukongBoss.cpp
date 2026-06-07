@@ -203,9 +203,9 @@ namespace
 
 AWukongBoss::AWukongBoss()
 {
-	MaxLifeCount = 3;
+	MaxLifeCount = 2;
 	MaxPosture = 700.f;
-	ExecutionReadyDuration = 1.5f;
+	ExecutionReadyDuration = 2.5f;
 	bDisablePostureGain = false;
 	bStartWithCutsceneWait = true;
 	bStartWithPatrol = false;
@@ -213,17 +213,29 @@ AWukongBoss::AWukongBoss()
 	WalkMoveSpeed = 200.f;
 	RunMoveSpeed = 700.f;
 
+	ComboAttackA.MaxComboLength = 4;
+	ComboAttackA.ContinueChance = 0.8f;
 	ComboAttackA.PlayRate = 0.8f;
-	ComboAttackB.PlayRate = 0.8f;
+	ComboAttackA.FacingDurations = { 0.6f, 0.9f, 1.2f, 1.5f };
+	ComboAttackA.AttackRange = 350.f;
+	ComboAttackA.CandidateRange = 650.f;
+
+	ComboAttackB.MaxComboLength = 5;
+	ComboAttackB.ContinueChance = 0.9f;
+	ComboAttackB.PlayRate = 0.85f;
+	ComboAttackB.FacingDurations = { 0.6f, 0.9f, 1.2f, 1.8f };
+	ComboAttackB.AttackRange = 350.f;
+	ComboAttackB.CandidateRange = 650.f;
 
 	JumpAttack.MinRange = 0.f;
-	JumpAttack.MaxRange = 700.f;
+	JumpAttack.MaxRange = 800.f;
 	JumpAttack.CandidateMaxRange = 900.f;
 	JumpAttack.bFaceTargetDuringAttack = true;
-	JumpAttack.PlayRate = 1.4f;
+	JumpAttack.PlayRate = 1.3f;
+	JumpAttack.bUseAnimNotifyTiming = true;
 	JumpAttack.MoveStartTimeAtPlayRateOne = 0.14f;
 	JumpAttack.MoveSpeed = 1200.f;
-	JumpAttack.MoveStandOffDistance = 20.f;
+	JumpAttack.MoveStandOffDistance = 60.f;
 	JumpAttack.GroundMotionOverrideDuration = 0.8f;
 	JumpAttack.AirTrackInterpSpeed = 8.f;
 	JumpAttack.CodeMoveStopDistance = 20.f;
@@ -231,14 +243,14 @@ AWukongBoss::AWukongBoss()
 	JumpAttack.bTryTurnAfterAttack = true;
 	JumpAttack.PostAttackTurnStartAngle = TurnStartAngle;
 
-	ChargeAttack.MinRange = 250.f;
+	ChargeAttack.MinRange = 0.f;
 	ChargeAttack.MaxRange = 700.f;
 	ChargeAttack.CandidateMaxRange = 900.f;
 	ChargeAttack.bFaceTargetDuringAttack = true;
 	ChargeAttack.bUseAnimNotifyTiming = true;
 	ChargeAttack.MoveStartTimeAtPlayRateOne = 0.28f;
-	ChargeAttack.MoveSpeed = 1350.f;
-	ChargeAttack.MoveStandOffDistance = 120.f;
+	ChargeAttack.MoveSpeed = 2500.f;
+	ChargeAttack.MoveStandOffDistance = 20.f;
 	ChargeAttack.GroundMotionOverrideDuration = 0.45f;
 	ChargeAttack.AirTrackInterpSpeed = 10.f;
 	ChargeAttack.CodeMoveStopDistance = 120.f;
@@ -246,30 +258,50 @@ AWukongBoss::AWukongBoss()
 	ChargeAttack.bTryTurnAfterAttack = true;
 	ChargeAttack.PostAttackTurnStartAngle = TurnStartAngle;
 
-	DodgeAttack.MinRange = 450.f;
+	DodgeAttack.MinRange = 200.f;
 	DodgeAttack.MaxRange = 700.f;
 	DodgeAttack.CandidateMaxRange = 900.f;
 	DodgeAttack.bFaceTargetDuringAttack = true;
 	DodgeAttack.PlayRate = 1.3f;
+	DodgeAttack.bUseAnimNotifyTiming = true;
 	DodgeAttack.bTryTurnAfterAttack = true;
 	DodgeAttack.PostAttackTurnStartAngle = TurnStartAngle;
 	DodgeAttack.SelectionWeight = 1;
 
+	NinjaAAttack.MinRange = 0.f;
+	NinjaAAttack.MaxRange = 450.f;
+	NinjaAAttack.CandidateMaxRange = 900.f;
+	NinjaAAttack.PlayRate = 0.95f;
+	NinjaAAttack.bUseAnimNotifyTiming = true;
+	NinjaAAttack.bTryTurnAfterAttack = true;
+	NinjaAAttack.PostAttackTurnStartAngle = TurnStartAngle;
+
+	NinjaBAttack.MinRange = 0.f;
+	NinjaBAttack.MaxRange = 700.f;
+	NinjaBAttack.CandidateMaxRange = 900.f;
 	NinjaBAttack.bUseAnimNotifyTiming = true;
 	NinjaBAttack.MoveStartTimeAtPlayRateOne = 0.35f;
-	NinjaBAttack.MoveSpeed = 1150.f;
-	NinjaBAttack.MoveStandOffDistance = 120.f;
+	NinjaBAttack.MoveSpeed = 2500.f;
+	NinjaBAttack.MoveStandOffDistance = 50.f;
 	NinjaBAttack.GroundMotionOverrideDuration = 0.5f;
 	NinjaBAttack.AirTrackInterpSpeed = 8.f;
 	NinjaBAttack.CodeMoveStopDistance = 120.f;
 	NinjaBAttack.CodeMoveMaxDistance = 500.f;
 
-	LightningSwordAttack.MinRange = 500.f;
-	LightningSwordAttack.MaxRange = 1600.f;
-	LightningSwordAttack.CandidateMaxRange = 1800.f;
+	ExecutionAttack.MinRange = 0.f;
+	ExecutionAttack.MaxRange = 450.f;
+	ExecutionAttack.CandidateMaxRange = 900.f;
+	ExecutionAttack.bUseAnimNotifyTiming = true;
+	ExecutionAttack.bTryTurnAfterAttack = true;
+	ExecutionAttack.PostAttackTurnStartAngle = TurnStartAngle;
+
+	LightningSwordAttack.MinRange = 0.f;
+	LightningSwordAttack.MaxRange = 700.f;
+	LightningSwordAttack.CandidateMaxRange = 900.f;
 	LightningSwordAttack.bFaceTargetDuringAttack = true;
 	LightningSwordAttack.FacingDuration = 0.8f;
 	LightningSwordAttack.FacingInterpSpeed = 10.f;
+	LightningSwordAttack.bUseAnimNotifyTiming = true;
 	LightningSwordAttack.SelectionWeight = 1;
 	LightningSwordAttack.bTryTurnAfterAttack = true;
 	LightningSwordAttack.PostAttackTurnStartAngle = TurnStartAngle;
@@ -304,52 +336,57 @@ AWukongBoss::AWukongBoss()
 	BowHeavyAttack.bTryTurnAfterAttack = true;
 	BowHeavyAttack.PostAttackTurnStartAngle = TurnStartAngle;
 
-	FastComeSlashAttack.MinRange = 200.f;
+	FastComeSlashAttack.MinRange = 150.f;
 	FastComeSlashAttack.MaxRange = 700.f;
 	FastComeSlashAttack.CandidateMaxRange = 900.f;
 	FastComeSlashAttack.bFaceTargetDuringAttack = true;
 	FastComeSlashAttack.FacingDuration = 0.35f;
 	FastComeSlashAttack.FacingInterpSpeed = 18.f;
+	FastComeSlashAttack.bUseAnimNotifyTiming = true;
 	FastComeSlashAttack.SelectionWeight = 1;
 	FastComeSlashAttack.bTryTurnAfterAttack = true;
 	FastComeSlashAttack.PostAttackTurnStartAngle = TurnStartAngle;
 
-	SlowComeSlashAttack.MinRange = 120.f;
-	SlowComeSlashAttack.MaxRange = 520.f;
-	SlowComeSlashAttack.CandidateMaxRange = 700.f;
+	SlowComeSlashAttack.MinRange = 100.f;
+	SlowComeSlashAttack.MaxRange = 450.f;
+	SlowComeSlashAttack.CandidateMaxRange = 900.f;
 	SlowComeSlashAttack.bFaceTargetDuringAttack = true;
 	SlowComeSlashAttack.FacingDuration = 0.35f;
 	SlowComeSlashAttack.FacingInterpSpeed = 16.f;
+	SlowComeSlashAttack.bUseAnimNotifyTiming = true;
 	SlowComeSlashAttack.SelectionWeight = 1;
 	SlowComeSlashAttack.bTryTurnAfterAttack = true;
 	SlowComeSlashAttack.PostAttackTurnStartAngle = TurnStartAngle;
 
-	FakeDownSlashAttack.MinRange = 180.f;
-	FakeDownSlashAttack.MaxRange = 650.f;
-	FakeDownSlashAttack.CandidateMaxRange = 850.f;
+	FakeDownSlashAttack.MinRange = 0.f;
+	FakeDownSlashAttack.MaxRange = 700.f;
+	FakeDownSlashAttack.CandidateMaxRange = 900.f;
 	FakeDownSlashAttack.bFaceTargetDuringAttack = true;
 	FakeDownSlashAttack.FacingDuration = 0.4f;
 	FakeDownSlashAttack.FacingInterpSpeed = 16.f;
+	FakeDownSlashAttack.bUseAnimNotifyTiming = true;
 	FakeDownSlashAttack.SelectionWeight = 1;
 	FakeDownSlashAttack.bTryTurnAfterAttack = true;
 	FakeDownSlashAttack.PostAttackTurnStartAngle = TurnStartAngle;
 
-	LionSlashAttack.MinRange = 150.f;
-	LionSlashAttack.MaxRange = 600.f;
-	LionSlashAttack.CandidateMaxRange = 800.f;
+	LionSlashAttack.MinRange = 0.f;
+	LionSlashAttack.MaxRange = 450.f;
+	LionSlashAttack.CandidateMaxRange = 900.f;
 	LionSlashAttack.bFaceTargetDuringAttack = true;
 	LionSlashAttack.FacingDuration = 0.35f;
 	LionSlashAttack.FacingInterpSpeed = 18.f;
+	LionSlashAttack.bUseAnimNotifyTiming = true;
 	LionSlashAttack.SelectionWeight = 1;
 	LionSlashAttack.bTryTurnAfterAttack = true;
 	LionSlashAttack.PostAttackTurnStartAngle = TurnStartAngle;
 
-	SpinSlashAttack.MinRange = 220.f;
-	SpinSlashAttack.MaxRange = 750.f;
-	SpinSlashAttack.CandidateMaxRange = 950.f;
+	SpinSlashAttack.MinRange = 0.f;
+	SpinSlashAttack.MaxRange = 700.f;
+	SpinSlashAttack.CandidateMaxRange = 900.f;
 	SpinSlashAttack.bFaceTargetDuringAttack = true;
 	SpinSlashAttack.FacingDuration = 0.35f;
 	SpinSlashAttack.FacingInterpSpeed = 18.f;
+	SpinSlashAttack.bUseAnimNotifyTiming = true;
 	SpinSlashAttack.SelectionWeight = 1;
 	SpinSlashAttack.bTryTurnAfterAttack = true;
 	SpinSlashAttack.PostAttackTurnStartAngle = TurnStartAngle;
@@ -412,6 +449,11 @@ void AWukongBoss::ResetAfterPlayerRealDeath()
 void AWukongBoss::HandleGameplayEventNotify(FGameplayTag EventTag)
 {
 	Super::HandleGameplayEventNotify(EventTag);
+
+	if (bExecutionReady || bBeingExecuted)
+	{
+		return;
+	}
 
 	if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Wukong_ParryCounter))
 	{
@@ -2147,6 +2189,11 @@ bool AWukongBoss::TryStartNormalAttackLinkFromNotify(
 	bool bDelayMoveToRangeWhenOutOfRange,
 	bool bUseTestFilter)
 {
+	if (bExecutionReady || bBeingExecuted)
+	{
+		return false;
+	}
+
 	if (TriggerChance <= 0.f || FMath::FRand() > FMath::Clamp(TriggerChance, 0.f, 1.f))
 	{
 		return false;
@@ -2386,6 +2433,12 @@ bool AWukongBoss::TryStartNormalAttackLinkFromNotify(
 
 bool AWukongBoss::TryExecuteDelayedNormalAttackRangeLinkFromNotify(float BlendOutTimeOverride)
 {
+	if (bExecutionReady || bBeingExecuted)
+	{
+		ClearDelayedNormalAttackRangeLink();
+		return false;
+	}
+
 	if (!bHasDelayedNormalAttackRangeLink ||
 		DelayedNormalAttackRangeLinkType == EWukongNormalAttackType::None)
 	{
@@ -2414,6 +2467,11 @@ bool AWukongBoss::TryExecuteDelayedNormalAttackRangeLinkFromNotify(float BlendOu
 
 bool AWukongBoss::TryForceNormalAttackLinkWhenTriggerChanceFails(float BlendOutTime, float BlendInTime)
 {
+	if (bExecutionReady || bBeingExecuted)
+	{
+		return false;
+	}
+
 	auto CollectRangeIgnoredCandidates = [this](bool bIgnoreRepeat, TArray<EWukongNormalAttackType>& OutCandidates)
 	{
 		for (const EWukongNormalAttackType NormalAttackType : AllWukongNormalAttackTypes)
@@ -2471,7 +2529,9 @@ bool AWukongBoss::TryForceNormalAttackLinkWhenTriggerChanceFails(float BlendOutT
 bool AWukongBoss::TryStartParryBackJump()
 {
 	UAnimMontage* EscapeMontage = GetParryExchangeEscapeMontage();
-	if (CurrentState != EMonsterState::Combat ||
+	if (bExecutionReady ||
+		bBeingExecuted ||
+		CurrentState != EMonsterState::Combat ||
 		CurrentCombatSubState != EWukongCombatState::ParrySuccess ||
 		bParryCounterStarted ||
 		IsInHitReact() ||
@@ -2622,9 +2682,11 @@ void AWukongBoss::RecordAction(EWukongActionType ActionType, EWukongComboSet Com
 
 bool AWukongBoss::WasRecentlyUsed(EWukongActionType ActionType, int32 Depth) const
 {
-	const int32 NumToCheck = FMath::Min(Depth, RecentActionHistory.Num());
-	for (int32 Index = RecentActionHistory.Num() - 1; Index >= RecentActionHistory.Num() - NumToCheck; --Index)
+	const int32 HistoryNum = RecentActionHistory.Num();
+	const int32 NumToCheck = FMath::Clamp(Depth, 0, HistoryNum);
+	for (int32 Offset = 0; Offset < NumToCheck; ++Offset)
 	{
+		const int32 Index = HistoryNum - 1 - Offset;
 		if (RecentActionHistory[Index].ActionType == ActionType)
 		{
 			return true;
@@ -2636,9 +2698,11 @@ bool AWukongBoss::WasRecentlyUsed(EWukongActionType ActionType, int32 Depth) con
 
 bool AWukongBoss::WasRecentlyUsed(EWukongComboSet ComboSet, int32 ComboLength, int32 Depth) const
 {
-	const int32 NumToCheck = FMath::Min(Depth, RecentActionHistory.Num());
-	for (int32 Index = RecentActionHistory.Num() - 1; Index >= RecentActionHistory.Num() - NumToCheck; --Index)
+	const int32 HistoryNum = RecentActionHistory.Num();
+	const int32 NumToCheck = FMath::Clamp(Depth, 0, HistoryNum);
+	for (int32 Offset = 0; Offset < NumToCheck; ++Offset)
 	{
+		const int32 Index = HistoryNum - 1 - Offset;
 		const FWukongActionRecord& Record = RecentActionHistory[Index];
 		if (Record.ComboSet == ComboSet && Record.ComboLength == ComboLength)
 		{
@@ -2651,9 +2715,11 @@ bool AWukongBoss::WasRecentlyUsed(EWukongComboSet ComboSet, int32 ComboLength, i
 
 bool AWukongBoss::WasRecentlyUsed(EWukongNormalAttackType AttackType, int32 Depth) const
 {
-	const int32 NumToCheck = FMath::Min(Depth, RecentActionHistory.Num());
-	for (int32 Index = RecentActionHistory.Num() - 1; Index >= RecentActionHistory.Num() - NumToCheck; --Index)
+	const int32 HistoryNum = RecentActionHistory.Num();
+	const int32 NumToCheck = FMath::Clamp(Depth, 0, HistoryNum);
+	for (int32 Offset = 0; Offset < NumToCheck; ++Offset)
 	{
+		const int32 Index = HistoryNum - 1 - Offset;
 		if (RecentActionHistory[Index].NormalAttackType == AttackType)
 		{
 			return true;
@@ -2670,9 +2736,11 @@ bool AWukongBoss::WasNormalAttackRecentlyUsed(EWukongNormalAttackType AttackType
 
 bool AWukongBoss::WasRecentlyUsedBowNormalAttack(int32 Depth) const
 {
-	const int32 NumToCheck = FMath::Min(Depth, RecentActionHistory.Num());
-	for (int32 Index = RecentActionHistory.Num() - 1; Index >= RecentActionHistory.Num() - NumToCheck; --Index)
+	const int32 HistoryNum = RecentActionHistory.Num();
+	const int32 NumToCheck = FMath::Clamp(Depth, 0, HistoryNum);
+	for (int32 Offset = 0; Offset < NumToCheck; ++Offset)
 	{
+		const int32 Index = HistoryNum - 1 - Offset;
 		const FWukongActionRecord& Record = RecentActionHistory[Index];
 		if (Record.ActionType == EWukongActionType::NormalAttack && IsBowNormalAttackType(Record.NormalAttackType))
 		{
@@ -2862,7 +2930,9 @@ bool AWukongBoss::TryStartVariantNormalAttack(EWukongNormalAttackType AttackType
 
 bool AWukongBoss::AdvanceVariantNormalAttackFromNotify()
 {
-	if (CurrentState != EMonsterState::Combat ||
+	if (bExecutionReady ||
+		bBeingExecuted ||
+		CurrentState != EMonsterState::Combat ||
 		CurrentCombatSubState != EWukongCombatState::Attack ||
 		!bVariantNormalAttackActive ||
 		VariantNormalAttackTargetType == EWukongNormalAttackType::None ||
@@ -2881,6 +2951,12 @@ bool AWukongBoss::AdvanceVariantNormalAttackFromNotify()
 
 bool AWukongBoss::PlayVariantNormalAttackDashStep()
 {
+	if (bExecutionReady || bBeingExecuted)
+	{
+		ClearVariantNormalAttackState();
+		return false;
+	}
+
 	UAnimMontage* DashMontage = GetVariantNormalAttackDashMontage(VariantNormalAttackTargetType);
 	UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
 	if (!DashMontage || !AnimInstance)
@@ -2936,6 +3012,12 @@ bool AWukongBoss::PlayVariantNormalAttackDashStep()
 
 bool AWukongBoss::PlayVariantNormalAttackFinalMontage()
 {
+	if (bExecutionReady || bBeingExecuted)
+	{
+		ClearVariantNormalAttackState();
+		return false;
+	}
+
 	const EWukongNormalAttackType AttackType = VariantNormalAttackTargetType;
 	const FWukongNormalAttackData* AttackData = GetNormalAttackData(AttackType);
 	UAnimMontage* TargetAttackMontage = AttackData ? GetVariantNormalAttackFinalMontage(AttackType, *AttackData) : nullptr;
@@ -3714,6 +3796,11 @@ void AWukongBoss::StartParrySuccessAgainstIncomingHit(
 	const FVector& SwingDirection,
 	const FJunAttackDefenseKnockbackData& DefenseKnockbackData)
 {
+	if (bExecutionReady || bBeingExecuted)
+	{
+		return;
+	}
+
 	EndBowAttackPresentation();
 	PlayParryParticle();
 
@@ -3754,7 +3841,9 @@ void AWukongBoss::StartParrySuccessAgainstIncomingHit(
 
 bool AWukongBoss::TryStartParryCounterDecision()
 {
-	if (bParryCounterStarted ||
+	if (bExecutionReady ||
+		bBeingExecuted ||
+		bParryCounterStarted ||
 		CurrentState != EMonsterState::Combat ||
 		CurrentCombatSubState != EWukongCombatState::ParrySuccess)
 	{
@@ -3772,7 +3861,9 @@ bool AWukongBoss::TryStartParryCounterDecision()
 
 bool AWukongBoss::TryStartParryCounterAttack()
 {
-	if (bParryCounterStarted ||
+	if (bExecutionReady ||
+		bBeingExecuted ||
+		bParryCounterStarted ||
 		CurrentState != EMonsterState::Combat ||
 		CurrentCombatSubState != EWukongCombatState::ParrySuccess)
 	{
@@ -3840,7 +3931,9 @@ bool AWukongBoss::TryStartParryCounterAttack()
 
 bool AWukongBoss::TryStartParryCounterFollowUp()
 {
-	if (bParryCounterFollowUpStarted ||
+	if (bExecutionReady ||
+		bBeingExecuted ||
+		bParryCounterFollowUpStarted ||
 		bCurrentParryCounterPerfectParried ||
 		CurrentState != EMonsterState::Combat ||
 		CurrentCombatSubState != EWukongCombatState::Attack ||
@@ -3916,11 +4009,21 @@ void AWukongBoss::OnParrySuccessMontageEnded(UAnimMontage* Montage, bool bInterr
 
 void AWukongBoss::FinishParrySuccessStateFromNotify()
 {
+	if (bExecutionReady || bBeingExecuted)
+	{
+		return;
+	}
+
 	FinishParrySuccessState();
 }
 
 void AWukongBoss::FinishParrySuccessState()
 {
+	if (bExecutionReady || bBeingExecuted)
+	{
+		return;
+	}
+
 	if (UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
 	{
 		AnimInstance->OnMontageEnded.RemoveDynamic(this, &AWukongBoss::OnParrySuccessMontageEnded);
@@ -4067,6 +4170,11 @@ bool AWukongBoss::TryHandleIncomingHitBeforeDamage(
 		AccumulateParryExchangePerfectChance(HitType);
 		PlayDefenseSound(EJunDefenseSoundType::NormalParry);
 		AddPosture(NormalParryPostureGain);
+		if (bExecutionReady || bBeingExecuted)
+		{
+			return true;
+		}
+
 		const EWukongInitiativeState SavedInitiativeState = InitiativeState;
 		StartParrySuccessAgainstIncomingHit(DamageCauser, SwingDirection, DefenseKnockbackData);
 		InitiativeState = SavedInitiativeState;
@@ -4086,6 +4194,10 @@ void AWukongBoss::NotifyAttackParriedBy(
 	const FJunAttackDefenseRuleData& DefenseRuleData)
 {
 	Super::NotifyAttackParriedBy(Parrier, PostureScale, DefenseRuleData);
+	if (bExecutionReady || bBeingExecuted)
+	{
+		return;
+	}
 
 	const bool bIsParryCounterAttack =
 		CurrentAttackActionType == EWukongActionType::ParryCounter &&
@@ -4126,6 +4238,8 @@ bool AWukongBoss::TryStartPerfectParryRebound(AJunPlayer* Parrier, const FJunAtt
 {
 	if (!DefenseRuleData.bCanReboundOnPerfectParry ||
 		!Parrier ||
+		bExecutionReady ||
+		bBeingExecuted ||
 		CurrentState != EMonsterState::Combat ||
 		CurrentCombatSubState != EWukongCombatState::Attack ||
 		!bIsAttacking ||
@@ -4214,6 +4328,8 @@ UAnimMontage* AWukongBoss::GetPerfectParryReboundMontage(const AJunPlayer* Parri
 bool AWukongBoss::NotifyMikiriCounteredBy(AJunPlayer* CounterPlayer)
 {
 	if (!CounterPlayer ||
+		bExecutionReady ||
+		bBeingExecuted ||
 		CurrentState != EMonsterState::Combat ||
 		CurrentCombatSubState != EWukongCombatState::Attack ||
 		CurrentAttackActionType != EWukongActionType::NormalAttack ||
@@ -4258,6 +4374,14 @@ bool AWukongBoss::NotifyMikiriCounteredBy(AJunPlayer* CounterPlayer)
 	}
 
 	AddPosture(MikiriCounterPostureGain);
+	if (bExecutionReady || bBeingExecuted)
+	{
+		CurrentAnimInstance->Montage_Stop(0.05f, CounterMontage);
+		CurrentAttackMontage = nullptr;
+		AttackTime = 0.f;
+		return true;
+	}
+
 	return true;
 }
 
@@ -4436,6 +4560,20 @@ void AWukongBoss::OnExecutionReadyStarted()
 	ResetActiveReactiveActionState();
 	ResetPlannedCombatPlan();
 	ResetCurrentAttackRuntimeState();
+	if (UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+	{
+		AnimInstance->OnMontageEnded.RemoveDynamic(this, &AWukongBoss::OnParrySuccessMontageEnded);
+		if (CurrentParrySuccessMontage)
+		{
+			AnimInstance->Montage_Stop(0.05f, CurrentParrySuccessMontage);
+		}
+	}
+	CurrentParrySuccessMontage = nullptr;
+	ParrySuccessFallbackRemainTime = 0.f;
+	bParryCounterStarted = false;
+	bCurrentParryCounterPerfectParried = false;
+	bParryCounterFollowUpStarted = false;
+	InitiativeState = EWukongInitiativeState::Neutral;
 	CombatMoveInput = FVector2D::ZeroVector;
 	SetDesiredMoveAxes(0.f, 0.f);
 	bRunLocomotionRequested = false;

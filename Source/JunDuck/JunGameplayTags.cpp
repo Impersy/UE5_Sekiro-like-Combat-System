@@ -17,6 +17,7 @@ UE_DEFINE_GAMEPLAY_TAG(Input_Action_WalkToggle, "Input.Action.WalkToggle");
 UE_DEFINE_GAMEPLAY_TAG(Input_Action_Defense, "Input.Action.Defense");
 UE_DEFINE_GAMEPLAY_TAG(Input_Action_Drink, "Input.Action.Drink");
 UE_DEFINE_GAMEPLAY_TAG(Input_Action_ControlsToggle, "Input.Action.ControlsToggle");
+UE_DEFINE_GAMEPLAY_TAG(Input_Action_Interact, "Input.Action.Interact");
 
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_BasicAttack_ComboWindow, "Event.Notify.BasicAttack.ComboWindow");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_BasicAttack_ComboAdvance, "Event.Notify.BasicAttack.ComboAdvance");

@@ -18,6 +18,7 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet/GameplayStatics.h"
+#include "Level/JunPlayerRespawnPoint.h"
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
 #include "Engine/World.h"
@@ -42,6 +43,10 @@ namespace
 AJunPlayer::AJunPlayer()
 {
 	PrimaryActorTick.bCanEverTick = true;
+
+	HitDamageSoundVolume = 2.f;
+	PlayerAttackHitStopDuration = 0.02f;
+	bEnableDefenseHitStop = false;
 	
 	SetupMeshAndCollision();
 	SetupCameraComponents();
@@ -1173,6 +1178,11 @@ void AJunPlayer::Jump()
 		return;
 	}
 
+	if (HasGameplayTag(JunGameplayTags::State_Block_Jump))
+	{
+		return;
+	}
+
 	if (!CanJump())
 	{
 		return;
@@ -1425,6 +1435,20 @@ void AJunPlayer::BasicAttack()
 
 void AJunPlayer::OnHeavyAttackStarted()
 {
+	if (CurrentHitState == EJunPlayerHitState::ParrySuccess)
+	{
+		BeginHeavyAttackHoldInput();
+		BufferParrySuccessCancelAction(EJunBufferedParrySuccessCancelAction::HeavyAttack);
+		return;
+	}
+
+	if (CanBufferDefenseTransitionCancel())
+	{
+		BeginHeavyAttackHoldInput();
+		BufferDefenseTransitionCancelAction(EJunBufferedDefenseCancelAction::HeavyAttack);
+		return;
+	}
+
 	if (bIsDodgeAttacking)
 	{
 		if (!TryCancelDodgeAttackIntoHeavyAttack())
@@ -1510,7 +1534,13 @@ void AJunPlayer::OnHeavyAttackStarted()
 		}
 
 		CancelJigenForRecoveryTransition(JigenHeavyAttackCancelBlendOutTime);
-		BeginHeavyAttackHoldInput();
+		bHeavyAttackInputHeld = true;
+		HeavyAttackInputHoldTime = FMath::Max(HeavyAttackInputHoldTime, 0.f);
+		HeavyAttackChargeLoopElapsedTime = 0.f;
+		if (HeavyAttackInputHoldTime >= HeavyAttackChargeThreshold)
+		{
+			StartHeavyAttackCharge();
+		}
 		return;
 	}
 
@@ -1885,6 +1915,30 @@ void AJunPlayer::OnDefenseReleased()
 void AJunPlayer::AddCameraLookInput(const FVector2D& Input)
 {
 	PendingCameraLookInput = Input;
+}
+
+void AJunPlayer::SnapCameraToLookAt(const FVector& WorldTarget, float Pitch)
+{
+	if (!Controller)
+	{
+		bCameraRotationInitialized = false;
+		return;
+	}
+
+	const FVector CameraBasePoint = GetActorLocation();
+	FVector ToTarget = WorldTarget - CameraBasePoint;
+	ToTarget.Z = 0.f;
+	if (ToTarget.IsNearlyZero())
+	{
+		ToTarget = GetActorForwardVector();
+	}
+
+	TargetCameraYaw = ToTarget.Rotation().Yaw;
+	TargetCameraPitch = FMath::Clamp(Pitch, MinCameraPitch, MaxCameraPitch);
+	PendingCameraLookInput = FVector2D::ZeroVector;
+	Controller->SetControlRotation(FRotator(TargetCameraPitch, TargetCameraYaw, 0.f));
+	bCameraRotationInitialized = true;
+	StartCameraHardSnap();
 }
 
 void AJunPlayer::ToggleLockOn()
@@ -2323,6 +2377,40 @@ bool AJunPlayer::ShouldUseRunningAnim() const
 	return GetMoveState() == EJunMoveState::Run;
 }
 
+void AJunPlayer::BeginTutorialControlLock()
+{
+	bTutorialControlLocked = true;
+	DesiredMoveForward = 0.f;
+	DesiredMoveRight = 0.f;
+	PendingMoveForward = 0.f;
+	PendingMoveRight = 0.f;
+	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	{
+		MovementComponent->StopMovementImmediately();
+	}
+
+	AddGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	AddGameplayTag(JunGameplayTags::State_Block_Move);
+	AddGameplayTag(JunGameplayTags::State_Block_Jump);
+	AddGameplayTag(JunGameplayTags::State_Block_Attack);
+	AddGameplayTag(JunGameplayTags::State_Block_Dodge);
+}
+
+void AJunPlayer::EndTutorialControlLock()
+{
+	if (!bTutorialControlLocked)
+	{
+		return;
+	}
+
+	bTutorialControlLocked = false;
+	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Jump);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Attack);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Dodge);
+}
+
 void AJunPlayer::ToggleWalkingState()
 {
 	SetWalkRequested(!bWalkRequested);
@@ -2759,6 +2847,12 @@ void AJunPlayer::UpdateDodgeState(float DeltaTime)
 	}
 
 	DodgeElapsedTime += DodgeTimelineDeltaTime;
+	if (bDefenseButtonHeld && CanCancelDodgeIntoRecoveryAction())
+	{
+		TryCancelDodgeIntoDefense();
+		return;
+	}
+
 	if (DodgeElapsedTime >= GetDodgeMoveCancelOpenTimeForMontage(CurrentDodgeMontage))
 	{
 		RemoveGameplayTag(JunGameplayTags::State_Block_Move);
@@ -3171,6 +3265,18 @@ void AJunPlayer::UpdateHeavyAttackInput(float DeltaTime)
 	{
 		if (!CanStartHeavyAttack())
 		{
+			if (bHeavyAttackInputHeld && bIsJigenAttacking)
+			{
+				HeavyAttackInputHoldTime += DeltaTime;
+				return;
+			}
+
+			if (bHeavyAttackInputHeld && CanBufferDefenseTransitionCancel())
+			{
+				HeavyAttackInputHoldTime += DeltaTime;
+				return;
+			}
+
 			ResetHeavyAttackChargeInput();
 			return;
 		}
@@ -3274,7 +3380,7 @@ void AJunPlayer::BeginHeavyAttackHoldInput()
 	}
 
 	bHeavyAttackInputHeld = true;
-	HeavyAttackInputHoldTime = 0.f;
+	HeavyAttackInputHoldTime = FMath::Max(HeavyAttackInputHoldTime, 0.f);
 	HeavyAttackChargeLoopElapsedTime = 0.f;
 }
 
@@ -3690,7 +3796,7 @@ bool AJunPlayer::TryCancelHeavyAttackIntoHeavyAttack()
 		return false;
 	}
 
-	CancelHeavyAttackForRecoveryTransition(HeavyAttackBasicAttackCancelBlendOutTime);
+	CancelHeavyAttackForRecoveryTransition(HeavyAttackHeavyAttackCancelBlendOutTime);
 	return true;
 }
 
@@ -4680,6 +4786,19 @@ void AJunPlayer::ExecuteBufferedDefenseTransitionCancelAction()
 		CancelDefenseForCancelTransition();
 		BasicAttack();
 		break;
+	case EJunBufferedDefenseCancelAction::HeavyAttack:
+	{
+		const float PreservedHeavyAttackHoldTime = HeavyAttackInputHoldTime;
+		CancelDefenseForCancelTransition();
+		bHeavyAttackInputHeld = true;
+		HeavyAttackInputHoldTime = FMath::Max(PreservedHeavyAttackHoldTime, 0.f);
+		HeavyAttackChargeLoopElapsedTime = 0.f;
+		if (HeavyAttackInputHoldTime >= HeavyAttackChargeThreshold)
+		{
+			StartHeavyAttackCharge();
+		}
+		break;
+	}
 	case EJunBufferedDefenseCancelAction::Jump:
 		CancelDefenseForCancelTransition();
 		Jump();
@@ -4753,10 +4872,17 @@ void AJunPlayer::ExecuteBufferedParrySuccessCancelAction()
 	case EJunBufferedParrySuccessCancelAction::HeavyAttack:
 	{
 		const bool bShouldChargeFromHeldInput = bParrySuccessHeavyAttackInputHeld;
+		const float PreservedHeavyAttackHoldTime = HeavyAttackInputHoldTime;
 		CancelParrySuccessForCancelTransition(ParrySuccessHeavyAttackCancelBlendOutTime);
 		if (bShouldChargeFromHeldInput)
 		{
-			BeginHeavyAttackHoldInput();
+			bHeavyAttackInputHeld = true;
+			HeavyAttackInputHoldTime = FMath::Max(PreservedHeavyAttackHoldTime, 0.f);
+			HeavyAttackChargeLoopElapsedTime = 0.f;
+			if (HeavyAttackInputHoldTime >= HeavyAttackChargeThreshold)
+			{
+				StartHeavyAttackCharge();
+			}
 		}
 		else
 		{
@@ -5027,6 +5153,11 @@ bool AJunPlayer::TryStartExecution()
 
 bool AJunPlayer::CanStartExecution(const AJunMonster* Monster) const
 {
+	if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
+	{
+		return false;
+	}
+
 	return Monster
 		&& GetExecutionMontageForTarget(Monster)
 		&& AnimInstance
@@ -5102,6 +5233,7 @@ void AJunPlayer::StartExecution(AJunMonster* Monster)
 	}
 
 	AddGameplayTag(JunGameplayTags::State_Action_Attack);
+	AddGameplayTag(JunGameplayTags::State_Condition_Invincible);
 	AddGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
 	AddGameplayTag(JunGameplayTags::State_Block_Move);
 	AddGameplayTag(JunGameplayTags::State_Block_Jump);
@@ -5110,7 +5242,16 @@ void AJunPlayer::StartExecution(AJunMonster* Monster)
 
 	AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnExecutionMontageEnded);
 	AnimInstance->OnMontageEnded.AddDynamic(this, &AJunPlayer::OnExecutionMontageEnded);
-	PlayAnimMontage(CurrentExecutionMontage);
+	const float PlayResult = PlayAnimMontage(CurrentExecutionMontage);
+	if (PlayResult <= 0.f)
+	{
+		UE_LOG(LogJun, Warning,
+			TEXT("Execution montage play failed. Player=%s Target=%s Montage=%s"),
+			*GetNameSafe(this),
+			*GetNameSafe(Monster),
+			*GetNameSafe(CurrentExecutionMontage));
+		FinishExecution(true);
+	}
 }
 
 void AJunPlayer::TriggerExecutionTargetMontage()
@@ -5123,7 +5264,7 @@ void AJunPlayer::TriggerExecutionTargetMontage()
 	CurrentExecutionTarget->TriggerPendingExecutionMontage(!bCurrentExecutionIsFinish);
 }
 
-void AJunPlayer::FinishExecution()
+void AJunPlayer::FinishExecution(bool bInterrupted)
 {
 	if (!bIsExecuting)
 	{
@@ -5142,17 +5283,35 @@ void AJunPlayer::FinishExecution()
 	{
 		BGMManager->SetExecutionBGMDucked(false);
 	}
-	bCurrentExecutionIsFinish = false;
+	const bool bWasFinishExecution = bCurrentExecutionIsFinish;
 	if (CurrentExecutionTarget && !CurrentExecutionTarget->HasExecutionResultApplied())
 	{
-		CurrentExecutionTarget->CancelPendingExecution();
+		if (bInterrupted)
+		{
+			CurrentExecutionTarget->CancelPendingExecution();
+		}
+		else
+		{
+			UE_LOG(LogJun, Warning,
+				TEXT("Execution finished before target result was applied. Forcing result. Player=%s Target=%s Montage=%s"),
+				*GetNameSafe(this),
+				*GetNameSafe(CurrentExecutionTarget),
+				*GetNameSafe(CurrentExecutionMontage));
+			CurrentExecutionTarget->TriggerPendingExecutionMontage(!bWasFinishExecution);
+			if (!CurrentExecutionTarget->HasExecutionResultApplied())
+			{
+				CurrentExecutionTarget->ApplyPendingExecutionResult();
+			}
+		}
 	}
+	bCurrentExecutionIsFinish = false;
 	SetExecutionCapsuleCollisionIgnore(CurrentExecutionTarget.Get(), false);
 	RestoreExecutionCapsuleRadius(CurrentExecutionTarget.Get());
 	CurrentExecutionTarget = nullptr;
 	CurrentExecutionMontage = nullptr;
 
 	RemoveGameplayTag(JunGameplayTags::State_Action_Attack);
+	RemoveGameplayTag(JunGameplayTags::State_Condition_Invincible);
 	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
 	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
 	RemoveGameplayTag(JunGameplayTags::State_Block_Jump);
@@ -5167,7 +5326,7 @@ void AJunPlayer::OnExecutionMontageEnded(UAnimMontage* Montage, bool bInterrupte
 		return;
 	}
 
-	FinishExecution();
+	FinishExecution(bInterrupted);
 }
 
 UAnimMontage* AJunPlayer::GetExecutionMontageForTarget(const AJunMonster* Monster) const
@@ -6874,21 +7033,38 @@ void AJunPlayer::RespawnAtPlayerStart()
 		MovementComponent->SetMovementMode(MOVE_None);
 	}
 
+	AJunPlayerRespawnPoint* RespawnPoint = nullptr;
 	APlayerStart* PlayerStart = nullptr;
 	if (UWorld* World = GetWorld())
 	{
-		for (TActorIterator<APlayerStart> It(World); It; ++It)
+		RespawnPoint = AJunPlayerRespawnPoint::FindPlayerRespawnPoint(
+			this,
+			EJunPlayerRespawnPointType::BossRespawn);
+
+		if (!RespawnPoint)
 		{
-			PlayerStart = *It;
-			break;
+			for (TActorIterator<APlayerStart> It(World); It; ++It)
+			{
+				PlayerStart = *It;
+				break;
+			}
 		}
 	}
 
-	const FRotator SpawnViewRotation = PlayerStart
-		? PlayerStart->GetActorRotation()
-		: GetActorRotation();
+	const FRotator SpawnViewRotation = RespawnPoint
+		? RespawnPoint->GetActorRotation()
+		: (PlayerStart ? PlayerStart->GetActorRotation() : GetActorRotation());
 
-	if (PlayerStart)
+	if (RespawnPoint)
+	{
+		SetActorLocationAndRotation(
+			RespawnPoint->GetActorLocation(),
+			SpawnViewRotation,
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics);
+	}
+	else if (PlayerStart)
 	{
 		SetActorLocationAndRotation(
 			PlayerStart->GetActorLocation(),
@@ -6981,10 +7157,16 @@ void AJunPlayer::StartLockOnAfterFakeDeathRevive(AJunCharacter* NewTarget)
 	}
 
 	SmoothedLockOnDistance2D = FVector::Dist2D(GetActorLocation(), NewTarget->GetActorLocation());
+	const float FarPitchEnterDistance = FMath::Max(0.f, LockOnFarPitchEnterDistance);
+	bLockOnFarPitchModeActive = SmoothedLockOnDistance2D >= FarPitchEnterDistance;
 	CachedLockOnRangeAlpha = FMath::Clamp(
 		(SmoothedLockOnDistance2D - LockOnCloseDistance) / FMath::Max(LockOnFarDistance - LockOnCloseDistance, 1.f),
 		0.f,
 		1.f);
+	if (bLockOnFarPitchModeActive)
+	{
+		CachedLockOnRangeAlpha = 1.f;
+	}
 
 	bLockOnClosePitchModeActive = SmoothedLockOnDistance2D <= FMath::Max(0.f, LockOnClosePitchEnterDistance);
 	const bool bUseJumpCounterPitch = ShouldUseJumpCounterLockOnCameraPitch();
@@ -6994,9 +7176,11 @@ void AJunPlayer::StartLockOnAfterFakeDeathRevive(AJunCharacter* NewTarget)
 		? ExecutionReadyLockOnPitchOffset
 		: (bUseJumpCounterPitch
 			? JumpCounterLockOnPitchOffset
-			: (bLockOnClosePitchModeActive
-				? LockOnClosePitchOffset
-				: FMath::Lerp(LockOnClosePitchOffset, LockOnPitchOffset, CachedLockOnRangeAlpha)));
+			: (bLockOnFarPitchModeActive
+				? LockOnPitchOffset
+				: (bLockOnClosePitchModeActive
+					? LockOnClosePitchOffset
+					: FMath::Lerp(LockOnClosePitchOffset, LockOnPitchOffset, CachedLockOnRangeAlpha))));
 }
 
 void AJunPlayer::ClearHitReactRuntimeStateForRevive()
@@ -8775,6 +8959,11 @@ void AJunPlayer::UpdatePlayerHitState(float DeltaTime)
 	if (CurrentHitState == EJunPlayerHitState::ParrySuccess)
 	{
 		ParrySuccessElapsedTime += DeltaTime;
+		if (bParrySuccessHeavyAttackInputHeld && bHeavyAttackInputHeld)
+		{
+			HeavyAttackInputHoldTime += DeltaTime;
+		}
+
 		if (bDefenseButtonHeld)
 		{
 			ParrySuccessDefenseHoldElapsedTime += DeltaTime;
@@ -9610,6 +9799,11 @@ AJunCharacter* AJunPlayer::FindBestLockOnTarget()
 			continue;
 		}
 
+		if (!Candidate->CanBeLockOnTarget())
+		{
+			continue;
+		}
+
 		FVector ToTarget = Candidate->GetActorLocation() - MyLocation;
 		ToTarget.Z = 0.f;
 
@@ -10014,6 +10208,7 @@ void AJunPlayer::StartLockOn(AJunCharacter* NewTarget)
 	SmoothedLockOnDistance2D = -1.f;
 	SmoothedLockOnPitchOffset = LockOnPitchOffset;
 	bLockOnClosePitchModeActive = false;
+	bLockOnFarPitchModeActive = false;
 	SmoothedLockOnOcclusionLateralOffset = 0.f;
 	CachedLockOnAimDirection2D = FVector::ZeroVector;
 	bLockOnCloseAimStabilizationActive = false;
@@ -10031,6 +10226,7 @@ void AJunPlayer::EndLockOn()
 	SmoothedLockOnDistance2D = -1.f;
 	SmoothedLockOnPitchOffset = LockOnPitchOffset;
 	bLockOnClosePitchModeActive = false;
+	bLockOnFarPitchModeActive = false;
 	SmoothedLockOnOcclusionLateralOffset = 0.f;
 	CachedLockOnAimDirection2D = FVector::ZeroVector;
 	bLockOnCloseAimStabilizationActive = false;
@@ -10052,6 +10248,29 @@ bool AJunPlayer::IsLockOnTargetValid() const
 
 bool AJunPlayer::ShouldUseJumpCounterLockOnCameraPitch() const
 {
+	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent || !MovementComponent->IsFalling())
+	{
+		return false;
+	}
+
+	const AActor* JumpCounterTarget = JumpCounterStompTarget.Get();
+	if (!JumpCounterTarget)
+	{
+		JumpCounterTarget = LockOnTarget.Get();
+	}
+
+	if (!JumpCounterTarget)
+	{
+		return false;
+	}
+
+	const float MaxPitchDistance = FMath::Max(0.f, JumpCounterLockOnPitchMaxDistance);
+	if (FVector::DistSquared2D(GetActorLocation(), JumpCounterTarget->GetActorLocation()) > FMath::Square(MaxPitchDistance))
+	{
+		return false;
+	}
+
 	if (bJumpCounterStompFollowUpActive || bJumpCounterStompFollowUpAvailable)
 	{
 		return true;
@@ -10089,11 +10308,24 @@ void AJunPlayer::UpdateLockOnCamera(float DeltaTime)
 			LockOnDistanceInterpSpeed);
 	}
 
-	const float RawCloseRangeAlpha = FMath::Clamp(
-		(SmoothedLockOnDistance2D - LockOnCloseDistance) / FMath::Max(LockOnFarDistance - LockOnCloseDistance, 1.f),
-		0.f,
-		1.f
-	);
+	const float FarPitchEnterDistance = FMath::Max(0.f, LockOnFarPitchEnterDistance);
+	const float FarPitchExitDistance = FMath::Clamp(LockOnFarPitchExitDistance, 0.f, FarPitchEnterDistance);
+	if (!bLockOnFarPitchModeActive && SmoothedLockOnDistance2D >= FarPitchEnterDistance)
+	{
+		bLockOnFarPitchModeActive = true;
+	}
+	else if (bLockOnFarPitchModeActive && SmoothedLockOnDistance2D <= FarPitchExitDistance)
+	{
+		bLockOnFarPitchModeActive = false;
+	}
+
+	const float RawCloseRangeAlpha = bLockOnFarPitchModeActive
+		? 1.f
+		: FMath::Clamp(
+			(SmoothedLockOnDistance2D - LockOnCloseDistance) / FMath::Max(LockOnFarDistance - LockOnCloseDistance, 1.f),
+			0.f,
+			1.f
+		);
 
 	if (CachedLockOnRangeAlpha < 0.f)
 	{
@@ -10162,13 +10394,15 @@ void AJunPlayer::UpdateLockOnCamera(float DeltaTime)
 		? ExecutionReadyLockOnPitchOffset
 		: (bUseJumpCounterPitch
 		? JumpCounterLockOnPitchOffset
-		: (bLockOnClosePitchModeActive
+		: (bLockOnFarPitchModeActive
+			? LockOnPitchOffset
+			: (bLockOnClosePitchModeActive
 			? LockOnClosePitchOffset
 			: FMath::Lerp(
 				LockOnClosePitchOffset,
 				LockOnPitchOffset,
 				LockOnDistanceAlpha
-			)));
+				))));
 	if (!FMath::IsFinite(SmoothedLockOnPitchOffset))
 	{
 		SmoothedLockOnPitchOffset = TargetLockOnPitchOffset;

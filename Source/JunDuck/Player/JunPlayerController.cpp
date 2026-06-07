@@ -9,8 +9,11 @@
 #include "Character/JunCharacter.h"
 #include "Character/JunMonster.h"
 #include "Character/JunPlayer.h"
+#include "Character/JunTutorialNPC.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "EngineUtils.h"
+#include "Level/JunPlayerRespawnPoint.h"
+#include "Level/JunTutorialNPCPlacementPoint.h"
 #include "UI/JunCombatHUDWidget.h"
 #include "UI/JunDangerMarkerWidget.h"
 #include "UI/JunLockOnMarkerWidget.h"
@@ -91,6 +94,9 @@ void AJunPlayerController::SetupInputComponent()
 
 			auto ControlsToggleAction = InputData->FindInputActionByTag(JunGameplayTags::Input_Action_ControlsToggle);
 			EnhancedInputComponent->BindAction(ControlsToggleAction, ETriggerEvent::Started, this, &ThisClass::Input_ControlsToggle);
+
+			auto InteractAction = InputData->FindInputActionByTag(JunGameplayTags::Input_Action_Interact);
+			EnhancedInputComponent->BindAction(InteractAction, ETriggerEvent::Started, this, &ThisClass::Input_Interact);
 		}
 	}
 	
@@ -101,6 +107,7 @@ void AJunPlayerController::PlayerTick(float DeltaTime)
 	Super::PlayerTick(DeltaTime);
 
 	UpdateCombatWidgets();
+	UpdateTutorialTransition(DeltaTime);
 }
 
 void AJunPlayerController::InitializeCombatWidgets()
@@ -331,7 +338,9 @@ AJunMonster* AJunPlayerController::FindActiveCombatBoss() const
 	for (TActorIterator<AJunMonster> It(World); It; ++It)
 	{
 		AJunMonster* Monster = *It;
-		if (Monster && (Monster->GetCurrentState() == EMonsterState::Combat || Monster->Is_Dead()))
+		if (Monster &&
+			Monster->ShouldShowBossCombatHUD() &&
+			(Monster->GetCurrentState() == EMonsterState::Combat || Monster->Is_Dead()))
 		{
 			return Monster;
 		}
@@ -434,6 +443,11 @@ void AJunPlayerController::Input_Move(const FInputActionValue& InputValue)
 		JunPlayer->SetDesiredMoveAxes(MoveVec.X, MoveVec.Y);
 	}
 
+	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
+	{
+		return;
+	}
+
 	if (JunPlayer->GetDefenseState() == EJunDefenseState::Ending &&
 		(MoveVec.X != 0.f || MoveVec.Y != 0.f))
 	{
@@ -510,6 +524,11 @@ void AJunPlayerController::Input_Jump(const FInputActionValue& InputValue)
 		return;
 	}
 
+	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
+	{
+		return;
+	}
+
 	if (JunPlayer->IsDrinkingPotion())
 	{
 		return;
@@ -577,6 +596,11 @@ void AJunPlayerController::Input_Jump(const FInputActionValue& InputValue)
 void AJunPlayerController::Input_Dodge(const FInputActionValue& InputValue)
 {
 	if (!JunPlayer)
+	{
+		return;
+	}
+
+	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
 	{
 		return;
 	}
@@ -660,6 +684,11 @@ void AJunPlayerController::Input_DodgeReleased(const FInputActionValue& InputVal
 void AJunPlayerController::Input_BasicAttack(const FInputActionValue& InputValue)
 {
 	if (!JunPlayer)
+	{
+		return;
+	}
+
+	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
 	{
 		return;
 	}
@@ -749,6 +778,11 @@ void AJunPlayerController::Input_HeavyAttackStarted(const FInputActionValue& Inp
 		return;
 	}
 
+	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
+	{
+		return;
+	}
+
 	if (JunPlayer->IsDrinkingPotion())
 	{
 		return;
@@ -766,6 +800,11 @@ void AJunPlayerController::Input_HeavyAttackStarted(const FInputActionValue& Inp
 void AJunPlayerController::Input_HeavyAttackReleased(const FInputActionValue& InputValue)
 {
 	if (!JunPlayer)
+	{
+		return;
+	}
+
+	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
 	{
 		return;
 	}
@@ -796,6 +835,11 @@ void AJunPlayerController::Input_Defense(const FInputActionValue& InputValue)
 		return;
 	}
 
+	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
+	{
+		return;
+	}
+
 	if (JunPlayer->IsDrinkingPotion())
 	{
 		return;
@@ -809,7 +853,7 @@ void AJunPlayerController::Input_Defense(const FInputActionValue& InputValue)
 	const UWorld* World = GetWorld();
 	const bool bRecentlyPressedDodge = World &&
 		World->GetTimeSeconds() - LastDodgeInputTime <= MikiriCounterDodgeDefenseInputGraceTime;
-	if (bDodgeInputHeld && bRecentlyPressedDodge && JunPlayer->TryOpenMikiriCounterWindow(false))
+	if (bRecentlyPressedDodge && JunPlayer->TryOpenMikiriCounterWindow(false))
 	{
 		return;
 	}
@@ -820,6 +864,11 @@ void AJunPlayerController::Input_Defense(const FInputActionValue& InputValue)
 void AJunPlayerController::Input_DefenseReleased(const FInputActionValue& InputValue)
 {
 	if (!JunPlayer)
+	{
+		return;
+	}
+
+	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
 	{
 		return;
 	}
@@ -854,6 +903,11 @@ void AJunPlayerController::Input_Drink(const FInputActionValue& InputValue)
 		return;
 	}
 
+	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
+	{
+		return;
+	}
+
 	JunPlayer->TryStartDrinkPotion();
 }
 
@@ -863,4 +917,198 @@ void AJunPlayerController::Input_ControlsToggle(const FInputActionValue& InputVa
 	{
 		CombatHUDWidget->ToggleControlsVisibility();
 	}
+}
+
+void AJunPlayerController::Input_Interact(const FInputActionValue& InputValue)
+{
+	if (!JunPlayer)
+	{
+		JunPlayer = Cast<AJunPlayer>(GetPawn());
+	}
+
+	if (!JunPlayer || !CombatHUDWidget)
+	{
+		return;
+	}
+
+	if (IsTutorialTransitionActive())
+	{
+		return;
+	}
+
+	if (AJunTutorialNPC* DialogueNPC = ActiveDialogueNPC.Get())
+	{
+		if (DialogueNPC->IsDialogueActive())
+		{
+			if (DialogueNPC->AdvanceDialogue())
+			{
+				ShowDialogueLineFromNPC(DialogueNPC);
+				return;
+			}
+
+			CombatHUDWidget->HideDialogue();
+			StartTutorialTransition(DialogueNPC);
+			ActiveDialogueNPC = nullptr;
+			return;
+		}
+	}
+
+	AJunTutorialNPC* DialogueNPC = FindAvailableDialogueNPC();
+	if (!DialogueNPC || !DialogueNPC->TryStartDialogue(JunPlayer))
+	{
+		return;
+	}
+
+	ActiveDialogueNPC = DialogueNPC;
+	JunPlayer->BeginTutorialControlLock();
+	ShowDialogueLineFromNPC(DialogueNPC);
+}
+
+void AJunPlayerController::StartTutorialTransition(AJunTutorialNPC* NPC)
+{
+	if (!JunPlayer || !CombatHUDWidget || !NPC)
+	{
+		if (JunPlayer)
+		{
+			JunPlayer->EndTutorialControlLock();
+		}
+		return;
+	}
+
+	PendingTutorialNPC = NPC;
+	TutorialTransitionState = EJunTutorialTransitionState::FadingIn;
+	TutorialEquipDelayRemainTime = 0.f;
+	CombatHUDWidget->StartTutorialDimBlackFadeIn();
+}
+
+void AJunPlayerController::UpdateTutorialTransition(float DeltaTime)
+{
+	if (TutorialTransitionState == EJunTutorialTransitionState::None || !CombatHUDWidget)
+	{
+		return;
+	}
+
+	if (!JunPlayer)
+	{
+		JunPlayer = Cast<AJunPlayer>(GetPawn());
+	}
+
+	switch (TutorialTransitionState)
+	{
+	case EJunTutorialTransitionState::FadingIn:
+		if (CombatHUDWidget->IsTutorialDimBlackOpaque())
+		{
+			FinishTutorialTransitionMove();
+			CombatHUDWidget->StartTutorialDimBlackFadeOut();
+			TutorialTransitionState = EJunTutorialTransitionState::FadingOut;
+		}
+		break;
+	case EJunTutorialTransitionState::FadingOut:
+		if (CombatHUDWidget->IsTutorialDimBlackHidden())
+		{
+			if (JunPlayer)
+			{
+				JunPlayer->EndTutorialControlLock();
+			}
+			TutorialEquipDelayRemainTime = FMath::Max(0.f, TutorialEquipDelayAfterFadeOut);
+			TutorialTransitionState = EJunTutorialTransitionState::WaitingForEquip;
+		}
+		break;
+	case EJunTutorialTransitionState::WaitingForEquip:
+		TutorialEquipDelayRemainTime = FMath::Max(0.f, TutorialEquipDelayRemainTime - DeltaTime);
+		if (TutorialEquipDelayRemainTime <= 0.f)
+		{
+			if (AJunTutorialNPC* NPC = PendingTutorialNPC.Get())
+			{
+				NPC->StartTutorialEquip();
+			}
+			PendingTutorialNPC = nullptr;
+			TutorialTransitionState = EJunTutorialTransitionState::None;
+		}
+		break;
+	case EJunTutorialTransitionState::None:
+	default:
+		break;
+	}
+}
+
+void AJunPlayerController::FinishTutorialTransitionMove()
+{
+	if (!JunPlayer)
+	{
+		JunPlayer = Cast<AJunPlayer>(GetPawn());
+	}
+
+	if (JunPlayer)
+	{
+		if (AJunPlayerRespawnPoint* TutorialStartPoint = AJunPlayerRespawnPoint::FindPlayerRespawnPoint(
+			this,
+			EJunPlayerRespawnPointType::TutorialStart))
+		{
+			TutorialStartPoint->MoveActorToRespawnPoint(JunPlayer);
+		}
+
+		JunPlayer->SetDesiredMoveAxes(0.f, 0.f);
+		JunPlayer->OnMoveInputReleased();
+	}
+
+	if (AJunTutorialNPC* NPC = PendingTutorialNPC.Get())
+	{
+		if (AJunTutorialNPCPlacementPoint* PlacementPoint = AJunTutorialNPCPlacementPoint::FindTutorialNPCPlacementPoint(this))
+		{
+			NPC->MoveToTutorialPlacementPoint(PlacementPoint);
+		}
+
+		NPC->BeginTutorialCutsceneWait(JunPlayer);
+
+		if (JunPlayer)
+		{
+			JunPlayer->SnapCameraToLookAt(NPC->GetActorLocation(), -24.f);
+		}
+	}
+}
+
+AJunTutorialNPC* AJunPlayerController::FindAvailableDialogueNPC() const
+{
+	const UWorld* World = GetWorld();
+	if (!World || !JunPlayer)
+	{
+		return nullptr;
+	}
+
+	AJunTutorialNPC* BestNPC = nullptr;
+	float BestDistanceSq = FLT_MAX;
+
+	for (TActorIterator<AJunTutorialNPC> It(World); It; ++It)
+	{
+		AJunTutorialNPC* NPC = *It;
+		if (!NPC || !NPC->CanStartDialogue(JunPlayer))
+		{
+			continue;
+		}
+
+		const float DistanceSq = FVector::DistSquared2D(JunPlayer->GetActorLocation(), NPC->GetActorLocation());
+		if (DistanceSq < BestDistanceSq)
+		{
+			BestDistanceSq = DistanceSq;
+			BestNPC = NPC;
+		}
+	}
+
+	return BestNPC;
+}
+
+void AJunPlayerController::ShowDialogueLineFromNPC(AJunTutorialNPC* NPC)
+{
+	if (!NPC || !CombatHUDWidget || !NPC->HasCurrentDialogueLine())
+	{
+		if (CombatHUDWidget)
+		{
+			CombatHUDWidget->HideDialogue();
+		}
+		return;
+	}
+
+	const FJunTutorialNPCDialogueLine DialogueLine = NPC->GetCurrentDialogueLine();
+	CombatHUDWidget->ShowDialogue(DialogueLine.DialogueText, DialogueLine.SpeakerName);
 }

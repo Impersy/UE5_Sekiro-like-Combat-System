@@ -9,6 +9,44 @@
 #include "PhysicsEngine/PhysicalAnimationComponent.h"
 #include "Sound/SoundBase.h"
 #include "System/JunTimeEffectSubsystem.h"
+#include "UObject/UnrealType.h"
+
+namespace
+{
+	UClass* ResolveNativeComparisonClass(const UObject* Object)
+	{
+		UClass* Class = Object ? Object->GetClass() : nullptr;
+		while (Class && Class->ClassGeneratedBy)
+		{
+			Class = Class->GetSuperClass();
+		}
+
+		return Class;
+	}
+
+	FString ExportPropertyValue(const FProperty* Property, const UObject* Object)
+	{
+		if (!Property || !Object)
+		{
+			return TEXT("<Invalid>");
+		}
+
+		FString Result;
+		Property->ExportText_InContainer(0, Result, Object, Object, const_cast<UObject*>(Object), PPF_None);
+		return Result.IsEmpty() ? TEXT("<Empty>") : Result;
+	}
+
+	FString GetPropertyCategory(const FProperty* Property)
+	{
+		if (!Property)
+		{
+			return TEXT("None");
+		}
+
+		const FString Category = Property->GetMetaData(TEXT("Category"));
+		return Category.IsEmpty() ? TEXT("Uncategorized") : Category;
+	}
+}
 
 // Sets default values
 AJunCharacter::AJunCharacter()
@@ -54,6 +92,11 @@ void AJunCharacter::BeginPlay()
 	if (PhysicalAnimationComponent)
 	{
 		PhysicalAnimationComponent->SetSkeletalMeshComponent(GetMesh());
+	}
+
+	if (bDumpRuntimeTuningOnBeginPlay)
+	{
+		DumpRuntimeTuningSettings();
 	}
 	
 }
@@ -105,6 +148,78 @@ void AJunCharacter::HandleDefenseSoundNotify()
 	PlayDefenseSoundByType(PendingDefenseSoundType);
 
 	PendingDefenseSoundType = EJunDefenseSoundType::None;
+}
+
+void AJunCharacter::DumpRuntimeTuningSettings() const
+{
+	const UClass* RuntimeClass = GetClass();
+	const UClass* NativeClass = ResolveNativeComparisonClass(this);
+	const UObject* NativeDefaultObject = NativeClass ? NativeClass->GetDefaultObject() : nullptr;
+	if (!RuntimeClass || !NativeClass || !NativeDefaultObject)
+	{
+		UE_LOG(LogJun, Warning, TEXT("RuntimeTuningDump | Failed. Actor=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	UE_LOG(LogJun, Warning, TEXT("========== RuntimeTuningDump Begin | Actor=%s RuntimeClass=%s NativeClass=%s OnlyOverrides=%d =========="),
+		*GetNameSafe(this),
+		*GetNameSafe(RuntimeClass),
+		*GetNameSafe(NativeClass),
+		bDumpOnlyOverriddenRuntimeTuning ? 1 : 0);
+
+	int32 PrintedCount = 0;
+	int32 ComparedCount = 0;
+	int32 SkippedBlueprintOnlyCount = 0;
+
+	for (TFieldIterator<FProperty> It(RuntimeClass, EFieldIteratorFlags::IncludeSuper); It; ++It)
+	{
+		const FProperty* Property = *It;
+		if (!Property || !Property->HasAnyPropertyFlags(CPF_Edit))
+		{
+			continue;
+		}
+
+		const UClass* OwnerClass = Property->GetOwnerClass();
+		const bool bCanCompareToNativeDefault =
+			OwnerClass &&
+			NativeClass->IsChildOf(OwnerClass);
+
+		const FString RuntimeValue = ExportPropertyValue(Property, this);
+		if (!bCanCompareToNativeDefault)
+		{
+			++SkippedBlueprintOnlyCount;
+			if (!bDumpOnlyOverriddenRuntimeTuning)
+			{
+				UE_LOG(LogJun, Warning, TEXT("RuntimeTuningDump | BPOnly | %s | %s = %s"),
+					*GetPropertyCategory(Property),
+					*Property->GetName(),
+					*RuntimeValue);
+				++PrintedCount;
+			}
+			continue;
+		}
+
+		++ComparedCount;
+		const FString NativeValue = ExportPropertyValue(Property, NativeDefaultObject);
+		const bool bDifferentFromNative = RuntimeValue != NativeValue;
+		if (bDumpOnlyOverriddenRuntimeTuning && !bDifferentFromNative)
+		{
+			continue;
+		}
+
+		UE_LOG(LogJun, Warning, TEXT("RuntimeTuningDump | %s | %s | C++=%s | Runtime=%s"),
+			*GetPropertyCategory(Property),
+			*Property->GetName(),
+			*NativeValue,
+			*RuntimeValue);
+		++PrintedCount;
+	}
+
+	UE_LOG(LogJun, Warning, TEXT("========== RuntimeTuningDump End | Actor=%s Printed=%d Compared=%d SkippedBPOnly=%d =========="),
+		*GetNameSafe(this),
+		PrintedCount,
+		ComparedCount,
+		SkippedBlueprintOnlyCount);
 }
 
 void AJunCharacter::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData, const FJunAttackDefenseRuleData& DefenseRuleData, EJunWeaponNiagaraComponent NiagaraComponent, const FJunAttackTraceOverrideData& TraceOverrideData)

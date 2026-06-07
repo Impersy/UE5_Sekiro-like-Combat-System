@@ -331,6 +331,8 @@ public:
 		float StrengthScale = 1.f,
 		FName BoneName = NAME_None);
 	virtual void ApplyPhysicalHitReaction(const FVector& WorldDirection, float StrengthScale = 1.f, FName BoneName = NAME_None);
+	UFUNCTION(BlueprintCallable, Category = "Debug|Tuning")
+	void DumpRuntimeTuningSettings() const;
 
 public:
 	UFUNCTION(BlueprintCallable)
@@ -342,6 +344,7 @@ public:
 	FGameplayTag GetTeamTag() const;
 	bool IsSameTeam(const AJunCharacter* Other) const;
 	bool IsEnemyTo(const AJunCharacter* Other) const;
+	virtual bool CanBeLockOnTarget() const { return true; }
 	virtual bool IsMikiriCounterThreatActive() const;
 	virtual bool IsJumpCounterThreatActive() const;
 
@@ -482,6 +485,12 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitStop|Defense")
 	int32 DefenseHitStopPriority = 1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug|Tuning")
+	bool bDumpRuntimeTuningOnBeginPlay = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug|Tuning")
+	bool bDumpOnlyOverriddenRuntimeTuning = true;
 
 	void PlayRandomDefenseSound(const TArray<TObjectPtr<class USoundBase>>& Sounds) const;
 	void PlayDefenseSoundByType(EJunDefenseSoundType SoundType) const;

@@ -4,6 +4,7 @@
 #include "Animation/JunAnimInstance.h"
 #include "Character/JunMonster.h"
 #include "Character/JunPlayer.h"
+#include "Character/JunTutorialNPC.h"
 #include "JunGameplayTags.h"
 #include "Engine/Engine.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -59,6 +60,19 @@ void UJunAnimInstance::UpdateMovementData(float DeltaSeconds)
 		}
 
 		bShouldMove = bHasDesiredMoveInput || (GroundSpeed > 3.f);
+		if (const AJunTutorialNPC* TutorialNPC = Cast<AJunTutorialNPC>(Monster))
+		{
+			if (TutorialNPC->IsDebugTutorialHomeReturnEnabled())
+			{
+				UE_LOG(LogTemp, Warning, TEXT("TutorialHomeAnim | ShouldMove=%d Desired=(%.2f,%.2f) Ground=%.1f Blend=%.1f Accel=%.1f"),
+					bShouldMove ? 1 : 0,
+					Monster->GetDesiredMoveForward(),
+					Monster->GetDesiredMoveRight(),
+					GroundSpeed,
+					BlendSpaceSpeed,
+					MovementComponent ? MovementComponent->GetCurrentAcceleration().Size2D() : 0.f);
+			}
+		}
 	}
 	else if (const AJunPlayer* Player = Cast<AJunPlayer>(Character))
 	{
@@ -131,6 +145,10 @@ void UJunAnimInstance::UpdateMovementDirectionData(float DeltaSeconds)
 	}
 	else if (const AJunMonster* Monster = Cast<AJunMonster>(Character))
 	{
+		const bool bHasDesiredMoveInput =
+			!FMath::IsNearlyZero(Monster->GetDesiredMoveForward()) ||
+			!FMath::IsNearlyZero(Monster->GetDesiredMoveRight());
+
 		TargetLocalMoveForward = Monster->GetDesiredMoveForward();
 		TargetLocalMoveRight = Monster->GetDesiredMoveRight();
 

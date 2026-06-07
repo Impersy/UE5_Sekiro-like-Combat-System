@@ -643,37 +643,37 @@ protected:
 	TObjectPtr<class UAnimMontage> NinjaBVariantAttackMontage = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float ChargeVariantChance = 0.35f;
+	float ChargeVariantChance = 0.8f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0"))
-	float ChargeVariantMinDistance = 0.f;
+	float ChargeVariantMinDistance = 250.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0"))
 	float ChargeVariantMaxDistance = 0.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float NinjaBVariantChance = 0.35f;
+	float NinjaBVariantChance = 0.7f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0"))
-	float NinjaBVariantMinDistance = 0.f;
+	float NinjaBVariantMinDistance = 450.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0"))
 	float NinjaBVariantMaxDistance = 0.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0"))
-	float VariantDashBlendOutTime = 0.12f;
+	float VariantDashBlendOutTime = 0.2f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0"))
-	float VariantDashBlendInTime = 0.12f;
+	float VariantDashBlendInTime = 0.2f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.1"))
 	float VariantDashPlayRate = 1.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant")
-	bool bVariantDashFaceTarget = false;
+	bool bVariantDashFaceTarget = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0"))
-	float VariantDashFacingDuration = 0.f;
+	float VariantDashFacingDuration = 0.6f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|NormalAttack|Variant", meta = (ClampMin = "0.0"))
 	float VariantDashFacingInterpSpeed = 14.f;
@@ -724,16 +724,16 @@ protected:
 	TObjectPtr<class UAnimMontage> PerfectParryReboundRMontage = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float LightHitPerfectParryChance = 0.5f;
+	float LightHitPerfectParryChance = 0.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float LightHitNormalParryChance = 0.4f;
+	float LightHitNormalParryChance = 0.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float StrongHitPerfectParryChance = 0.1f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float StrongHitNormalParryChance = 0.4f;
+	float StrongHitNormalParryChance = 0.2f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "360.0"))
 	float ParryFrontConeAngle = 90.f;
@@ -742,34 +742,34 @@ protected:
 	float NormalParryPostureGain = 10.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float NormalParryChanceGainPerIncomingHit = 0.5f;
+	float NormalParryChanceGainPerIncomingHit = 0.7f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float PerfectParryChanceGainPerNormalParry = 0.25f;
+	float PerfectParryChanceGainPerNormalParry = 0.4f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float StrongNormalParryChanceGainPerIncomingHit = 0.25f;
+	float StrongNormalParryChanceGainPerIncomingHit = 0.3f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float StrongPerfectParryChanceGainPerNormalParry = 0.15f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange", meta = (ClampMin = "0"))
-	int32 ParryExchangeEscapeMinNormalParryCount = 3;
+	int32 ParryExchangeEscapeMinNormalParryCount = 4;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float ParryExchangeEscapeChance = 0.35f;
+	float ParryExchangeEscapeChance = 0.2f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange", meta = (ClampMin = "0.0"))
-	float ParryExchangeDecayDelay = 1.f;
+	float ParryExchangeDecayDelay = 3.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry|Exchange", meta = (ClampMin = "0.0"))
-	float ParryExchangeChanceDecayPerSecond = 0.5f;
+	float ParryExchangeChanceDecayPerSecond = 0.2f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
-	float ParryCounterBlendOutTime = 0.08f;
+	float ParryCounterBlendOutTime = 0.2f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
-	float ParryCounterBlendInTime = 0.08f;
+	float ParryCounterBlendInTime = 0.2f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float ParryCounterDecisionCounterChance = 1.f;
@@ -793,16 +793,16 @@ protected:
 	float ParryCounterFollowUpBlendInTime = 0.08f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.1"))
-	float ParryCounterFollowUpPlayRate = 1.f;
+	float ParryCounterFollowUpPlayRate = 0.95f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.1"))
-	float ParryBackJumpPlayRate = 1.f;
+	float ParryBackJumpPlayRate = 0.9f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
-	float ParryBackJumpBlendOutTime = 0.08f;
+	float ParryBackJumpBlendOutTime = 0.15f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry", meta = (ClampMin = "0.0"))
-	float ParryBackJumpBlendInTime = 0.08f;
+	float ParryBackJumpBlendInTime = 0.15f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Parry")
 	float ParryCounterFollowUpAttackRange = 300.f;
@@ -895,7 +895,7 @@ protected:
 	EHitReactType PendingParryExchangeHitType = EHitReactType::None;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Recovery")
-	float RecoveryDuration = 0.4f;
+	float RecoveryDuration = 0.1f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Plan", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float AttackPlanWeight = 0.8f;
@@ -1093,7 +1093,7 @@ protected:
 	float CodeFacingLockRemainTime = 0.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement")
-	float ApproachFacingInterpSpeed = 8.f;
+	float ApproachFacingInterpSpeed = 5.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wukong|Movement")
 	float EvadeFacingInterpSpeed = 12.f;

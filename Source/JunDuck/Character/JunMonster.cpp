@@ -170,6 +170,46 @@ AJunMonster::AJunMonster()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
+	Hp = 400;
+	MaxHp = 400;
+	HitDamageSoundVolume = 2.f;
+
+	LightPhysicalHitReactionSettings.bEnable = false;
+	LightPhysicalHitReactionSettings.RootBoneName = TEXT("spine_02");
+	LightPhysicalHitReactionSettings.BlendWeight = 0.22f;
+	LightPhysicalHitReactionSettings.Duration = 0.2f;
+	LightPhysicalHitReactionSettings.ImpulseStrength = 3000.f;
+	LightPhysicalHitReactionSettings.OrientationStrength = 100.f;
+	LightPhysicalHitReactionSettings.AngularVelocityStrength = 50.f;
+	LightPhysicalHitReactionSettings.MaxAngularForce = 50000.f;
+	LightPhysicalHitReactionSettings.MinImpulseZ = -0.35f;
+	LightPhysicalHitReactionSettings.MaxImpulseZ = -0.1f;
+	LightPhysicalHitReactionSettings.bUseAdditionalRoots = false;
+	LightPhysicalHitReactionSettings.AdditionalRootBoneNames = { TEXT("thigh_l"), TEXT("thigh_r") };
+	LightPhysicalHitReactionSettings.AdditionalRootBlendWeight = 0.08f;
+	LightPhysicalHitReactionSettings.AdditionalRootImpulseScale = 0.08f;
+	LightPhysicalHitReactionSettings.bUseDampenedBones = true;
+	LightPhysicalHitReactionSettings.DampenedBoneNames = { TEXT("upperarm_l"), TEXT("upperarm_r") };
+	LightPhysicalHitReactionSettings.DampenedBoneBlendWeight = 0.06f;
+
+	SuperArmorPhysicalHitReactionSettings.bEnable = true;
+	SuperArmorPhysicalHitReactionSettings.RootBoneName = TEXT("spine_02");
+	SuperArmorPhysicalHitReactionSettings.BlendWeight = 0.16f;
+	SuperArmorPhysicalHitReactionSettings.Duration = 0.2f;
+	SuperArmorPhysicalHitReactionSettings.ImpulseStrength = 3000.f;
+	SuperArmorPhysicalHitReactionSettings.OrientationStrength = 900.f;
+	SuperArmorPhysicalHitReactionSettings.AngularVelocityStrength = 90.f;
+	SuperArmorPhysicalHitReactionSettings.MaxAngularForce = 50000.f;
+	SuperArmorPhysicalHitReactionSettings.MinImpulseZ = -0.25f;
+	SuperArmorPhysicalHitReactionSettings.MaxImpulseZ = 0.f;
+	SuperArmorPhysicalHitReactionSettings.bUseAdditionalRoots = true;
+	SuperArmorPhysicalHitReactionSettings.AdditionalRootBoneNames = { TEXT("thigh_l"), TEXT("thigh_r") };
+	SuperArmorPhysicalHitReactionSettings.AdditionalRootBlendWeight = 0.05f;
+	SuperArmorPhysicalHitReactionSettings.AdditionalRootImpulseScale = 0.2f;
+	SuperArmorPhysicalHitReactionSettings.bUseDampenedBones = true;
+	SuperArmorPhysicalHitReactionSettings.DampenedBoneNames = { TEXT("upperarm_l"), TEXT("upperarm_r") };
+	SuperArmorPhysicalHitReactionSettings.DampenedBoneBlendWeight = 0.f;
+
 	// 캡슐 충돌 프리셋
 	GetCapsuleComponent()->SetCollisionProfileName(TEXT("EnemyCapsule"));
 
@@ -252,6 +292,7 @@ void AJunMonster::Tick(float DeltaTime)
 	UpdateHitReactKnockbackBraking(DeltaTime);
 	UpdateHitReactFacing(DeltaTime);
 
+	const bool bWasExecutionReadyAtTickStart = bExecutionReady;
 	if (bExecutionReady && !bBeingExecuted)
 	{
 		ExecutionReadyRemainTime = FMath::Max(0.f, ExecutionReadyRemainTime - DeltaTime);
@@ -261,9 +302,15 @@ void AJunMonster::Tick(float DeltaTime)
 		}
 	}
 
-	if (CurrentState != EMonsterState::Dead && bBeingExecuted && bAttackFacingWindowActive)
+	if (CurrentState != EMonsterState::Dead && (bExecutionReady || bBeingExecuted) && bAttackFacingWindowActive)
 	{
 		UpdateExecutionFacing(DeltaTime);
+	}
+
+	if (bWasExecutionReadyAtTickStart)
+	{
+		StateTime += DeltaTime;
+		return;
 	}
 
 	UpdateAttack(DeltaTime);
@@ -502,7 +549,7 @@ void AJunMonster::NotifyAttackParriedBy(
 	float PostureScale,
 	const FJunAttackDefenseRuleData& DefenseRuleData)
 {
-	if (!Parrier || CurrentState == EMonsterState::Dead || bBeingExecuted)
+	if (!Parrier || CurrentState == EMonsterState::Dead || bExecutionReady || bBeingExecuted)
 	{
 		return;
 	}
@@ -579,6 +626,7 @@ bool AJunMonster::TryBeginExecutionBy(AJunPlayer* Player)
 	CombatMoveInput = FVector2D::ZeroVector;
 	GetCharacterMovement()->StopMovementImmediately();
 	AddGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	AddGameplayTag(JunGameplayTags::State_Condition_Invincible);
 	AddGameplayTag(JunGameplayTags::State_Block_Move);
 
 	if (ReadyExecutedMontage)
@@ -674,6 +722,7 @@ void AJunMonster::CancelPendingExecution()
 	}
 
 	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	RemoveGameplayTag(JunGameplayTags::State_Condition_Invincible);
 	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
 }
 
@@ -1034,6 +1083,7 @@ void AJunMonster::EnterPlayerDeathWait()
 void AJunMonster::ResumeAfterPlayerFakeDeath()
 {
 	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	RemoveGameplayTag(JunGameplayTags::State_Condition_Invincible);
 	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
 	if (CurrentState != EMonsterState::Combat)
 	{
@@ -1926,6 +1976,11 @@ bool AJunMonster::CanRemainInCombat(AActor* Target) const
 
 bool AJunMonster::CanAttackTarget() const
 {
+	if (bExecutionReady || bBeingExecuted)
+	{
+		return false;
+	}
+
 	if (CurrentState != EMonsterState::Combat)
 	{
 		return false;
@@ -3146,9 +3201,12 @@ void AJunMonster::AddPosture(float Amount)
 	PostureRecoveryDelayRemainTime = PostureRecoveryDelay;
 	if (CurrentPosture >= MaxPosture)
 	{
-		if (AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(UGameplayStatics::GetPlayerController(this, 0)))
+		if (ShouldShowBossCombatHUD())
 		{
-			JunPlayerController->PlayBossPostureBreakGlow();
+			if (AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(UGameplayStatics::GetPlayerController(this, 0)))
+			{
+				JunPlayerController->PlayBossPostureBreakGlow();
+			}
 		}
 		StartExecutionReady();
 	}
@@ -3270,6 +3328,8 @@ void AJunMonster::StartExecutionReady()
 	AddGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
 	AddGameplayTag(JunGameplayTags::State_Block_Move);
 
+	OnExecutionReadyStarted();
+
 	if (ReadyExecutedMontage)
 	{
 		PlayAnimMontage(ReadyExecutedMontage);
@@ -3287,8 +3347,6 @@ void AJunMonster::StartExecutionReady()
 				ExecutionReadySlowMotionPriority);
 		}
 	}
-
-	OnExecutionReadyStarted();
 }
 
 void AJunMonster::EndExecutionReady()
@@ -3353,6 +3411,7 @@ void AJunMonster::FinishExecutionRecovery()
 		MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnExecutionMontageEnded);
 	}
 	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
+	RemoveGameplayTag(JunGameplayTags::State_Condition_Invincible);
 	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
 
 	if (CurrentTarget)
@@ -3438,13 +3497,19 @@ void AJunMonster::OnCutsceneWaitEquipMontageEnded(UAnimMontage* Montage, bool bI
 
 void AJunMonster::UpdateExecutionFacing(float DeltaTime)
 {
-	if (!CurrentExecutionInstigator)
+	AActor* FacingTarget = CurrentExecutionInstigator.Get();
+	if (!FacingTarget && bExecutionReady)
+	{
+		FacingTarget = CurrentTarget.Get();
+	}
+
+	if (!FacingTarget)
 	{
 		EndAttackFacingWindow();
 		return;
 	}
 
-	FVector ToExecutor = CurrentExecutionInstigator->GetActorLocation() - GetActorLocation();
+	FVector ToExecutor = FacingTarget->GetActorLocation() - GetActorLocation();
 	ToExecutor.Z = 0.f;
 	if (ToExecutor.IsNearlyZero())
 	{
@@ -3472,6 +3537,7 @@ void AJunMonster::ResetExecutionRuntimeState()
 	CurrentExecutionMontage = nullptr;
 	CurrentPosture = 0.f;
 	EndAttackFacingWindow();
+	RemoveGameplayTag(JunGameplayTags::State_Condition_Invincible);
 	if (UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
 	{
 		MonsterAnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunMonster::OnExecutionMontageEnded);

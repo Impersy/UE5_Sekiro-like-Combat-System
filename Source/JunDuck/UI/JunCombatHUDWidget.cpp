@@ -23,6 +23,8 @@ void UJunCombatHUDWidget::NativeConstruct()
 	ApplyControlsVisibility();
 	ApplyBossHealthVisibility();
 	ApplyBossLifeWidgets();
+	HideDialogue();
+	ApplyWidgetOpacity(Tutorial_DimBlack, 0.f);
 	if (Player_RedGlow_Root)
 	{
 		Player_RedGlow_Root->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
@@ -54,6 +56,8 @@ void UJunCombatHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 	UpdatePostureVisibility(InDeltaTime);
 	UpdateBossClearUI(InDeltaTime);
 	UpdateDeathUI(InDeltaTime);
+	UpdateDialogueUI(InDeltaTime);
+	UpdateTutorialDimBlackUI(InDeltaTime);
 }
 
 void UJunCombatHUDWidget::SetPotionCount(int32 CurrentPotionCount)
@@ -66,6 +70,56 @@ void UJunCombatHUDWidget::ToggleControlsVisibility()
 {
 	bControlsVisible = !bControlsVisible;
 	ApplyControlsVisibility();
+}
+
+void UJunCombatHUDWidget::ShowDialogue(const FText& DialogueText, const FText& SpeakerName)
+{
+	CurrentDialogueText = DialogueText;
+	CurrentDialogueSpeakerName = SpeakerName;
+	TargetDialogueBackgroundOpacity = DialogueBackgroundTargetOpacity;
+	ApplyDialogueText();
+	ApplyDialogueVisibility();
+}
+
+void UJunCombatHUDWidget::HideDialogue()
+{
+	CurrentDialogueText = FText::GetEmpty();
+	CurrentDialogueSpeakerName = FText::GetEmpty();
+	TargetDialogueBackgroundOpacity = 0.f;
+	ApplyDialogueText();
+	ApplyDialogueVisibility();
+}
+
+void UJunCombatHUDWidget::SetDialogueLine(const FText& DialogueText, const FText& SpeakerName)
+{
+	CurrentDialogueText = DialogueText;
+	CurrentDialogueSpeakerName = SpeakerName;
+	ApplyDialogueText();
+	ApplyDialogueVisibility();
+}
+
+void UJunCombatHUDWidget::StartTutorialDimBlackFadeIn()
+{
+	TargetTutorialDimBlackOpacity = 1.f;
+	if (Tutorial_DimBlack)
+	{
+		Tutorial_DimBlack->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+}
+
+void UJunCombatHUDWidget::StartTutorialDimBlackFadeOut()
+{
+	TargetTutorialDimBlackOpacity = 0.f;
+}
+
+bool UJunCombatHUDWidget::IsTutorialDimBlackOpaque() const
+{
+	return TutorialDimBlackOpacity >= 0.99f;
+}
+
+bool UJunCombatHUDWidget::IsTutorialDimBlackHidden() const
+{
+	return TutorialDimBlackOpacity <= 0.01f && TargetTutorialDimBlackOpacity <= 0.f;
 }
 
 void UJunCombatHUDWidget::SetPlayerHealth(int32 CurrentHealth, int32 MaxHealth)
@@ -490,6 +544,39 @@ void UJunCombatHUDWidget::UpdateDeathUI(float DeltaTime)
 	SetDeathRootVisible(bAnyDeathUIVisible);
 }
 
+void UJunCombatHUDWidget::UpdateDialogueUI(float DeltaTime)
+{
+	DialogueBackgroundOpacity = DialogueBackgroundFadeSpeed > 0.f
+		? FMath::FInterpTo(DialogueBackgroundOpacity, TargetDialogueBackgroundOpacity, DeltaTime, DialogueBackgroundFadeSpeed)
+		: TargetDialogueBackgroundOpacity;
+
+	if (FMath::IsNearlyEqual(DialogueBackgroundOpacity, TargetDialogueBackgroundOpacity, 0.005f))
+	{
+		DialogueBackgroundOpacity = TargetDialogueBackgroundOpacity;
+	}
+
+	if (Dialog_Background)
+	{
+		ApplyWidgetOpacity(Dialog_Background, DialogueBackgroundOpacity);
+	}
+
+	ApplyDialogueVisibility();
+}
+
+void UJunCombatHUDWidget::UpdateTutorialDimBlackUI(float DeltaTime)
+{
+	TutorialDimBlackOpacity = TutorialDimBlackFadeSpeed > 0.f
+		? FMath::FInterpTo(TutorialDimBlackOpacity, TargetTutorialDimBlackOpacity, DeltaTime, TutorialDimBlackFadeSpeed)
+		: TargetTutorialDimBlackOpacity;
+
+	if (FMath::IsNearlyEqual(TutorialDimBlackOpacity, TargetTutorialDimBlackOpacity, 0.005f))
+	{
+		TutorialDimBlackOpacity = TargetTutorialDimBlackOpacity;
+	}
+
+	ApplyWidgetOpacity(Tutorial_DimBlack, TutorialDimBlackOpacity);
+}
+
 void UJunCombatHUDWidget::UpdateBossClearUI(float DeltaTime)
 {
 	const bool bFadingOut = TargetBossClearOpacity < BossClearOpacity;
@@ -531,6 +618,47 @@ void UJunCombatHUDWidget::SetDeathRootVisible(bool bVisible)
 	if (Death_Root)
 	{
 		Death_Root->SetVisibility(bVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
+}
+
+void UJunCombatHUDWidget::ApplyDialogueVisibility()
+{
+	const bool bHasText = !CurrentDialogueText.IsEmpty();
+	const bool bBackgroundVisible = DialogueBackgroundOpacity > 0.f || TargetDialogueBackgroundOpacity > 0.f;
+	const bool bVisible = bHasText || bBackgroundVisible;
+	const ESlateVisibility TargetVisibility = bVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden;
+
+	if (Dialog_Root)
+	{
+		Dialog_Root->SetVisibility(TargetVisibility);
+	}
+
+	if (Dialog_Background)
+	{
+		Dialog_Background->SetVisibility(bBackgroundVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
+
+	if (Dialog_Text_1)
+	{
+		Dialog_Text_1->SetVisibility(bHasText ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
+
+	if (Dialog_Text_2)
+	{
+		Dialog_Text_2->SetVisibility(!CurrentDialogueSpeakerName.IsEmpty() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
+}
+
+void UJunCombatHUDWidget::ApplyDialogueText()
+{
+	if (Dialog_Text_1)
+	{
+		Dialog_Text_1->SetText(CurrentDialogueText);
+	}
+
+	if (Dialog_Text_2)
+	{
+		Dialog_Text_2->SetText(CurrentDialogueSpeakerName);
 	}
 }
 
