@@ -89,6 +89,19 @@ enum class EJunDangerAttackType : uint8
 	MikiriCounter
 };
 
+UENUM(BlueprintType)
+enum class EJunTutorialAttackType : uint8
+{
+	None,
+	BasicComboFinal,
+	JumpAttack,
+	DashAttack,
+	HeavyAttack1,
+	HeavyAttack2,
+	HeavyCharge,
+	Jigen2
+};
+
 USTRUCT(BlueprintType)
 struct FJunAttackTraceOverrideData
 {
@@ -186,6 +199,9 @@ struct FJunAttackDefenseRuleData
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HitReact")
 	EJunFrontHitReactDirectionOverride FrontHitReactDirectionOverride = EJunFrontHitReactDirectionOverride::Auto;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tutorial")
+	EJunTutorialAttackType TutorialAttackType = EJunTutorialAttackType::None;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Air Hit")
 	EJunAirHitReactType AirHitReactType = EJunAirHitReactType::Light;

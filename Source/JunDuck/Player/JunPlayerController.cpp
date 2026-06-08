@@ -688,17 +688,17 @@ void AJunPlayerController::Input_BasicAttack(const FInputActionValue& InputValue
 		return;
 	}
 
+	if (JunPlayer->TryChooseFakeDeathDie())
+	{
+		return;
+	}
+
 	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
 	{
 		return;
 	}
 
 	if (JunPlayer->IsDrinkingPotion())
-	{
-		return;
-	}
-
-	if (JunPlayer->TryChooseFakeDeathDie())
 	{
 		return;
 	}
@@ -835,17 +835,17 @@ void AJunPlayerController::Input_Defense(const FInputActionValue& InputValue)
 		return;
 	}
 
+	if (JunPlayer->TryChooseFakeDeathRevive())
+	{
+		return;
+	}
+
 	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
 	{
 		return;
 	}
 
 	if (JunPlayer->IsDrinkingPotion())
-	{
-		return;
-	}
-
-	if (JunPlayer->TryChooseFakeDeathRevive())
 	{
 		return;
 	}
@@ -978,6 +978,7 @@ void AJunPlayerController::StartTutorialTransition(AJunTutorialNPC* NPC)
 	PendingTutorialNPC = NPC;
 	TutorialTransitionState = EJunTutorialTransitionState::FadingIn;
 	TutorialEquipDelayRemainTime = 0.f;
+	TutorialFullBlackHoldRemainTime = 0.f;
 	CombatHUDWidget->StartTutorialDimBlackFadeIn();
 }
 
@@ -999,6 +1000,14 @@ void AJunPlayerController::UpdateTutorialTransition(float DeltaTime)
 		if (CombatHUDWidget->IsTutorialDimBlackOpaque())
 		{
 			FinishTutorialTransitionMove();
+			TutorialFullBlackHoldRemainTime = FMath::Max(0.f, TutorialFullBlackHoldDuration);
+			TutorialTransitionState = EJunTutorialTransitionState::FullBlackHold;
+		}
+		break;
+	case EJunTutorialTransitionState::FullBlackHold:
+		TutorialFullBlackHoldRemainTime = FMath::Max(0.f, TutorialFullBlackHoldRemainTime - DeltaTime);
+		if (TutorialFullBlackHoldRemainTime <= 0.f)
+		{
 			CombatHUDWidget->StartTutorialDimBlackFadeOut();
 			TutorialTransitionState = EJunTutorialTransitionState::FadingOut;
 		}

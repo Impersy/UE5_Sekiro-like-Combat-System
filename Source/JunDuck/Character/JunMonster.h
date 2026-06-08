@@ -90,6 +90,36 @@ struct FMonsterAttackSelection
 	float PostAttackTurnStartAngle = 55.f;
 };
 
+USTRUCT(BlueprintType)
+struct FJunMonsterCodeMoveData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Monster|CodeMove", meta = (ClampMin = "0.0"))
+	float MoveSpeed = 2500.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Monster|CodeMove", meta = (ClampMin = "0.0"))
+	float MoveStandOffDistance = 50.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Monster|CodeMove", meta = (ClampMin = "-1.0"))
+	float GroundMotionOverrideDuration = -1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Monster|CodeMove", meta = (ClampMin = "0.0"))
+	float StopDistance = 120.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Monster|CodeMove", meta = (ClampMin = "0.0"))
+	float MaxDistance = 500.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Monster|CodeMove")
+	bool bTrackTarget = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Monster|CodeMove", meta = (ClampMin = "0.0"))
+	float TrackInterpSpeed = 8.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Monster|CodeMove")
+	bool bFaceTarget = true;
+};
+
 UCLASS()
 class JUNDUCK_API AJunMonster : public AJunCharacter
 {
@@ -121,9 +151,9 @@ public:
 	virtual bool NotifyMikiriCounteredBy(class AJunPlayer* CounterPlayer);
 	bool IsExecutionReady() const;
 	bool CanBeExecutedBy(const class AJunPlayer* Player) const;
-	bool TryBeginExecutionBy(class AJunPlayer* Player);
-	void TriggerPendingExecutionMontage(bool bApplyResultImmediately = true);
-	void ApplyPendingExecutionResult();
+	virtual bool TryBeginExecutionBy(class AJunPlayer* Player);
+	virtual void TriggerPendingExecutionMontage(bool bApplyResultImmediately = true);
+	virtual void ApplyPendingExecutionResult();
 	void CancelPendingExecution();
 	void RestoreExecutionCapsuleCollisionIgnore();
 	void RestoreExecutionCapsuleRadius();
@@ -139,11 +169,12 @@ public:
 	bool IsRunning() const;
 	bool ShouldUseRunLocomotion() const;
 	virtual bool ShouldShowBossCombatHUD() const { return true; }
+	virtual bool ShouldUseMonsterWorldHUD() const;
 	EMonsterState GetCurrentState() const;
 	EMonsterMoveState GetMoveState() const;
 	int32 GetCurrentLifeCount() const;
 	int32 GetMaxLifeCount() const;
-	bool IsFinalExecution() const;
+	virtual bool IsFinalExecution() const;
 	float GetCurrentPosture() const;
 	float GetMaxPosture() const;
 	FVector2D GetCombatMoveInput() const;
@@ -152,6 +183,8 @@ public:
 	float GetDesiredMaxWalkSpeed() const;
 	void SetDesiredMoveAxes(float NewForward, float NewRight);
 	void StopCombatBGM();
+	void SetMonsterWorldHUDRevealed(bool bRevealed);
+	void UpdateMonsterWorldHUD();
 
 	virtual void BeginAttackTraceWindow(
 		EHitReactType HitReactType = EHitReactType::LightHit,
@@ -168,6 +201,8 @@ public:
 	virtual void EndKickAttackTraceWindow() override;
 	virtual void BeginWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType) override;
 	virtual void EndWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType) override;
+	void BeginMonsterCodeMoveWindow(const FJunMonsterCodeMoveData& CodeMoveData);
+	void EndMonsterCodeMoveWindow();
 	void BeginAttackFacingWindow(float InterpSpeed);
 	void EndAttackFacingWindow();
 	void BeginHitReactFacingWindow(float InterpSpeed);
@@ -206,6 +241,7 @@ protected:
 	bool PlayCutsceneWaitEquipMontage(float BlendInTime);
 	void UpdateCombatFacing(float DeltaTime);
 	void TryStartCombatTurn();
+	void UpdateCombatTurn(float DeltaTime);
 	bool TryStartTurnTowardsTargetThenState(EMonsterState NextState);
 	bool CanStartGenericTurnTowardsTarget() const;
 	bool CanStartCombatTurn() const;
@@ -240,6 +276,10 @@ protected:
 	void ClearCurrentTarget();
 	bool TryHandleDeadCurrentTarget(EMonsterState NextStateIfDead);
 	void StopAllAttackTraces();
+	void UpdateMonsterCodeMove(float DeltaTime);
+	void StopMonsterCodeMove(bool bClearVelocity = true);
+	void ApplyMonsterCodeMoveGroundMotionOverride(float Duration);
+	void RestoreMonsterCodeMoveGroundMotionOverride();
 	virtual void ResetCurrentAttackRuntimeState();
 	bool TryResolveReachableLocationToward(const FVector& DesiredLocation, FVector& OutReachableLocation) const;
 	float GetEffectiveReturnReachedDistance() const;
@@ -309,7 +349,7 @@ protected:
 	void RestoreDefaultMonsterMovementBrakingSettings();
 
 protected:
-	void AddPosture(float Amount);
+	virtual void AddPosture(float Amount);
 	void UpdatePostureRecovery(float DeltaTime);
 	bool CanRecoverPosture() const;
 	bool IsTargetMaintainingAttackPosturePressure() const;
@@ -404,6 +444,33 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
 	TObjectPtr<class UAudioComponent> CombatBGMComponent = nullptr;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI")
+	TObjectPtr<class UWidgetComponent> MonsterHUDWidgetComponent = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI")
+	FVector MonsterHUDRelativeLocation = FVector(0.f, 0.f, 170.f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI")
+	FVector2D MonsterHUDBaseDrawSize = FVector2D(320.f, 120.f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI", meta = (ClampMin = "0.0"))
+	float MonsterHUDScaleNearDistance = 500.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI", meta = (ClampMin = "0.0"))
+	float MonsterHUDScaleFarDistance = 2200.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI", meta = (ClampMin = "0.01"))
+	float MonsterHUDNearScale = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI", meta = (ClampMin = "0.01"))
+	float MonsterHUDFarScale = 0.75f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI", meta = (ClampMin = "0.0"))
+	float MonsterHUDMaxVisibleDistance = 800.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI")
+	bool bMonsterWorldHUDRevealed = false;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio|BGM", meta = (ToolTip = "Assign a looping BGM asset for boss combat."))
 	TObjectPtr<class USoundBase> CombatBGM = nullptr;
 
@@ -467,6 +534,30 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
 	bool bAttackInterruptedByHitReact = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|CodeMove")
+	bool bMonsterCodeMoveActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|CodeMove")
+	FJunMonsterCodeMoveData ActiveMonsterCodeMoveData;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|CodeMove")
+	FVector MonsterCodeMoveStartLocation = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|CodeMove")
+	bool bMonsterCodeMoveGroundMotionOverrideActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|CodeMove")
+	float MonsterCodeMoveGroundMotionOverrideRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|CodeMove")
+	float MonsterCodeMoveDefaultGroundFriction = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|CodeMove")
+	float MonsterCodeMoveDefaultBrakingDecelerationWalking = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|CodeMove")
+	float MonsterCodeMoveDefaultBrakingFrictionFactor = 0.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
 	bool bCombatTurnInProgress = false;

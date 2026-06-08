@@ -13,6 +13,7 @@ enum class EJunTutorialTransitionState : uint8
 {
 	None,
 	FadingIn,
+	FullBlackHold,
 	FadingOut,
 	WaitingForEquip
 };
@@ -86,9 +87,13 @@ private:
 	TWeakObjectPtr<class AJunTutorialNPC> PendingTutorialNPC;
 	EJunTutorialTransitionState TutorialTransitionState = EJunTutorialTransitionState::None;
 	float TutorialEquipDelayRemainTime = 0.f;
+	float TutorialFullBlackHoldRemainTime = 0.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Tutorial", meta = (ClampMin = "0"))
 	float TutorialEquipDelayAfterFadeOut = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Tutorial", meta = (ClampMin = "0"))
+	float TutorialFullBlackHoldDuration = 0.35f;
 
 protected:
 	TObjectPtr<class AJunPlayer> JunPlayer;

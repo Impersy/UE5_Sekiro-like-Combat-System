@@ -201,6 +201,8 @@ public: // External Gameplay API
 	bool TryChooseFakeDeathRevive();
 	bool TryStartDrinkPotion();
 	bool TryStartJigen();
+	void SetHpForTutorial(int32 NewHp);
+	void SetPostureForTutorial(float NewPosture);
 	void ApplyJumpCounterStompBounce(float UpVelocity, float BackwardVelocity);
 	void ApplyJumpCounterStompBounce(float UpVelocity, float BackwardVelocity, float BackwardMoveDuration);
 	void ApplyJumpCounterStompHit(

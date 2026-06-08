@@ -38,6 +38,7 @@ UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Death_Present, "Event.Notify.Death.Present")
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Boss_Clear, "Event.Notify.Boss.Clear");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Boss_StopCombatBGM, "Event.Notify.Boss.StopCombatBGM");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Boss_DangerAttack, "Event.Notify.Boss.DangerAttack");
+UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Monster_DangerAttack, "Event.Notify.Monster.DangerAttack");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Wukong_ParryCounter, "Event.Notify.Wukong.ParryCounter");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Wukong_ParryCounterFollowUpDecision, "Event.Notify.Wukong.ParryCounterFollowUpDecision");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Wukong_BowAttackRestoreWeapon, "Event.Notify.Wukong.BowAttackRestoreWeapon");

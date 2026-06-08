@@ -6,6 +6,7 @@
 #include "Camera/CameraComponent.h"
 #include "Camera/CameraShakeBase.h"
 #include "Character/JunMonster.h"
+#include "Character/JunTutorialNPC.h"
 #include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
@@ -22,6 +23,7 @@
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "Engine/Engine.h"
 #include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
@@ -319,6 +321,19 @@ void AJunPlayer::OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker)
 		PlayHitDamageSound();
 		FinishDrinkPotion(true);
 	}
+
+	if (Hp <= 0)
+	{
+		for (TActorIterator<AJunTutorialNPC> It(GetWorld()); It; ++It)
+		{
+			if (It->IsTutorialInProgress())
+			{
+				Hp = FMath::Clamp(1, 1, MaxHp);
+				return;
+			}
+		}
+	}
+
 	if (Hp > 0)
 	{
 		return;
@@ -366,7 +381,22 @@ bool AJunPlayer::TryStartDrinkPotion()
 
 	CurrentDrinkPotionCharges = FMath::Max(0, CurrentDrinkPotionCharges - 1);
 	ApplyDrinkPotionHeal();
+	if (AJunTutorialNPC* TutorialNPC = Cast<AJunTutorialNPC>(LockOnTarget.Get()))
+	{
+		TutorialNPC->NotifyTutorialDrinkPotion(this);
+	}
 	return true;
+}
+
+void AJunPlayer::SetHpForTutorial(int32 NewHp)
+{
+	Hp = FMath::Clamp(NewHp, 1, FMath::Max(1, MaxHp));
+}
+
+void AJunPlayer::SetPostureForTutorial(float NewPosture)
+{
+	CurrentPosture = FMath::Clamp(NewPosture, 0.f, FMath::Max(0.f, MaxPosture));
+	PostureRecoveryDelayRemainTime = 0.f;
 }
 
 bool AJunPlayer::CanStartDrinkPotion() const
@@ -2616,6 +2646,10 @@ void AJunPlayer::ReceiveHit(
 				AttackingMonster->NotifyAttackParriedBy(this, 1.f, DefenseRuleData);
 			}
 		}
+		if (AJunTutorialNPC* TutorialNPC = Cast<AJunTutorialNPC>(DamageCauser))
+		{
+			TutorialNPC->NotifyTutorialParrySuccess(this, GetCharacterMovement() && GetCharacterMovement()->IsFalling());
+		}
 		return;
 	case EJunPlayerHitResolveResult::NormalParrySuccess:
 		PlayDefenseSound(EJunDefenseSoundType::NormalParry);
@@ -2641,6 +2675,10 @@ void AJunPlayer::ReceiveHit(
 			AddPosture(NormalParryPostureGain);
 		}
 		StartParrySuccess();
+		if (AJunTutorialNPC* TutorialNPC = Cast<AJunTutorialNPC>(DamageCauser))
+		{
+			TutorialNPC->NotifyTutorialParrySuccess(this, GetCharacterMovement() && GetCharacterMovement()->IsFalling());
+		}
 		return;
 	case EJunPlayerHitResolveResult::GuardBlock:
 		PlayDefenseSound(EJunDefenseSoundType::GuardHit);
@@ -4382,6 +4420,10 @@ void AJunPlayer::ApplyJumpCounterStompHit(
 		DamageData.PoiseDamage);
 
 	TargetMonster->AddPosture(JumpCounterStompPostureGain);
+	if (AJunTutorialNPC* TutorialNPC = Cast<AJunTutorialNPC>(TargetMonster))
+	{
+		TutorialNPC->NotifyTutorialJumpCounterStompSuccess(this);
+	}
 }
 
 void AJunPlayer::FinishJumpCounterStompFollowUp(bool bApplyBounce)
@@ -8024,6 +8066,10 @@ bool AJunPlayer::TryHandleMikiriCounter(AActor* DamageCauser)
 	MikiriCounterWindowRemainTime = 0.f;
 	PlayDefenseSound(EJunDefenseSoundType::PerfectParry);
 	PlayDefenseCameraShake(MikiriParryCameraShakeScale);
+	if (AJunTutorialNPC* TutorialNPC = Cast<AJunTutorialNPC>(DamageCauser))
+	{
+		TutorialNPC->NotifyTutorialMikiriSuccess(this);
+	}
 	StartMikiriCounterSuccess(DamageCauser);
 	return true;
 }
@@ -10214,6 +10260,11 @@ void AJunPlayer::StartLockOn(AJunCharacter* NewTarget)
 	bLockOnCloseAimStabilizationActive = false;
 
 	GetCharacterMovement()->bOrientRotationToMovement = false;
+
+	if (AJunTutorialNPC* TutorialNPC = Cast<AJunTutorialNPC>(NewTarget))
+	{
+		TutorialNPC->NotifyTutorialLockOn(this);
+	}
 }
 
 void AJunPlayer::EndLockOn()

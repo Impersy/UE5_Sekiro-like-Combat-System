@@ -467,13 +467,6 @@ void AWukongBoss::HandleGameplayEventNotify(FGameplayTag EventTag)
 	{
 		EndBowAttackPresentation();
 	}
-	else if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Boss_DangerAttack))
-	{
-		if (AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(UGameplayStatics::GetPlayerController(this, 0)))
-		{
-			JunPlayerController->PlayDangerMarkerOnPlayer();
-		}
-	}
 }
 
 void AWukongBoss::HandleHitTurnDecisionPoint()

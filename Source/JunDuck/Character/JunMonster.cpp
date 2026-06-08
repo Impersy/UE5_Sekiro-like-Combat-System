@@ -6,6 +6,7 @@
 #include "Character/JunPlayer.h"
 #include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/WidgetComponent.h"
 #include "Engine/Engine.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "JunGameplayTags.h"
@@ -15,6 +16,7 @@
 #include "Player/JunPlayerController.h"
 #include "System/JunBGMManager.h"
 #include "System/JunTimeEffectSubsystem.h"
+#include "UI/JunMonsterHUDWidget.h"
 #include "Weapon/ArrowProjectile.h"
 #include "Weapon/WeaponActor.h"
 
@@ -220,6 +222,14 @@ AJunMonster::AJunMonster()
 	CombatBGMComponent->SetupAttachment(RootComponent);
 	CombatBGMComponent->bAutoActivate = false;
 
+	MonsterHUDWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("MonsterHUDWidget"));
+	MonsterHUDWidgetComponent->SetupAttachment(RootComponent);
+	MonsterHUDWidgetComponent->SetRelativeLocation(MonsterHUDRelativeLocation);
+	MonsterHUDWidgetComponent->SetWidgetSpace(EWidgetSpace::Screen);
+	MonsterHUDWidgetComponent->SetDrawSize(MonsterHUDBaseDrawSize);
+	MonsterHUDWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	MonsterHUDWidgetComponent->SetHiddenInGame(true);
+
 	AIControllerClass = AJunAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 
@@ -245,6 +255,7 @@ void AJunMonster::BeginPlay()
 	ExecutionReadyRemainTime = 0.f;
 	CurrentExecutionInstigator = nullptr;
 	CurrentExecutionMontage = nullptr;
+	bMonsterWorldHUDRevealed = false;
 
 	// 팀 설정
 	SetTeamTag(JunGameplayTags::Team_Enemy);
@@ -272,6 +283,12 @@ void AJunMonster::BeginPlay()
 	{
 		SetMonsterState(EMonsterState::Idle);
 	}
+
+	if (MonsterHUDWidgetComponent)
+	{
+		MonsterHUDWidgetComponent->SetDrawSize(MonsterHUDBaseDrawSize);
+	}
+	UpdateMonsterWorldHUD();
 }
 
 void AJunMonster::Tick(float DeltaTime)
@@ -314,7 +331,10 @@ void AJunMonster::Tick(float DeltaTime)
 	}
 
 	UpdateAttack(DeltaTime);
+	UpdateCombatTurn(DeltaTime);
+	UpdateMonsterCodeMove(DeltaTime);
 	UpdatePostureRecovery(DeltaTime);
+	UpdateMonsterWorldHUD();
 
 	// 몬스터는 "상위 상태 업데이트"와 "피격 리액션 타이머"를 매 프레임 병렬로 관리한다.
 	StateTime += DeltaTime;
@@ -329,6 +349,16 @@ void AJunMonster::HandleGameplayEventNotify(FGameplayTag EventTag)
 	if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Boss_StopCombatBGM))
 	{
 		StopCombatBGM();
+		return;
+	}
+
+	if (EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Monster_DangerAttack) ||
+		EventTag.MatchesTagExact(JunGameplayTags::Event_Notify_Boss_DangerAttack))
+	{
+		if (AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(UGameplayStatics::GetPlayerController(this, 0)))
+		{
+			JunPlayerController->PlayDangerMarkerOnPlayer();
+		}
 		return;
 	}
 
@@ -535,6 +565,7 @@ void AJunMonster::OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker)
 	if (AppliedDamage > 0)
 	{
 		PlayHitDamageSound();
+		SetMonsterWorldHUDRevealed(true);
 	}
 
 	if (Hp <= 0)
@@ -560,6 +591,73 @@ void AJunMonster::NotifyAttackParriedBy(
 bool AJunMonster::NotifyMikiriCounteredBy(AJunPlayer* CounterPlayer)
 {
 	return false;
+}
+
+bool AJunMonster::ShouldUseMonsterWorldHUD() const
+{
+	return !ShouldShowBossCombatHUD();
+}
+
+void AJunMonster::SetMonsterWorldHUDRevealed(bool bRevealed)
+{
+	if (!ShouldUseMonsterWorldHUD())
+	{
+		bRevealed = false;
+	}
+
+	bMonsterWorldHUDRevealed = bRevealed;
+	UpdateMonsterWorldHUD();
+}
+
+void AJunMonster::UpdateMonsterWorldHUD()
+{
+	if (!MonsterHUDWidgetComponent)
+	{
+		return;
+	}
+
+	float CameraDistance = 0.f;
+	if (APlayerCameraManager* CameraManager = UGameplayStatics::GetPlayerCameraManager(this, 0))
+	{
+		CameraDistance = FVector::Dist(CameraManager->GetCameraLocation(), GetActorLocation());
+	}
+
+	const bool bWithinVisibleDistance =
+		MonsterHUDMaxVisibleDistance <= 0.f ||
+		CameraDistance <= MonsterHUDMaxVisibleDistance;
+
+	const bool bShouldShow =
+		ShouldUseMonsterWorldHUD() &&
+		bMonsterWorldHUDRevealed &&
+		bWithinVisibleDistance &&
+		CurrentState != EMonsterState::Dead &&
+		!Is_Dead();
+
+	MonsterHUDWidgetComponent->SetHiddenInGame(!bShouldShow);
+	if (bShouldShow)
+	{
+		float ScaleAlpha = 0.f;
+		const float NearDistance = FMath::Max(0.f, MonsterHUDScaleNearDistance);
+		const float FarDistance = FMath::Max(NearDistance + KINDA_SMALL_NUMBER, MonsterHUDScaleFarDistance);
+		ScaleAlpha = FMath::Clamp((CameraDistance - NearDistance) / (FarDistance - NearDistance), 0.f, 1.f);
+
+		const float TargetScale = FMath::Lerp(
+			FMath::Max(0.01f, MonsterHUDNearScale),
+			FMath::Max(0.01f, MonsterHUDFarScale),
+			ScaleAlpha);
+		MonsterHUDWidgetComponent->SetDrawSize(MonsterHUDBaseDrawSize * TargetScale);
+	}
+
+	UJunMonsterHUDWidget* MonsterHUDWidget = Cast<UJunMonsterHUDWidget>(MonsterHUDWidgetComponent->GetWidget());
+	if (!MonsterHUDWidget)
+	{
+		return;
+	}
+
+	MonsterHUDWidget->SetMonsterHUDVisible(bShouldShow);
+	MonsterHUDWidget->SetMonsterHealth(Hp, MaxHp);
+	MonsterHUDWidget->SetMonsterPosture(CurrentPosture, MaxPosture);
+	MonsterHUDWidget->SetMonsterLifeState(CurrentLifeCount, MaxLifeCount);
 }
 
 bool AJunMonster::IsExecutionReady() const
@@ -1010,6 +1108,52 @@ void AJunMonster::EndWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentTyp
 	}
 }
 
+void AJunMonster::BeginMonsterCodeMoveWindow(const FJunMonsterCodeMoveData& CodeMoveData)
+{
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!CurrentTarget || !MovementComponent || CodeMoveData.MoveSpeed <= 0.f)
+	{
+		StopMonsterCodeMove(true);
+		return;
+	}
+
+	FVector ToTarget = CurrentTarget->GetActorLocation() - GetActorLocation();
+	ToTarget.Z = 0.f;
+	if (ToTarget.IsNearlyZero())
+	{
+		StopMonsterCodeMove(true);
+		return;
+	}
+
+	const float StopDistance = FMath::Max(CodeMoveData.MoveStandOffDistance, CodeMoveData.StopDistance);
+	if (ToTarget.Size() <= StopDistance)
+	{
+		StopMonsterCodeMove(true);
+		return;
+	}
+
+	ActiveMonsterCodeMoveData = CodeMoveData;
+	bMonsterCodeMoveActive = true;
+	MonsterCodeMoveStartLocation = GetActorLocation();
+	ApplyMonsterCodeMoveGroundMotionOverride(CodeMoveData.GroundMotionOverrideDuration);
+
+	const FVector MoveDirection = ToTarget.GetSafeNormal();
+	FVector NewVelocity = MovementComponent->Velocity;
+	NewVelocity.X = MoveDirection.X * CodeMoveData.MoveSpeed;
+	NewVelocity.Y = MoveDirection.Y * CodeMoveData.MoveSpeed;
+	MovementComponent->Velocity = NewVelocity;
+
+	if (CodeMoveData.bFaceTarget)
+	{
+		SetActorRotation(MoveDirection.Rotation());
+	}
+}
+
+void AJunMonster::EndMonsterCodeMoveWindow()
+{
+	StopMonsterCodeMove(true);
+}
+
 // Top-level state machine
 
 void AJunMonster::SetMonsterState(EMonsterState NewState)
@@ -1244,6 +1388,7 @@ void AJunMonster::EnterDeadState()
 	CombatMoveInput = FVector2D::ZeroVector;
 	CancelCombatTurn();
 	ResetCombatTurnState();
+	StopMonsterCodeMove(true);
 	GetCharacterMovement()->bOrientRotationToMovement = true;
 	AddGameplayTag(JunGameplayTags::State_Condition_Dead);
 	StopAIMovement();
@@ -1576,6 +1721,27 @@ void AJunMonster::UpdateCombat(float DeltaTime)
 void AJunMonster::TryStartCombatTurn()
 {
 	TryStartCombatTurnWithThreshold(CombatTurnStartAngle);
+}
+
+void AJunMonster::UpdateCombatTurn(float DeltaTime)
+{
+	if (!IsCombatTurnPlaying())
+	{
+		return;
+	}
+
+	const bool bPendingMovementState =
+		bHasPendingStateAfterCombatTurn &&
+		(PendingStateAfterCombatTurn == EMonsterState::Patrol ||
+			PendingStateAfterCombatTurn == EMonsterState::Chase ||
+			PendingStateAfterCombatTurn == EMonsterState::Return);
+
+	if (bEarlyBlendOutCombatTurnOnTargetYaw &&
+		bPendingMovementState &&
+		FMath::Abs(GetCombatTargetYawDelta()) <= CombatTurnEarlyBlendOutYawTolerance)
+	{
+		FinishCombatTurnEarly(CombatTurnEarlyBlendOutTime);
+	}
 }
 
 bool AJunMonster::TryStartTurnTowardsTargetThenState(EMonsterState NextState)
@@ -2201,6 +2367,7 @@ bool AJunMonster::TryHandleDeadCurrentTarget(EMonsterState NextStateIfDead)
 
 void AJunMonster::StopAllAttackTraces()
 {
+	StopMonsterCodeMove(true);
 	EndAttackTraceWindow();
 	EndKickAttackTraceWindow();
 
@@ -2214,6 +2381,142 @@ void AJunMonster::StopAllAttackTraces()
 		AttachedArrow->Destroy();
 		AttachedArrow = nullptr;
 	}
+}
+
+void AJunMonster::UpdateMonsterCodeMove(float DeltaTime)
+{
+	if (!bMonsterCodeMoveActive)
+	{
+		return;
+	}
+
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!CurrentTarget || !MovementComponent)
+	{
+		StopMonsterCodeMove(true);
+		return;
+	}
+
+	FVector ToTarget = CurrentTarget->GetActorLocation() - GetActorLocation();
+	ToTarget.Z = 0.f;
+	if (ToTarget.IsNearlyZero())
+	{
+		StopMonsterCodeMove(true);
+		return;
+	}
+
+	const float StopDistance = FMath::Max(ActiveMonsterCodeMoveData.MoveStandOffDistance, ActiveMonsterCodeMoveData.StopDistance);
+	if (ToTarget.Size() <= StopDistance)
+	{
+		StopMonsterCodeMove(true);
+		return;
+	}
+
+	if (ActiveMonsterCodeMoveData.MaxDistance > 0.f &&
+		FVector::Dist2D(MonsterCodeMoveStartLocation, GetActorLocation()) >= ActiveMonsterCodeMoveData.MaxDistance)
+	{
+		StopMonsterCodeMove(true);
+		return;
+	}
+
+	if (bMonsterCodeMoveGroundMotionOverrideActive && MonsterCodeMoveGroundMotionOverrideRemainTime > 0.f)
+	{
+		MonsterCodeMoveGroundMotionOverrideRemainTime = FMath::Max(0.f, MonsterCodeMoveGroundMotionOverrideRemainTime - DeltaTime);
+		if (MonsterCodeMoveGroundMotionOverrideRemainTime <= 0.f)
+		{
+			RestoreMonsterCodeMoveGroundMotionOverride();
+		}
+	}
+
+	FVector Velocity = MovementComponent->Velocity;
+	FVector MoveDirection = FVector(Velocity.X, Velocity.Y, 0.f).GetSafeNormal();
+	if (MoveDirection.IsNearlyZero() || ActiveMonsterCodeMoveData.bTrackTarget)
+	{
+		MoveDirection = ToTarget.GetSafeNormal();
+	}
+
+	if (ActiveMonsterCodeMoveData.bTrackTarget && ActiveMonsterCodeMoveData.TrackInterpSpeed > 0.f)
+	{
+		const FVector CurrentHorizontalVelocity(Velocity.X, Velocity.Y, 0.f);
+		const FVector TargetHorizontalVelocity = ToTarget.GetSafeNormal() * ActiveMonsterCodeMoveData.MoveSpeed;
+		const FVector NewHorizontalVelocity = FMath::VInterpTo(
+			CurrentHorizontalVelocity,
+			TargetHorizontalVelocity,
+			DeltaTime,
+			ActiveMonsterCodeMoveData.TrackInterpSpeed);
+		Velocity.X = NewHorizontalVelocity.X;
+		Velocity.Y = NewHorizontalVelocity.Y;
+	}
+	else
+	{
+		Velocity.X = MoveDirection.X * ActiveMonsterCodeMoveData.MoveSpeed;
+		Velocity.Y = MoveDirection.Y * ActiveMonsterCodeMoveData.MoveSpeed;
+	}
+
+	MovementComponent->Velocity = Velocity;
+
+	if (ActiveMonsterCodeMoveData.bFaceTarget)
+	{
+		SetActorRotation(ToTarget.GetSafeNormal().Rotation());
+	}
+}
+
+void AJunMonster::StopMonsterCodeMove(bool bClearVelocity)
+{
+	if (!bMonsterCodeMoveActive)
+	{
+		RestoreMonsterCodeMoveGroundMotionOverride();
+		return;
+	}
+
+	bMonsterCodeMoveActive = false;
+	MonsterCodeMoveStartLocation = FVector::ZeroVector;
+	RestoreMonsterCodeMoveGroundMotionOverride();
+
+	if (bClearVelocity)
+	{
+		if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+		{
+			FVector Velocity = MovementComponent->Velocity;
+			Velocity.X = 0.f;
+			Velocity.Y = 0.f;
+			MovementComponent->Velocity = Velocity;
+		}
+	}
+}
+
+void AJunMonster::ApplyMonsterCodeMoveGroundMotionOverride(float Duration)
+{
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent || bMonsterCodeMoveGroundMotionOverrideActive)
+	{
+		return;
+	}
+
+	MonsterCodeMoveDefaultGroundFriction = MovementComponent->GroundFriction;
+	MonsterCodeMoveDefaultBrakingDecelerationWalking = MovementComponent->BrakingDecelerationWalking;
+	MonsterCodeMoveDefaultBrakingFrictionFactor = MovementComponent->BrakingFrictionFactor;
+
+	MovementComponent->GroundFriction = 0.f;
+	MovementComponent->BrakingDecelerationWalking = 0.f;
+	MovementComponent->BrakingFrictionFactor = 0.f;
+	bMonsterCodeMoveGroundMotionOverrideActive = true;
+	MonsterCodeMoveGroundMotionOverrideRemainTime = Duration;
+}
+
+void AJunMonster::RestoreMonsterCodeMoveGroundMotionOverride()
+{
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent || !bMonsterCodeMoveGroundMotionOverrideActive)
+	{
+		return;
+	}
+
+	MovementComponent->GroundFriction = MonsterCodeMoveDefaultGroundFriction;
+	MovementComponent->BrakingDecelerationWalking = MonsterCodeMoveDefaultBrakingDecelerationWalking;
+	MovementComponent->BrakingFrictionFactor = MonsterCodeMoveDefaultBrakingFrictionFactor;
+	bMonsterCodeMoveGroundMotionOverrideActive = false;
+	MonsterCodeMoveGroundMotionOverrideRemainTime = 0.f;
 }
 
 void AJunMonster::ResetCurrentAttackRuntimeState()
@@ -2350,6 +2653,7 @@ void AJunMonster::FinishAttack()
 		return;
 	}
 
+	StopMonsterCodeMove(true);
 	bIsAttacking = false;
 	AttackTime = 0.f;
 	AttackFacingRemainTime = 0.f;
@@ -2711,6 +3015,7 @@ void AJunMonster::StartHitReact(EHitReactType NewHitReact, ECharacterHitReactDir
 
 	if (bIsAttacking)
 	{
+		StopMonsterCodeMove(true);
 		bAttackInterruptedByHitReact = true;
 		bIsAttacking = false;
 		AttackTime = 0.f;
@@ -3199,6 +3504,7 @@ void AJunMonster::AddPosture(float Amount)
 
 	CurrentPosture = FMath::Clamp(CurrentPosture + Amount, 0.f, MaxPosture);
 	PostureRecoveryDelayRemainTime = PostureRecoveryDelay;
+	SetMonsterWorldHUDRevealed(true);
 	if (CurrentPosture >= MaxPosture)
 	{
 		if (ShouldShowBossCombatHUD())
@@ -3206,6 +3512,13 @@ void AJunMonster::AddPosture(float Amount)
 			if (AJunPlayerController* JunPlayerController = Cast<AJunPlayerController>(UGameplayStatics::GetPlayerController(this, 0)))
 			{
 				JunPlayerController->PlayBossPostureBreakGlow();
+			}
+		}
+		else if (MonsterHUDWidgetComponent)
+		{
+			if (UJunMonsterHUDWidget* MonsterHUDWidget = Cast<UJunMonsterHUDWidget>(MonsterHUDWidgetComponent->GetWidget()))
+			{
+				MonsterHUDWidget->PlayMonsterPostureBreakGlow();
 			}
 		}
 		StartExecutionReady();
