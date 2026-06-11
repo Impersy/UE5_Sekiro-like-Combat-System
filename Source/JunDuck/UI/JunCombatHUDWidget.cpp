@@ -2,9 +2,13 @@
 
 #include "Components/ProgressBar.h"
 #include "Components/Image.h"
+#include "Components/PanelWidget.h"
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
 #include "Components/Widget.h"
+#include "Character/JunTutorialNPC.h"
+#include "MediaPlayer.h"
+#include "MediaSource.h"
 
 void UJunCombatHUDWidget::NativeConstruct()
 {
@@ -25,6 +29,18 @@ void UJunCombatHUDWidget::NativeConstruct()
 	ApplyBossLifeWidgets();
 	HideDialogue();
 	ApplyWidgetOpacity(Tutorial_DimBlack, 0.f);
+	HideTutorialGuides();
+	HideTutorialTask();
+	if (PlayerPostureGuideMediaPlayer)
+	{
+		PlayerPostureGuideMediaPlayer->OnMediaOpened.RemoveDynamic(this, &UJunCombatHUDWidget::HandleTutorialGuideMediaOpened);
+		PlayerPostureGuideMediaPlayer->OnMediaOpened.AddDynamic(this, &UJunCombatHUDWidget::HandleTutorialGuideMediaOpened);
+	}
+	if (DangerAttackGuideSubMediaPlayer)
+	{
+		DangerAttackGuideSubMediaPlayer->OnMediaOpened.RemoveDynamic(this, &UJunCombatHUDWidget::HandleTutorialGuideSubMediaOpened);
+		DangerAttackGuideSubMediaPlayer->OnMediaOpened.AddDynamic(this, &UJunCombatHUDWidget::HandleTutorialGuideSubMediaOpened);
+	}
 	if (Player_RedGlow_Root)
 	{
 		Player_RedGlow_Root->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
@@ -46,6 +62,272 @@ void UJunCombatHUDWidget::NativeConstruct()
 	OnBossDelayedHealthChanged(BossDelayedHealthPercent);
 }
 
+void UJunCombatHUDWidget::NativeDestruct()
+{
+	if (PlayerPostureGuideMediaPlayer)
+	{
+		PlayerPostureGuideMediaPlayer->OnMediaOpened.RemoveDynamic(this, &UJunCombatHUDWidget::HandleTutorialGuideMediaOpened);
+		PlayerPostureGuideMediaPlayer->Close();
+	}
+	if (DangerAttackGuideSubMediaPlayer)
+	{
+		DangerAttackGuideSubMediaPlayer->OnMediaOpened.RemoveDynamic(this, &UJunCombatHUDWidget::HandleTutorialGuideSubMediaOpened);
+		DangerAttackGuideSubMediaPlayer->Close();
+	}
+
+	Super::NativeDestruct();
+}
+
+void UJunCombatHUDWidget::ShowPlayerPostureGuide()
+{
+	HideTutorialGuides();
+	if (Tutorial_PlayerPosture_Guide)
+	{
+		Tutorial_PlayerPosture_Guide->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	if (Video_1)
+	{
+		Video_1->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+
+	if (PlayerPostureGuideMediaPlayer && PlayerPostureGuideMediaSource)
+	{
+		PlayerPostureGuideMediaPlayer->Close();
+		PlayerPostureGuideMediaPlayer->SetLooping(true);
+		PlayerPostureGuideMediaPlayer->OpenSource(PlayerPostureGuideMediaSource);
+	}
+}
+
+void UJunCombatHUDWidget::HidePlayerPostureGuide()
+{
+	HideTutorialGuides();
+}
+
+void UJunCombatHUDWidget::ShowMonsterPostureGuide()
+{
+	HideTutorialGuides();
+	if (Tutorial_MonsterPosture_Guide)
+	{
+		Tutorial_MonsterPosture_Guide->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	if (Video_2)
+	{
+		Video_2->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+
+	if (PlayerPostureGuideMediaPlayer && MonsterPostureGuideMediaSource)
+	{
+		PlayerPostureGuideMediaPlayer->SetLooping(true);
+		PlayerPostureGuideMediaPlayer->OpenSource(MonsterPostureGuideMediaSource);
+	}
+}
+
+void UJunCombatHUDWidget::ShowDangerAttackGuide()
+{
+	HideTutorialGuides();
+	if (Tutorial_DangerAttack_Guide)
+	{
+		Tutorial_DangerAttack_Guide->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	if (Video_3)
+	{
+		Video_3->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	if (Video_3_Sub)
+	{
+		Video_3_Sub->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+
+	if (PlayerPostureGuideMediaPlayer && DangerAttackGuideMediaSource)
+	{
+		PlayerPostureGuideMediaPlayer->SetLooping(true);
+		PlayerPostureGuideMediaPlayer->OpenSource(DangerAttackGuideMediaSource);
+	}
+	if (DangerAttackGuideSubMediaPlayer && DangerAttackGuideSubMediaSource)
+	{
+		DangerAttackGuideSubMediaPlayer->SetLooping(true);
+		DangerAttackGuideSubMediaPlayer->OpenSource(DangerAttackGuideSubMediaSource);
+	}
+}
+
+void UJunCombatHUDWidget::HideTutorialGuides()
+{
+	if (PlayerPostureGuideMediaPlayer)
+	{
+		PlayerPostureGuideMediaPlayer->Close();
+	}
+	if (DangerAttackGuideSubMediaPlayer)
+	{
+		DangerAttackGuideSubMediaPlayer->Close();
+	}
+	if (Tutorial_PlayerPosture_Guide)
+	{
+		Tutorial_PlayerPosture_Guide->SetVisibility(ESlateVisibility::Hidden);
+	}
+	if (Video_1)
+	{
+		Video_1->SetVisibility(ESlateVisibility::Hidden);
+	}
+	if (Tutorial_MonsterPosture_Guide)
+	{
+		Tutorial_MonsterPosture_Guide->SetVisibility(ESlateVisibility::Hidden);
+	}
+	if (Video_2)
+	{
+		Video_2->SetVisibility(ESlateVisibility::Hidden);
+	}
+	if (Tutorial_DangerAttack_Guide)
+	{
+		Tutorial_DangerAttack_Guide->SetVisibility(ESlateVisibility::Hidden);
+	}
+	if (Video_3)
+	{
+		Video_3->SetVisibility(ESlateVisibility::Hidden);
+	}
+	if (Video_3_Sub)
+	{
+		Video_3_Sub->SetVisibility(ESlateVisibility::Hidden);
+	}
+}
+
+void UJunCombatHUDWidget::HandleTutorialGuideMediaOpened(FString OpenedUrl)
+{
+	if (PlayerPostureGuideMediaPlayer)
+	{
+		PlayerPostureGuideMediaPlayer->Play();
+	}
+}
+
+void UJunCombatHUDWidget::HandleTutorialGuideSubMediaOpened(FString OpenedUrl)
+{
+	if (DangerAttackGuideSubMediaPlayer)
+	{
+		DangerAttackGuideSubMediaPlayer->Play();
+	}
+}
+
+void UJunCombatHUDWidget::ShowTutorialTask(int32 TutorialTaskType)
+{
+	HideTutorialTask();
+
+	UWidget* TaskWidget = FindTutorialTaskWidget(TutorialTaskType);
+	if (!TaskWidget)
+	{
+		return;
+	}
+
+	if (Tutorial_Task)
+	{
+		Tutorial_Task->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	if (Task_BackGround)
+	{
+		Task_BackGround->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	SetTutorialTaskWidgetVisibility(TaskWidget, true);
+}
+
+void UJunCombatHUDWidget::HideTutorialTask()
+{
+	if (Tutorial_Task)
+	{
+		const int32 ChildCount = Tutorial_Task->GetChildrenCount();
+		for (int32 ChildIndex = 0; ChildIndex < ChildCount; ++ChildIndex)
+		{
+			if (UWidget* ChildWidget = Tutorial_Task->GetChildAt(ChildIndex))
+			{
+				ChildWidget->SetVisibility(ESlateVisibility::Hidden);
+			}
+		}
+	}
+
+	// Keep the name-based fallback for task containers nested below another panel.
+	for (int32 TaskType = static_cast<int32>(EJunTutorialTaskType::LockOn);
+		 TaskType <= static_cast<int32>(EJunTutorialTaskType::Execution);
+		 ++TaskType)
+	{
+		SetTutorialTaskWidgetVisibility(FindTutorialTaskWidget(TaskType), false);
+	}
+
+	if (Task_BackGround)
+	{
+		Task_BackGround->SetVisibility(ESlateVisibility::Hidden);
+	}
+	if (Tutorial_Task)
+	{
+		Tutorial_Task->SetVisibility(ESlateVisibility::Hidden);
+	}
+}
+
+UWidget* UJunCombatHUDWidget::FindTutorialTaskWidget(int32 TutorialTaskType) const
+{
+	const EJunTutorialTaskType TaskType = static_cast<EJunTutorialTaskType>(TutorialTaskType);
+	FName WidgetName = NAME_None;
+
+	switch (TaskType)
+	{
+	case EJunTutorialTaskType::LockOn:
+		WidgetName = TEXT("Task_Lock On");
+		break;
+	case EJunTutorialTaskType::BasicAttackComboFinalHit:
+		WidgetName = TEXT("Task_BasicAttack");
+		break;
+	case EJunTutorialTaskType::JumpAttackHit:
+		WidgetName = TEXT("Task_JumpAttack");
+		break;
+	case EJunTutorialTaskType::DashAttackHit:
+		WidgetName = TEXT("Task_DashAttack");
+		break;
+	case EJunTutorialTaskType::HeavyAttackComboHit:
+		WidgetName = TEXT("Task_HeavyAttack_Combo");
+		break;
+	case EJunTutorialTaskType::HeavyChargeHit:
+		WidgetName = TEXT("Task_HeavyAttack_Charge");
+		break;
+	case EJunTutorialTaskType::JigenSecondHit:
+		WidgetName = TEXT("Task_Jigen");
+		break;
+	case EJunTutorialTaskType::DrinkPotion:
+		WidgetName = TEXT("Task_Heal");
+		break;
+	case EJunTutorialTaskType::GuardPostureRecovery:
+		WidgetName = TEXT("Task_Guarding");
+		break;
+	case EJunTutorialTaskType::ParryThreeTimes:
+		WidgetName = TEXT("Task_Parry");
+		break;
+	case EJunTutorialTaskType::AirParryOnce:
+		WidgetName = TEXT("Task_JumpParry");
+		break;
+	case EJunTutorialTaskType::MikiriCounter:
+		WidgetName = TEXT("Task_Mikiri_Counter");
+		break;
+	case EJunTutorialTaskType::JumpCounterStomp:
+		WidgetName = TEXT("Task_JumpCounterStomp");
+		break;
+	case EJunTutorialTaskType::Execution:
+		WidgetName = TEXT("Task_Execution");
+		break;
+	default:
+		return nullptr;
+	}
+
+	UWidget* Result = GetWidgetFromName(WidgetName);
+	if (!Result && TaskType == EJunTutorialTaskType::LockOn)
+	{
+		Result = GetWidgetFromName(TEXT("Task_LockOn"));
+	}
+	return Result;
+}
+
+void UJunCombatHUDWidget::SetTutorialTaskWidgetVisibility(UWidget* TaskWidget, bool bVisible) const
+{
+	if (TaskWidget)
+	{
+		TaskWidget->SetVisibility(bVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
+}
+
 void UJunCombatHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
@@ -58,6 +340,17 @@ void UJunCombatHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 	UpdateDeathUI(InDeltaTime);
 	UpdateDialogueUI(InDeltaTime);
 	UpdateTutorialDimBlackUI(InDeltaTime);
+
+	if (bDialogueCombatUIHidden)
+	{
+		for (const TPair<TWeakObjectPtr<UWidget>, ESlateVisibility>& Pair : DialogueCombatWidgetVisibilities)
+		{
+			if (UWidget* Widget = Pair.Key.Get())
+			{
+				Widget->SetVisibility(ESlateVisibility::Hidden);
+			}
+		}
+	}
 }
 
 void UJunCombatHUDWidget::SetPotionCount(int32 CurrentPotionCount)
@@ -74,6 +367,7 @@ void UJunCombatHUDWidget::ToggleControlsVisibility()
 
 void UJunCombatHUDWidget::ShowDialogue(const FText& DialogueText, const FText& SpeakerName)
 {
+	SetDialogueCombatUIHidden(true);
 	CurrentDialogueText = DialogueText;
 	CurrentDialogueSpeakerName = SpeakerName;
 	TargetDialogueBackgroundOpacity = DialogueBackgroundTargetOpacity;
@@ -88,6 +382,55 @@ void UJunCombatHUDWidget::HideDialogue()
 	TargetDialogueBackgroundOpacity = 0.f;
 	ApplyDialogueText();
 	ApplyDialogueVisibility();
+	SetDialogueCombatUIHidden(false);
+}
+
+void UJunCombatHUDWidget::SetDialogueCombatUIHidden(bool bHidden)
+{
+	if (bDialogueCombatUIHidden == bHidden)
+	{
+		return;
+	}
+
+	bDialogueCombatUIHidden = bHidden;
+	if (bHidden)
+	{
+		DialogueCombatWidgetVisibilities.Reset();
+		CacheAndHideDialogueCombatWidget(BossHealthRoot);
+		CacheAndHideDialogueCombatWidget(PlayerHealthRoot);
+		CacheAndHideDialogueCombatWidget(BossPostureRoot);
+		CacheAndHideDialogueCombatWidget(PlayerPostureRoot);
+		CacheAndHideDialogueCombatWidget(Life_1_Root);
+		CacheAndHideDialogueCombatWidget(Life_2_Root);
+		CacheAndHideDialogueCombatWidget(Life_3_Root);
+		CacheAndHideDialogueCombatWidget(Potion_Root);
+		CacheAndHideDialogueCombatWidget(Weapon_Root);
+		CacheAndHideDialogueCombatWidget(Controls_Root);
+		CacheAndHideDialogueCombatWidget(Controls_Toggle);
+		CacheAndHideDialogueCombatWidget(Clear_Root);
+		CacheAndHideDialogueCombatWidget(Tutorial_Task);
+		return;
+	}
+
+	for (const TPair<TWeakObjectPtr<UWidget>, ESlateVisibility>& Pair : DialogueCombatWidgetVisibilities)
+	{
+		if (UWidget* Widget = Pair.Key.Get())
+		{
+			Widget->SetVisibility(Pair.Value);
+		}
+	}
+	DialogueCombatWidgetVisibilities.Reset();
+}
+
+void UJunCombatHUDWidget::CacheAndHideDialogueCombatWidget(UWidget* Widget)
+{
+	if (!Widget)
+	{
+		return;
+	}
+
+	DialogueCombatWidgetVisibilities.Add(Widget, Widget->GetVisibility());
+	Widget->SetVisibility(ESlateVisibility::Hidden);
 }
 
 void UJunCombatHUDWidget::SetDialogueLine(const FText& DialogueText, const FText& SpeakerName)
@@ -646,6 +989,16 @@ void UJunCombatHUDWidget::ApplyDialogueVisibility()
 	if (Dialog_Text_2)
 	{
 		Dialog_Text_2->SetVisibility(!CurrentDialogueSpeakerName.IsEmpty() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
+
+	if (Key_E)
+	{
+		Key_E->SetVisibility(bHasText ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
+
+	if (Next_Text)
+	{
+		Next_Text->SetVisibility(bHasText ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
 	}
 }
 

@@ -9,6 +9,9 @@ class UProgressBar;
 class USizeBox;
 class UImage;
 class UTextBlock;
+class UPanelWidget;
+class UMediaPlayer;
+class UMediaSource;
 
 UCLASS()
 class JUNDUCK_API UJunCombatHUDWidget : public UUserWidget
@@ -34,6 +37,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Dialogue")
 	void SetDialogueLine(const FText& DialogueText, const FText& SpeakerName = FText::GetEmpty());
 
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Dialogue")
+	void SetDialogueCombatUIHidden(bool bHidden);
+
 	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Tutorial")
 	void StartTutorialDimBlackFadeIn();
 
@@ -45,6 +51,27 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "CombatHUD|Tutorial")
 	bool IsTutorialDimBlackHidden() const;
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Tutorial")
+	void ShowPlayerPostureGuide();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Tutorial")
+	void HidePlayerPostureGuide();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Tutorial")
+	void ShowMonsterPostureGuide();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Tutorial")
+	void ShowDangerAttackGuide();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Tutorial")
+	void HideTutorialGuides();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Tutorial")
+	void ShowTutorialTask(int32 TutorialTaskType);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Tutorial")
+	void HideTutorialTask();
 
 	UFUNCTION(BlueprintCallable, Category = "CombatHUD")
 	void SetBossHealth(int32 CurrentHealth, int32 MaxHealth);
@@ -123,7 +150,14 @@ public:
 
 protected:
 	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+
+	UFUNCTION()
+	void HandleTutorialGuideMediaOpened(FString OpenedUrl);
+
+	UFUNCTION()
+	void HandleTutorialGuideSubMediaOpened(FString OpenedUrl);
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "CombatHUD")
 	void OnPlayerHealthChanged(int32 CurrentHealth, int32 MaxHealth, float HealthPercent);
@@ -164,6 +198,7 @@ private:
 	void SetDeathRootVisible(bool bVisible);
 	void ApplyDialogueVisibility();
 	void ApplyDialogueText();
+	void CacheAndHideDialogueCombatWidget(UWidget* Widget);
 	void ApplyPlayerHealthBars();
 	void ApplyBossHealthBars();
 	void ApplyPostureBars();
@@ -176,6 +211,8 @@ private:
 	void ApplyBossLifeWidget(int32 LifeIndex, UWidget* RootWidget, UWidget* GrayWidget, UWidget* RedWidget) const;
 	void ApplyPotionWidgets();
 	void ApplyControlsVisibility();
+	UWidget* FindTutorialTaskWidget(int32 TutorialTaskType) const;
+	void SetTutorialTaskWidgetVisibility(UWidget* TaskWidget, bool bVisible) const;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHUD", meta = (AllowPrivateAccess = "true"))
 	float PlayerHealthPercent = 1.f;
@@ -294,6 +331,24 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Tutorial", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
 	float TutorialDimBlackFadeSpeed = 2.5f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Tutorial|PlayerPostureGuide", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UMediaPlayer> PlayerPostureGuideMediaPlayer;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Tutorial|PlayerPostureGuide", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UMediaSource> PlayerPostureGuideMediaSource;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Tutorial|MonsterPostureGuide", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UMediaSource> MonsterPostureGuideMediaSource;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Tutorial|DangerAttackGuide", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UMediaSource> DangerAttackGuideMediaSource;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Tutorial|DangerAttackGuide", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UMediaPlayer> DangerAttackGuideSubMediaPlayer;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Tutorial|DangerAttackGuide", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UMediaSource> DangerAttackGuideSubMediaSource;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|BossClear", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
 	float BossClearFadeInSpeed = 2.5f;
 
@@ -314,6 +369,9 @@ private:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> BossHealthRoot;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> PlayerHealthRoot;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> BossPostureRoot;
@@ -421,6 +479,9 @@ private:
 	TObjectPtr<UWidget> Potion_Root;
 
 	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Weapon_Root;
+
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> Potion_Image;
 
 	UPROPERTY(meta = (BindWidgetOptional))
@@ -431,6 +492,12 @@ private:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> Controls_Root;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Controls_Toggle;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Clear_Root;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> Dialog_Root;
@@ -445,5 +512,41 @@ private:
 	TObjectPtr<UTextBlock> Dialog_Text_2;
 
 	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Key_E;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Next_Text;
+
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> Tutorial_DimBlack;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Tutorial_PlayerPosture_Guide;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Video_1;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Tutorial_MonsterPosture_Guide;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Video_2;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Tutorial_DangerAttack_Guide;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Video_3;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Video_3_Sub;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UPanelWidget> Tutorial_Task;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Task_BackGround;
+
+	TMap<TWeakObjectPtr<UWidget>, ESlateVisibility> DialogueCombatWidgetVisibilities;
+	bool bDialogueCombatUIHidden = false;
 };

@@ -79,7 +79,7 @@ private:
 	float PostureFillMaxWidth = 127.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MonsterHUD|Posture", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
-	float PostureFillHeight = 8.f;
+	float PostureFillHeight = 7.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MonsterHUD|Posture", meta = (AllowPrivateAccess = "true", ClampMin = "0", ClampMax = "1"))
 	float PostureWarningTintThreshold = 0.7f;

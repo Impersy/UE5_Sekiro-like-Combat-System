@@ -380,11 +380,8 @@ bool AJunPlayer::TryStartDrinkPotion()
 	}
 
 	CurrentDrinkPotionCharges = FMath::Max(0, CurrentDrinkPotionCharges - 1);
+	PendingDrinkPotionTutorialNPC = Cast<AJunTutorialNPC>(LockOnTarget.Get());
 	ApplyDrinkPotionHeal();
-	if (AJunTutorialNPC* TutorialNPC = Cast<AJunTutorialNPC>(LockOnTarget.Get()))
-	{
-		TutorialNPC->NotifyTutorialDrinkPotion(this);
-	}
 	return true;
 }
 
@@ -397,6 +394,13 @@ void AJunPlayer::SetPostureForTutorial(float NewPosture)
 {
 	CurrentPosture = FMath::Clamp(NewPosture, 0.f, FMath::Max(0.f, MaxPosture));
 	PostureRecoveryDelayRemainTime = 0.f;
+}
+
+void AJunPlayer::RestoreResourcesAfterTutorial()
+{
+	CancelDrinkPotionHeal();
+	Hp = FMath::Max(1, MaxHp);
+	RefillDrinkPotionCharges();
 }
 
 bool AJunPlayer::CanStartDrinkPotion() const
@@ -459,6 +463,7 @@ void AJunPlayer::ApplyDrinkPotionHeal()
 	if (DrinkPotionHealDuration <= 0.f)
 	{
 		Hp = FMath::Clamp(Hp + HealAmount, 0, MaxHp);
+		CompleteDrinkPotionHeal();
 		return;
 	}
 
@@ -475,7 +480,7 @@ void AJunPlayer::UpdateDrinkPotionHeal(float DeltaTime)
 
 	if (Hp >= MaxHp)
 	{
-		CancelDrinkPotionHeal();
+		CompleteDrinkPotionHeal();
 		return;
 	}
 
@@ -495,19 +500,33 @@ void AJunPlayer::UpdateDrinkPotionHeal(float DeltaTime)
 		DrinkPotionHealAccumulator -= static_cast<float>(Hp - PreviousHp);
 	}
 
-	if (DrinkPotionHealRemainTime <= 0.f && DrinkPotionPendingHealAmount > 0.f)
+	if (DrinkPotionHealRemainTime <= 0.f || DrinkPotionPendingHealAmount <= KINDA_SMALL_NUMBER)
 	{
 		const int32 FinalHealToApply = FMath::CeilToInt(DrinkPotionPendingHealAmount + DrinkPotionHealAccumulator);
 		if (FinalHealToApply > 0)
 		{
 			Hp = FMath::Clamp(Hp + FinalHealToApply, 0, MaxHp);
 		}
-		CancelDrinkPotionHeal();
+		CompleteDrinkPotionHeal();
 	}
+}
+
+void AJunPlayer::CompleteDrinkPotionHeal()
+{
+	if (AJunTutorialNPC* TutorialNPC = PendingDrinkPotionTutorialNPC.Get())
+	{
+		TutorialNPC->NotifyTutorialDrinkPotion(this);
+	}
+
+	PendingDrinkPotionTutorialNPC.Reset();
+	DrinkPotionHealRemainTime = 0.f;
+	DrinkPotionPendingHealAmount = 0.f;
+	DrinkPotionHealAccumulator = 0.f;
 }
 
 void AJunPlayer::CancelDrinkPotionHeal()
 {
+	PendingDrinkPotionTutorialNPC.Reset();
 	DrinkPotionHealRemainTime = 0.f;
 	DrinkPotionPendingHealAmount = 0.f;
 	DrinkPotionHealAccumulator = 0.f;
@@ -1969,6 +1988,18 @@ void AJunPlayer::SnapCameraToLookAt(const FVector& WorldTarget, float Pitch)
 	Controller->SetControlRotation(FRotator(TargetCameraPitch, TargetCameraYaw, 0.f));
 	bCameraRotationInitialized = true;
 	StartCameraHardSnap();
+}
+
+void AJunPlayer::BeginDialogueCamera()
+{
+	bDialogueCameraActive = true;
+	bDialogueCameraRestoring = false;
+}
+
+void AJunPlayer::EndDialogueCamera()
+{
+	bDialogueCameraActive = false;
+	bDialogueCameraRestoring = true;
 }
 
 void AJunPlayer::ToggleLockOn()
@@ -10123,23 +10154,34 @@ void AJunPlayer::UpdateJunCamera(float DeltaTime)
 
 	if (CameraMode != EJunCameraMode::Execution)
 	{
-		const float TargetArmLength = CameraMode == EJunCameraMode::Death
+		const float NormalTargetArmLength = CameraMode == EJunCameraMode::Death
 			? (SpringArm ? SpringArm->TargetArmLength : DefaultSpringArmLength)
 			: (bLockOnActive && Cast<AJunMonster>(LockOnTarget.Get()) && Cast<AJunMonster>(LockOnTarget.Get())->IsExecutionReady()
 				? ExecutionReadyLockOnArmLength
 				: GetPitchAdjustedSpringArmLength());
+		const float TargetArmLength = bDialogueCameraActive
+			? DialogueCameraArmLength
+			: NormalTargetArmLength;
 		const bool bShouldShortenArm = TargetArmLength < SpringArm->TargetArmLength;
+		const float ArmInterpSpeed = bDialogueCameraActive
+			? DialogueCameraArmLengthInterpSpeed
+			: (bDialogueCameraRestoring
+				? DialogueCameraArmLengthRestoreInterpSpeed
+				: (bShouldShortenArm
+				? PitchArmShortenInterpSpeed
+				: GetCurrentExecutionCameraArmLengthRestoreInterpSpeed()));
 
 		SpringArm->TargetArmLength = FMath::FInterpTo(
 			SpringArm->TargetArmLength,
 			TargetArmLength,
 			DeltaTime,
-			bShouldShortenArm ? PitchArmShortenInterpSpeed : GetCurrentExecutionCameraArmLengthRestoreInterpSpeed()
+			ArmInterpSpeed
 		);
 
 		if (FMath::IsNearlyEqual(SpringArm->TargetArmLength, TargetArmLength, 1.f))
 		{
 			bExecutionCameraRestoreUsesFinishTuning = false;
+			bDialogueCameraRestoring = false;
 		}
 	}
 

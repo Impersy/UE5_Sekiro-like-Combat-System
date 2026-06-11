@@ -15,11 +15,13 @@ AJunBGMManager::AJunBGMManager()
 	MapBGMComponent->SetupAttachment(RootComponent);
 	MapBGMComponent->bAutoActivate = false;
 	MapBGMComponent->bAllowSpatialization = false;
+	MapBGMComponent->bIsUISound = true;
 
 	CombatBGMComponent = CreateDefaultSubobject<UAudioComponent>(TEXT("CombatBGMComponent"));
 	CombatBGMComponent->SetupAttachment(RootComponent);
 	CombatBGMComponent->bAutoActivate = false;
 	CombatBGMComponent->bAllowSpatialization = false;
+	CombatBGMComponent->bIsUISound = true;
 }
 
 void AJunBGMManager::BeginPlay()

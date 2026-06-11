@@ -12,6 +12,7 @@
 #include "Level/JunTutorialNPCPlacementPoint.h"
 #include "NavigationSystem.h"
 #include "Navigation/PathFollowingComponent.h"
+#include "Player/JunPlayerController.h"
 #include "UI/JunMonsterHUDWidget.h"
 
 AJunTutorialNPC::AJunTutorialNPC()
@@ -482,9 +483,14 @@ void AJunTutorialNPC::AddPosture(float Amount)
 
 bool AJunTutorialNPC::CanStartDialogue(const AJunPlayer* Player) const
 {
+	const bool bHasAvailableDialogue = bTutorialTasksCompleted
+		? !TutorialEndDialogues.IsEmpty()
+		: !Dialogues.IsEmpty();
+
 	return Player &&
 		TutorialMode == EJunTutorialNPCMode::DialogueOnly &&
 		!bTutorialCombatEnabled &&
+		bHasAvailableDialogue &&
 		bPlayerInDialogueRange &&
 		NearbyPlayer == Player &&
 		!bDialogueActive &&
@@ -495,22 +501,28 @@ bool AJunTutorialNPC::CanStartDialogue(const AJunPlayer* Player) const
 
 bool AJunTutorialNPC::HasCurrentDialogueLine() const
 {
-	return Dialogues.IsValidIndex(CurrentDialogueIndex);
+	const TArray<FJunTutorialNPCDialogueLine>& ActiveDialogues =
+		bTutorialEndDialogueActive ? TutorialEndDialogues : Dialogues;
+	return ActiveDialogues.IsValidIndex(CurrentDialogueIndex);
 }
 
 FJunTutorialNPCDialogueLine AJunTutorialNPC::GetCurrentDialogueLine() const
 {
+	const TArray<FJunTutorialNPCDialogueLine>& ActiveDialogues =
+		bTutorialEndDialogueActive ? TutorialEndDialogues : Dialogues;
 	return HasCurrentDialogueLine()
-		? Dialogues[CurrentDialogueIndex]
+		? ActiveDialogues[CurrentDialogueIndex]
 		: FJunTutorialNPCDialogueLine();
 }
 
 void AJunTutorialNPC::ResetDialogue()
 {
-	CurrentDialogueIndex = Dialogues.Num() > 0 ? 0 : INDEX_NONE;
+	const TArray<FJunTutorialNPCDialogueLine>& ActiveDialogues =
+		bTutorialEndDialogueActive ? TutorialEndDialogues : Dialogues;
+	CurrentDialogueIndex = ActiveDialogues.Num() > 0 ? 0 : INDEX_NONE;
 	if (HasCurrentDialogueLine())
 	{
-		OnDialogueLineChanged(Dialogues[CurrentDialogueIndex], CurrentDialogueIndex);
+		OnDialogueLineChanged(ActiveDialogues[CurrentDialogueIndex], CurrentDialogueIndex);
 	}
 }
 
@@ -521,21 +533,23 @@ bool AJunTutorialNPC::AdvanceDialogue()
 		return false;
 	}
 
-	if (Dialogues.Num() <= 0)
+	const TArray<FJunTutorialNPCDialogueLine>& ActiveDialogues =
+		bTutorialEndDialogueActive ? TutorialEndDialogues : Dialogues;
+	if (ActiveDialogues.Num() <= 0)
 	{
 		FinishDialogue();
 		return false;
 	}
 
 	const int32 NextDialogueIndex = CurrentDialogueIndex < 0 ? 0 : CurrentDialogueIndex + 1;
-	if (!Dialogues.IsValidIndex(NextDialogueIndex))
+	if (!ActiveDialogues.IsValidIndex(NextDialogueIndex))
 	{
 		FinishDialogue();
 		return false;
 	}
 
 	CurrentDialogueIndex = NextDialogueIndex;
-	OnDialogueLineChanged(Dialogues[CurrentDialogueIndex], CurrentDialogueIndex);
+	OnDialogueLineChanged(ActiveDialogues[CurrentDialogueIndex], CurrentDialogueIndex);
 	return true;
 }
 
@@ -547,6 +561,7 @@ bool AJunTutorialNPC::TryStartDialogue(AJunPlayer* Player)
 	}
 
 	bDialogueActive = true;
+	bTutorialEndDialogueActive = bTutorialTasksCompleted;
 	SetInteractionPromptVisible(false);
 	StopAIMovement();
 	SetDesiredMoveAxes(0.f, 0.f);
@@ -554,6 +569,28 @@ bool AJunTutorialNPC::TryStartDialogue(AJunPlayer* Player)
 	ResetDialogue();
 	OnDialogueStarted(Player);
 	return true;
+}
+
+bool AJunTutorialNPC::StartTutorialEndDialogue(AJunPlayer* Player)
+{
+	if (!Player || TutorialEndDialogues.IsEmpty())
+	{
+		return false;
+	}
+
+	SetTutorialMode(EJunTutorialNPCMode::DialogueOnly);
+	SetMonsterWorldHUDRevealed(false);
+	CurrentTarget = Player;
+	bIsHasTarget = true;
+	bDialogueActive = true;
+	bTutorialEndDialogueActive = true;
+	SetInteractionPromptVisible(false);
+	StopAIMovement();
+	SetDesiredMoveAxes(0.f, 0.f);
+	CombatMoveInput = FVector2D::ZeroVector;
+	ResetDialogue();
+	OnDialogueStarted(Player);
+	return HasCurrentDialogueLine();
 }
 
 void AJunTutorialNPC::SetTutorialCombatEnabled(bool bEnabled)
@@ -595,6 +632,7 @@ void AJunTutorialNPC::SetTutorialMode(EJunTutorialNPCMode NewMode)
 	if (TutorialMode != EJunTutorialNPCMode::DialogueOnly)
 	{
 		bDialogueActive = false;
+		bTutorialEndDialogueActive = false;
 		CurrentDialogueIndex = INDEX_NONE;
 	}
 	bDisablePostureGain = TutorialMode == EJunTutorialNPCMode::DialogueOnly;
@@ -673,6 +711,10 @@ void AJunTutorialNPC::StartTutorialTasks(AJunPlayer* Player)
 	CurrentTutorialTaskIndex = 0;
 	ResetTutorialTaskRuntime();
 	ApplyTutorialTaskMode();
+	if (AJunPlayerController* PlayerController = Cast<AJunPlayerController>(Player->GetController()))
+	{
+		PlayerController->ShowTutorialTaskUI(GetCurrentTutorialTask());
+	}
 	OnTutorialTaskChanged(GetCurrentTutorialTask(), CurrentTutorialTaskIndex);
 }
 
@@ -697,6 +739,14 @@ void AJunTutorialNPC::CompleteCurrentTutorialTask()
 		!TutorialTasks.IsValidIndex(CurrentTutorialTaskIndex))
 	{
 		return;
+	}
+
+	if (AJunPlayer* Player = Cast<AJunPlayer>(CurrentTarget.Get()))
+	{
+		if (AJunPlayerController* PlayerController = Cast<AJunPlayerController>(Player->GetController()))
+		{
+			PlayerController->HideTutorialTaskUI();
+		}
 	}
 
 	BeginTutorialTaskTransition(CurrentTutorialTaskIndex + 1);
@@ -746,7 +796,7 @@ void AJunTutorialNPC::BeginTutorialTaskTransitionHomeReturn()
 	{
 		bTutorialReturningHome = false;
 		bTutorialTaskTransitionWaitingAtHome = true;
-		TutorialTaskTransitionWaitRemainTime = FMath::Max(0.f, TutorialTaskTransitionWaitDuration);
+		TutorialTaskTransitionWaitRemainTime = GetTutorialTaskTransitionWaitDuration();
 		return;
 	}
 
@@ -790,11 +840,26 @@ void AJunTutorialNPC::FinishTutorialTaskTransition()
 		bTutorialTasksCompleted = true;
 		SetTutorialMode(EJunTutorialNPCMode::PassiveDummy);
 		RestoreTutorialNPCHealth();
+		if (AJunPlayer* Player = Cast<AJunPlayer>(CurrentTarget.Get()))
+		{
+			if (AJunPlayerController* PlayerController = Cast<AJunPlayerController>(Player->GetController()))
+			{
+				PlayerController->HideTutorialTaskUI();
+				PlayerController->StartTutorialEndTransition(this);
+			}
+		}
 		OnTutorialCompleted();
 		return;
 	}
 
 	ApplyTutorialTaskMode();
+	if (AJunPlayer* Player = Cast<AJunPlayer>(CurrentTarget.Get()))
+	{
+		if (AJunPlayerController* PlayerController = Cast<AJunPlayerController>(Player->GetController()))
+		{
+			PlayerController->ShowTutorialTaskUI(GetCurrentTutorialTask());
+		}
+	}
 	OnTutorialTaskChanged(GetCurrentTutorialTask(), CurrentTutorialTaskIndex);
 }
 
@@ -965,6 +1030,7 @@ bool AJunTutorialNPC::MoveToTutorialPlacementPoint(AJunTutorialNPCPlacementPoint
 	CombatMoveInput = FVector2D::ZeroVector;
 	bRunLocomotionRequested = false;
 	bDialogueActive = false;
+	bTutorialEndDialogueActive = false;
 	CurrentDialogueIndex = INDEX_NONE;
 	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
 	{
@@ -1002,6 +1068,7 @@ void AJunTutorialNPC::ReturnToInitialPlacement()
 	CombatMoveInput = FVector2D::ZeroVector;
 	bRunLocomotionRequested = false;
 	bDialogueActive = false;
+	bTutorialEndDialogueActive = false;
 	CurrentDialogueIndex = INDEX_NONE;
 	bTutorialStarted = false;
 	bTutorialReturningHome = false;
@@ -1014,6 +1081,7 @@ void AJunTutorialNPC::ReturnToInitialPlacement()
 	PendingTutorialTaskIndex = INDEX_NONE;
 	TutorialTaskTransitionWaitRemainTime = 0.f;
 	SetTutorialCombatEnabled(false);
+	SetMonsterWorldHUDRevealed(false);
 
 	SetActorLocationAndRotation(
 		InitialPlacementTransform.GetLocation(),
@@ -1039,9 +1107,10 @@ void AJunTutorialNPC::FinishDialogue()
 	}
 
 	bDialogueActive = false;
+	bTutorialEndDialogueActive = false;
 	CurrentDialogueIndex = INDEX_NONE;
 	OnDialogueFinished();
-	SetInteractionPromptVisible(bPlayerInDialogueRange);
+	SetInteractionPromptVisible(CanStartDialogue(NearbyPlayer));
 	PlayIdleWaitMontage();
 }
 
@@ -1142,15 +1211,35 @@ void AJunTutorialNPC::ApplyTutorialTaskMode()
 	{
 	case EJunTutorialTaskType::ParryThreeTimes:
 	case EJunTutorialTaskType::AirParryOnce:
+		SetTutorialMode(EJunTutorialNPCMode::AttackTraining);
+		break;
 	case EJunTutorialTaskType::MikiriCounter:
+		if (AJunPlayer* Player = Cast<AJunPlayer>(CurrentTarget.Get()))
+		{
+			if (AJunPlayerController* PlayerController = Cast<AJunPlayerController>(Player->GetController()))
+			{
+				PlayerController->ShowDangerAttackTutorialGuide();
+			}
+		}
+		SetTutorialMode(EJunTutorialNPCMode::AttackTraining);
+		break;
 	case EJunTutorialTaskType::JumpCounterStomp:
 		SetTutorialMode(EJunTutorialNPCMode::AttackTraining);
 		break;
 	case EJunTutorialTaskType::Execution:
 		SetTutorialMode(EJunTutorialNPCMode::ExecutionTraining);
+		MaxPosture = FMath::Max(1.f, TutorialExecutionMaxPosture);
+		CurrentPosture = FMath::Min(CurrentPosture, MaxPosture);
 		StartTutorialNPCPostureDrainToZero();
 		bExecutionReady = false;
 		ExecutionReadyRemainTime = 0.f;
+		if (AJunPlayer* Player = Cast<AJunPlayer>(CurrentTarget.Get()))
+		{
+			if (AJunPlayerController* PlayerController = Cast<AJunPlayerController>(Player->GetController()))
+			{
+				PlayerController->ShowMonsterPostureTutorialGuide();
+			}
+		}
 		break;
 	default:
 		SetTutorialMode(EJunTutorialNPCMode::PassiveDummy);
@@ -1174,6 +1263,10 @@ void AJunTutorialNPC::ApplyTutorialTaskMode()
 		{
 			const float TargetPosture = Player->GetMaxPosture() * FMath::Clamp(TutorialGuardPostureRecoveryStartRatio, 0.f, 1.f);
 			Player->SetPostureForTutorial(TargetPosture);
+			if (AJunPlayerController* PlayerController = Cast<AJunPlayerController>(Player->GetController()))
+			{
+				PlayerController->ShowPlayerPostureTutorialGuide();
+			}
 		}
 	}
 }
@@ -1720,8 +1813,16 @@ void AJunTutorialNPC::FinishTutorialHomeReturn()
 	if (bTutorialTaskTransitionPending)
 	{
 		bTutorialTaskTransitionWaitingAtHome = true;
-		TutorialTaskTransitionWaitRemainTime = FMath::Max(0.f, TutorialTaskTransitionWaitDuration);
+		TutorialTaskTransitionWaitRemainTime = GetTutorialTaskTransitionWaitDuration();
 	}
+}
+
+float AJunTutorialNPC::GetTutorialTaskTransitionWaitDuration() const
+{
+	const float WaitDuration = IsCurrentTutorialTask(EJunTutorialTaskType::DrinkPotion)
+		? TutorialDrinkTaskTransitionWaitDuration
+		: TutorialTaskTransitionWaitDuration;
+	return FMath::Max(0.f, WaitDuration);
 }
 
 void AJunTutorialNPC::RefreshTutorialHomeReturnGoalLocation()

@@ -7,6 +7,7 @@
 
 
 struct FInputActionValue;
+enum class EJunTutorialTaskType : uint8;
 
 UENUM()
 enum class EJunTutorialTransitionState : uint8
@@ -14,8 +15,7 @@ enum class EJunTutorialTransitionState : uint8
 	None,
 	FadingIn,
 	FullBlackHold,
-	FadingOut,
-	WaitingForEquip
+	FadingOut
 };
 
 /**
@@ -43,6 +43,12 @@ public:
 	void ResetPlayerPostureVisibilityState();
 	void PlayDangerMarkerOnPlayer();
 	bool IsTutorialTransitionActive() const { return TutorialTransitionState != EJunTutorialTransitionState::None; }
+	void ShowPlayerPostureTutorialGuide();
+	void ShowMonsterPostureTutorialGuide();
+	void ShowDangerAttackTutorialGuide();
+	void ShowTutorialTaskUI(EJunTutorialTaskType TaskType);
+	void HideTutorialTaskUI();
+	void StartTutorialEndTransition(class AJunTutorialNPC* NPC);
 
 protected:
 	virtual void BeginPlay() override;
@@ -80,17 +86,22 @@ private:
 	void StartTutorialTransition(class AJunTutorialNPC* NPC);
 	void UpdateTutorialTransition(float DeltaTime);
 	void FinishTutorialTransitionMove();
+	void FinishTutorialEndTransitionMove();
+	void HidePlayerPostureTutorialGuide();
+	bool BeginTutorialGuidePause();
 
 	bool bDodgeInputHeld = false;
 	float LastDodgeInputTime = -FLT_MAX;
 	TWeakObjectPtr<class AJunTutorialNPC> ActiveDialogueNPC;
 	TWeakObjectPtr<class AJunTutorialNPC> PendingTutorialNPC;
 	EJunTutorialTransitionState TutorialTransitionState = EJunTutorialTransitionState::None;
-	float TutorialEquipDelayRemainTime = 0.f;
 	float TutorialFullBlackHoldRemainTime = 0.f;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Tutorial", meta = (ClampMin = "0"))
-	float TutorialEquipDelayAfterFadeOut = 1.f;
+	FTransform PreTutorialPlayerTransform = FTransform::Identity;
+	bool bHasPreTutorialPlayerTransform = false;
+	bool bTutorialEndTransition = false;
+	bool bPlayerPostureTutorialGuideActive = false;
+	bool bGamePausedBeforeTutorialGuide = false;
+	int32 PendingTutorialTaskUIType = INDEX_NONE;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Tutorial", meta = (ClampMin = "0"))
 	float TutorialFullBlackHoldDuration = 0.35f;

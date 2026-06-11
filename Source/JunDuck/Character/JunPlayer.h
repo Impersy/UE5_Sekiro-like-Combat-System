@@ -168,6 +168,8 @@ public: // External Gameplay API
 	bool bCanBuildAttackerPostureOnParry = true);
 	void AddCameraLookInput(const FVector2D& Input);
 	void SnapCameraToLookAt(const FVector& WorldTarget, float Pitch = -24.f);
+	void BeginDialogueCamera();
+	void EndDialogueCamera();
 	void ToggleLockOn();
 	bool TryCancelJumpAttackEndIntoMove();
 	bool TryCancelJumpAttackEndIntoDodge();
@@ -203,6 +205,7 @@ public: // External Gameplay API
 	bool TryStartJigen();
 	void SetHpForTutorial(int32 NewHp);
 	void SetPostureForTutorial(float NewPosture);
+	void RestoreResourcesAfterTutorial();
 	void ApplyJumpCounterStompBounce(float UpVelocity, float BackwardVelocity);
 	void ApplyJumpCounterStompBounce(float UpVelocity, float BackwardVelocity, float BackwardMoveDuration);
 	void ApplyJumpCounterStompHit(
@@ -470,6 +473,7 @@ protected: // Drink
 	void RefillDrinkPotionCharges();
 	void ApplyDrinkPotionHeal();
 	void UpdateDrinkPotionHeal(float DeltaTime);
+	void CompleteDrinkPotionHeal();
 	void CancelDrinkPotionHeal();
 	void HideWeaponForDrinkPotion();
 	void FinishDrinkPotion(bool bInterrupted);
@@ -1407,6 +1411,8 @@ protected: // Runtime Combat / Defense State
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drink")
 	float DrinkPotionHealAccumulator = 0.f;
 
+	TWeakObjectPtr<class AJunTutorialNPC> PendingDrinkPotionTutorialNPC;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	float PlayerHitControlLockRemainTime = 0.f;
 
@@ -1600,6 +1606,20 @@ protected: // Camera Tuning
 
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
 	float SpringArmLengthInterpSpeed = 8.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Dialogue", meta = (ClampMin = "0.0"))
+	float DialogueCameraArmLength = 300.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Dialogue", meta = (ClampMin = "0.0"))
+	float DialogueCameraArmLengthInterpSpeed = 5.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Dialogue", meta = (ClampMin = "0.0"))
+	float DialogueCameraArmLengthRestoreInterpSpeed = 4.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera|Dialogue")
+	bool bDialogueCameraActive = false;
+
+	bool bDialogueCameraRestoring = false;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Camera|Free")
 	FVector FreeCameraSocketOffset = FVector(0.f, 25.f, 0.f);
@@ -1984,7 +2004,7 @@ protected: // Attack / Defense Tuning
 	float MaxPosture = 300.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "0"))
-	float PerfectParryPostureGain = 10.f;
+	float PerfectParryPostureGain = 20.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture", meta = (ClampMin = "0"))
 	float NormalParryPostureGain = 40.f;

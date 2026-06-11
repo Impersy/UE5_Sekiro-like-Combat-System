@@ -25,6 +25,7 @@ public class JunDuck : ModuleRules
 			"NavigationSystem",
 			"AIModule",
 			"UMG",
+			"MediaAssets",
 			"PhysicsCore"
 		});
 

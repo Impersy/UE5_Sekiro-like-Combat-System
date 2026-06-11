@@ -92,6 +92,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "TutorialNPC|Dialogue")
 	bool AdvanceDialogue();
 
+	UFUNCTION(BlueprintCallable, Category = "TutorialNPC|Dialogue")
+	bool StartTutorialEndDialogue(AJunPlayer* Player);
+
+	UFUNCTION(BlueprintPure, Category = "TutorialNPC|Dialogue")
+	bool IsTutorialEndDialogueActive() const { return bTutorialEndDialogueActive; }
+
 	UFUNCTION(BlueprintCallable, Category = "TutorialNPC|Combat")
 	void SetTutorialCombatEnabled(bool bEnabled);
 
@@ -235,6 +241,7 @@ protected:
 	void RefreshTutorialHomeReturnGoalLocation();
 	bool RequestTutorialHomeReturnMove();
 	float GetTutorialHomeReturnEffectiveAcceptRadius() const;
+	float GetTutorialTaskTransitionWaitDuration() const;
 	bool CanUpdateTutorialHomeReturn() const;
 	bool IsExecutionTrainingEnabled() const { return TutorialMode == EJunTutorialNPCMode::ExecutionTraining; }
 
@@ -266,6 +273,9 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "TutorialNPC|Dialogue")
 	TArray<FJunTutorialNPCDialogueLine> Dialogues;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "TutorialNPC|Dialogue")
+	TArray<FJunTutorialNPCDialogueLine> TutorialEndDialogues;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "TutorialNPC|Combat")
 	bool bTutorialCombatEnabled = false;
 
@@ -295,6 +305,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "TutorialNPC|Posture", meta = (ClampMin = "0.0"))
 	float TutorialPostureDrainToZeroDuration = 0.55f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "TutorialNPC|Task|Execution", meta = (ClampMin = "1.0"))
+	float TutorialExecutionMaxPosture = 30.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "TutorialNPC|Task|Attack")
 	TObjectPtr<UAnimMontage> TutorialParryTrainingAttackMontage = nullptr;
@@ -355,6 +368,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "TutorialNPC|Task", meta = (ClampMin = "0"))
 	float TutorialTaskTransitionWaitDuration = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "TutorialNPC|Task|Drink", meta = (ClampMin = "0"))
+	float TutorialDrinkTaskTransitionWaitDuration = 2.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "TutorialNPC|Debug")
 	bool bDebugTutorialHomeReturn = false;
@@ -439,6 +455,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "TutorialNPC|Dialogue")
 	bool bDialogueActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "TutorialNPC|Dialogue")
+	bool bTutorialEndDialogueActive = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "TutorialNPC|Dialogue")
 	int32 CurrentDialogueIndex = INDEX_NONE;

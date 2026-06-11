@@ -658,13 +658,13 @@ protected:
 	bool bDisablePostureGain = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0"))
-	float ParriedPostureGain = 30.f;
+	float ParriedPostureGain = 25.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|PostureRecovery", meta = (ClampMin = "0"))
-	float PostureRecoveryDelay = 3.f;
+	float PostureRecoveryDelay = 2.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|PostureRecovery", meta = (ClampMin = "0"))
-	float PostureRecoveryRate = 40.f;
+	float PostureRecoveryRate = 50.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|PostureRecovery", meta = (ClampMin = "0"))
 	float AttackPosturePressureDistance = 800.f;

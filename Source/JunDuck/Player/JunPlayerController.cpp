@@ -1,6 +1,7 @@
 #include "JunPlayerController.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "InputAction.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "System/JunAssetManager.h"
 #include "Data/JunInputData.h"
@@ -11,6 +12,7 @@
 #include "Character/JunPlayer.h"
 #include "Character/JunTutorialNPC.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "EngineUtils.h"
 #include "Level/JunPlayerRespawnPoint.h"
 #include "Level/JunTutorialNPCPlacementPoint.h"
@@ -96,6 +98,10 @@ void AJunPlayerController::SetupInputComponent()
 			EnhancedInputComponent->BindAction(ControlsToggleAction, ETriggerEvent::Started, this, &ThisClass::Input_ControlsToggle);
 
 			auto InteractAction = InputData->FindInputActionByTag(JunGameplayTags::Input_Action_Interact);
+			if (UInputAction* MutableInteractAction = const_cast<UInputAction*>(InteractAction))
+			{
+				MutableInteractAction->bTriggerWhenPaused = true;
+			}
 			EnhancedInputComponent->BindAction(InteractAction, ETriggerEvent::Started, this, &ThisClass::Input_Interact);
 		}
 	}
@@ -117,7 +123,7 @@ void AJunPlayerController::InitializeCombatWidgets()
 		CombatHUDWidget = CreateWidget<UJunCombatHUDWidget>(this, CombatHUDWidgetClass);
 		if (CombatHUDWidget)
 		{
-			CombatHUDWidget->AddToViewport(0);
+			CombatHUDWidget->AddToViewport(3);
 			CombatHUDWidget->SetBossHealthVisible(false);
 		}
 	}
@@ -921,6 +927,12 @@ void AJunPlayerController::Input_ControlsToggle(const FInputActionValue& InputVa
 
 void AJunPlayerController::Input_Interact(const FInputActionValue& InputValue)
 {
+	if (bPlayerPostureTutorialGuideActive)
+	{
+		HidePlayerPostureTutorialGuide();
+		return;
+	}
+
 	if (!JunPlayer)
 	{
 		JunPlayer = Cast<AJunPlayer>(GetPawn());
@@ -940,6 +952,7 @@ void AJunPlayerController::Input_Interact(const FInputActionValue& InputValue)
 	{
 		if (DialogueNPC->IsDialogueActive())
 		{
+			const bool bWasTutorialEndDialogue = DialogueNPC->IsTutorialEndDialogueActive();
 			if (DialogueNPC->AdvanceDialogue())
 			{
 				ShowDialogueLineFromNPC(DialogueNPC);
@@ -947,6 +960,14 @@ void AJunPlayerController::Input_Interact(const FInputActionValue& InputValue)
 			}
 
 			CombatHUDWidget->HideDialogue();
+			JunPlayer->EndDialogueCamera();
+			if (bWasTutorialEndDialogue)
+			{
+				JunPlayer->EndTutorialControlLock();
+				ActiveDialogueNPC = nullptr;
+				return;
+			}
+
 			StartTutorialTransition(DialogueNPC);
 			ActiveDialogueNPC = nullptr;
 			return;
@@ -961,7 +982,100 @@ void AJunPlayerController::Input_Interact(const FInputActionValue& InputValue)
 
 	ActiveDialogueNPC = DialogueNPC;
 	JunPlayer->BeginTutorialControlLock();
+	JunPlayer->BeginDialogueCamera();
 	ShowDialogueLineFromNPC(DialogueNPC);
+}
+
+void AJunPlayerController::ShowPlayerPostureTutorialGuide()
+{
+	if (!BeginTutorialGuidePause())
+	{
+		return;
+	}
+
+	CombatHUDWidget->ShowPlayerPostureGuide();
+}
+
+void AJunPlayerController::ShowMonsterPostureTutorialGuide()
+{
+	if (!BeginTutorialGuidePause())
+	{
+		return;
+	}
+
+	CombatHUDWidget->ShowMonsterPostureGuide();
+}
+
+void AJunPlayerController::ShowDangerAttackTutorialGuide()
+{
+	if (!BeginTutorialGuidePause())
+	{
+		return;
+	}
+
+	CombatHUDWidget->ShowDangerAttackGuide();
+}
+
+bool AJunPlayerController::BeginTutorialGuidePause()
+{
+	if (bPlayerPostureTutorialGuideActive || !CombatHUDWidget)
+	{
+		return false;
+	}
+
+	bPlayerPostureTutorialGuideActive = true;
+	bGamePausedBeforeTutorialGuide = IsPaused();
+	SetPause(true);
+	return true;
+}
+
+void AJunPlayerController::HidePlayerPostureTutorialGuide()
+{
+	if (!bPlayerPostureTutorialGuideActive)
+	{
+		return;
+	}
+
+	bPlayerPostureTutorialGuideActive = false;
+	if (CombatHUDWidget)
+	{
+		CombatHUDWidget->HideTutorialGuides();
+	}
+	if (!bGamePausedBeforeTutorialGuide)
+	{
+		SetPause(false);
+	}
+
+	if (PendingTutorialTaskUIType != INDEX_NONE && CombatHUDWidget)
+	{
+		CombatHUDWidget->ShowTutorialTask(PendingTutorialTaskUIType);
+		PendingTutorialTaskUIType = INDEX_NONE;
+	}
+}
+
+void AJunPlayerController::ShowTutorialTaskUI(EJunTutorialTaskType TaskType)
+{
+	const int32 TaskTypeValue = static_cast<int32>(TaskType);
+	if (bPlayerPostureTutorialGuideActive)
+	{
+		PendingTutorialTaskUIType = TaskTypeValue;
+		return;
+	}
+
+	PendingTutorialTaskUIType = INDEX_NONE;
+	if (CombatHUDWidget)
+	{
+		CombatHUDWidget->ShowTutorialTask(TaskTypeValue);
+	}
+}
+
+void AJunPlayerController::HideTutorialTaskUI()
+{
+	PendingTutorialTaskUIType = INDEX_NONE;
+	if (CombatHUDWidget)
+	{
+		CombatHUDWidget->HideTutorialTask();
+	}
 }
 
 void AJunPlayerController::StartTutorialTransition(AJunTutorialNPC* NPC)
@@ -976,10 +1090,34 @@ void AJunPlayerController::StartTutorialTransition(AJunTutorialNPC* NPC)
 	}
 
 	PendingTutorialNPC = NPC;
+	PreTutorialPlayerTransform = JunPlayer->GetActorTransform();
+	bHasPreTutorialPlayerTransform = true;
+	bTutorialEndTransition = false;
 	TutorialTransitionState = EJunTutorialTransitionState::FadingIn;
-	TutorialEquipDelayRemainTime = 0.f;
 	TutorialFullBlackHoldRemainTime = 0.f;
 	CombatHUDWidget->StartTutorialDimBlackFadeIn();
+}
+
+void AJunPlayerController::StartTutorialEndTransition(AJunTutorialNPC* NPC)
+{
+	if (!JunPlayer)
+	{
+		JunPlayer = Cast<AJunPlayer>(GetPawn());
+	}
+
+	if (!JunPlayer || !CombatHUDWidget || !NPC || TutorialTransitionState != EJunTutorialTransitionState::None)
+	{
+		return;
+	}
+
+	PendingTutorialNPC = NPC;
+	bTutorialEndTransition = true;
+	TutorialFullBlackHoldRemainTime = 0.f;
+	JunPlayer->BeginTutorialControlLock();
+	CombatHUDWidget->HideTutorialTask();
+	CombatHUDWidget->HideDialogue();
+	CombatHUDWidget->StartTutorialDimBlackFadeIn();
+	TutorialTransitionState = EJunTutorialTransitionState::FadingIn;
 }
 
 void AJunPlayerController::UpdateTutorialTransition(float DeltaTime)
@@ -999,7 +1137,14 @@ void AJunPlayerController::UpdateTutorialTransition(float DeltaTime)
 	case EJunTutorialTransitionState::FadingIn:
 		if (CombatHUDWidget->IsTutorialDimBlackOpaque())
 		{
-			FinishTutorialTransitionMove();
+			if (bTutorialEndTransition)
+			{
+				FinishTutorialEndTransitionMove();
+			}
+			else
+			{
+				FinishTutorialTransitionMove();
+			}
 			TutorialFullBlackHoldRemainTime = FMath::Max(0.f, TutorialFullBlackHoldDuration);
 			TutorialTransitionState = EJunTutorialTransitionState::FullBlackHold;
 		}
@@ -1015,18 +1160,18 @@ void AJunPlayerController::UpdateTutorialTransition(float DeltaTime)
 	case EJunTutorialTransitionState::FadingOut:
 		if (CombatHUDWidget->IsTutorialDimBlackHidden())
 		{
+			if (bTutorialEndTransition)
+			{
+				bTutorialEndTransition = false;
+				PendingTutorialNPC = nullptr;
+				TutorialTransitionState = EJunTutorialTransitionState::None;
+				break;
+			}
+
 			if (JunPlayer)
 			{
 				JunPlayer->EndTutorialControlLock();
 			}
-			TutorialEquipDelayRemainTime = FMath::Max(0.f, TutorialEquipDelayAfterFadeOut);
-			TutorialTransitionState = EJunTutorialTransitionState::WaitingForEquip;
-		}
-		break;
-	case EJunTutorialTransitionState::WaitingForEquip:
-		TutorialEquipDelayRemainTime = FMath::Max(0.f, TutorialEquipDelayRemainTime - DeltaTime);
-		if (TutorialEquipDelayRemainTime <= 0.f)
-		{
 			if (AJunTutorialNPC* NPC = PendingTutorialNPC.Get())
 			{
 				NPC->StartTutorialEquip();
@@ -1038,6 +1183,57 @@ void AJunPlayerController::UpdateTutorialTransition(float DeltaTime)
 	case EJunTutorialTransitionState::None:
 	default:
 		break;
+	}
+}
+
+void AJunPlayerController::FinishTutorialEndTransitionMove()
+{
+	if (!JunPlayer)
+	{
+		JunPlayer = Cast<AJunPlayer>(GetPawn());
+	}
+
+	if (JunPlayer)
+	{
+		JunPlayer->RestoreResourcesAfterTutorial();
+
+		if (JunPlayer->IsLockOn())
+		{
+			JunPlayer->ToggleLockOn();
+		}
+
+		if (bHasPreTutorialPlayerTransform)
+		{
+			JunPlayer->SetActorLocationAndRotation(
+				PreTutorialPlayerTransform.GetLocation(),
+				PreTutorialPlayerTransform.GetRotation().Rotator(),
+				false,
+				nullptr,
+				ETeleportType::TeleportPhysics);
+		}
+
+		JunPlayer->SetDesiredMoveAxes(0.f, 0.f);
+		JunPlayer->OnMoveInputReleased();
+		if (UCharacterMovementComponent* MovementComponent = JunPlayer->GetCharacterMovement())
+		{
+			MovementComponent->StopMovementImmediately();
+		}
+	}
+
+	if (AJunTutorialNPC* NPC = PendingTutorialNPC.Get())
+	{
+		NPC->ReturnToInitialPlacement();
+		if (JunPlayer && NPC->StartTutorialEndDialogue(JunPlayer))
+		{
+			ActiveDialogueNPC = NPC;
+			JunPlayer->BeginDialogueCamera();
+			ShowDialogueLineFromNPC(NPC);
+			JunPlayer->SnapCameraToLookAt(NPC->GetActorLocation(), -12.f);
+		}
+		else if (JunPlayer)
+		{
+			JunPlayer->EndTutorialControlLock();
+		}
 	}
 }
 
