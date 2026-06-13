@@ -78,7 +78,7 @@ protected:
 	int32 GetCurrentTraceSampleCount(const FVector& CurrentTraceStart, const FVector& CurrentTraceEnd) const;
 	void DrawAttackTraceDebug(const FVector& TraceStart, const FVector& TraceEnd, bool bSweepDebug, const FVector& PrevStart = FVector::ZeroVector, const FVector& PrevEnd = FVector::ZeroVector) const;
 
-	void ApplyDamageToHitCharacter(AActor* HitActor, const FVector& SwingDirection);
+	void ApplyDamageToHitCharacter(const FHitResult& HitResult, const FVector& SwingDirection);
 	class UNiagaraComponent* GetWeaponNiagaraComponent(EJunWeaponNiagaraComponent ComponentType) const;
 	class UNiagaraComponent* FindNiagaraComponentByName(FName ComponentName) const;
 	void CacheWeaponNiagaraComponents();
@@ -123,6 +123,9 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX")
 	FName LightingSlashNiagaraComponentName = TEXT("Lighting_Slash");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "VFX")
+	FName BloodTrailNiagaraComponentName = TEXT("Blood_Trail");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace")
 	float TraceRadius = 10.f;
@@ -197,5 +200,8 @@ protected:
 
 	UPROPERTY(Transient)
 	mutable TObjectPtr<class UNiagaraComponent> CachedLightingSlashNiagaraComponent = nullptr;
+
+	UPROPERTY(Transient)
+	mutable TObjectPtr<class UNiagaraComponent> CachedBloodTrailNiagaraComponent = nullptr;
 
 };

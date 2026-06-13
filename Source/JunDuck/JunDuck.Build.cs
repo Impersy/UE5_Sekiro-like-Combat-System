@@ -26,7 +26,8 @@ public class JunDuck : ModuleRules
 			"AIModule",
 			"UMG",
 			"MediaAssets",
-			"PhysicsCore"
+			"PhysicsCore",
+			"DeveloperSettings"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });

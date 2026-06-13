@@ -699,17 +699,25 @@ void AJunPlayerController::Input_BasicAttack(const FInputActionValue& InputValue
 		return;
 	}
 
+	if (JunPlayer->IsInDeathSequence())
+	{
+		return;
+	}
+
+	// Execution owns the basic-attack input whenever a valid execution target
+	// exists. It must be checked before action/control-lock branches so the
+	// execution transition can cancel the current action immediately.
+	if (JunPlayer->TryStartExecution())
+	{
+		return;
+	}
+
 	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
 	{
 		return;
 	}
 
 	if (JunPlayer->IsDrinkingPotion())
-	{
-		return;
-	}
-
-	if (JunPlayer->IsInDeathSequence())
 	{
 		return;
 	}
@@ -730,11 +738,6 @@ void AJunPlayerController::Input_BasicAttack(const FInputActionValue& InputValue
 		{
 			JunPlayer->TryCancelDodgeIntoBasicAttack();
 		}
-		return;
-	}
-
-	if (JunPlayer->TryStartExecution())
-	{
 		return;
 	}
 
@@ -874,11 +877,8 @@ void AJunPlayerController::Input_DefenseReleased(const FInputActionValue& InputV
 		return;
 	}
 
-	if (JunPlayer->HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
-	{
-		return;
-	}
-
+	// Release must always reach the character. Dropping it during hit/control lock
+	// leaves the defense-held intent latched after the physical button is released.
 	JunPlayer->OnDefenseReleased();
 }
 

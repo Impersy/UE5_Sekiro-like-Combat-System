@@ -5,6 +5,7 @@
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
+#include "System/JunCombatVFXSubsystem.h"
 
 AArrowProjectile::AArrowProjectile()
 {
@@ -148,6 +149,9 @@ void AArrowProjectile::OnArrowOverlap(
 	}
 
 	bHasHit = true;
+	const int32 HpBeforeHit = HitCharacter->GetHp();
+	AJunMonster* HitMonster = Cast<AJunMonster>(HitCharacter);
+	const bool bHitExecutionReadyMonster = HitMonster && HitMonster->IsExecutionReady();
 	const FVector SwingDirection = GetVelocity().GetSafeNormal();
 	FJunAttackDefenseRuleData ResolvedDefenseRuleData = DefenseRuleData;
 	ResolvedDefenseRuleData.bCanBeDodgedByInvincibility = false;
@@ -155,7 +159,7 @@ void AArrowProjectile::OnArrowOverlap(
 	{
 		HitPlayer->ReceiveHit(HitReactType, DamageData.GetFinalDamage(), OwnerCharacter.Get(), SwingDirection, DefenseKnockbackData, ResolvedDefenseRuleData, false);
 	}
-	else if (AJunMonster* HitMonster = Cast<AJunMonster>(HitCharacter))
+	else if (HitMonster)
 	{
 		HitMonster->ReceiveHit(
 			HitReactType,
@@ -165,6 +169,19 @@ void AArrowProjectile::OnArrowOverlap(
 			DefenseKnockbackData,
 			ResolvedDefenseRuleData,
 			DamageData.PoiseDamage);
+	}
+
+	if (HitCharacter->GetHp() < HpBeforeHit || bHitExecutionReadyMonster)
+	{
+		if (UJunCombatVFXSubsystem* VFXSubsystem = GetWorld()->GetSubsystem<UJunCombatVFXSubsystem>())
+		{
+			VFXSubsystem->SpawnBloodImpact(
+				HitCharacter->GetMesh(),
+				SweepResult,
+				SwingDirection,
+				OwnerCharacter->GetActorLocation(),
+				HitMonster && HitMonster->WasLastHitPhysicalReactionOnly());
+		}
 	}
 	Destroy();
 }

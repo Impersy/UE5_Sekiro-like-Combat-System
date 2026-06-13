@@ -427,6 +427,7 @@ protected: // Dodge
 protected: // Execution
 	bool CanStartExecution(const class AJunMonster* Monster) const;
 	void StartExecution(class AJunMonster* Monster);
+	void InterruptActionsForExecution();
 	void TriggerExecutionTargetMontage();
 	void FinishExecution(bool bInterrupted = false);
 	void SetExecutionCapsuleCollisionIgnore(class AJunMonster* Monster, bool bIgnore);
@@ -536,13 +537,14 @@ protected: // Hit
 		float OverrideDuration
 	);
 	void ClearCombatInputBuffers();
-	void InterruptActionsForHitReaction();
+	void InterruptActionsForHitReaction(float BlendOutTime = 0.05f);
 	void UpdatePlayerHitState(float DeltaTime);
 	void UpdateGuardBreakVulnerability(float DeltaTime);
 	bool CanUseHitReactFacingWindow() const;
 	void ReleaseHitReactControlLock();
 	bool TryCancelHitReactIntoMove();
 	bool TryCancelHitReactIntoJump();
+	bool TryCancelHitReactIntoDefense();
 	void FinishPlayerHitState();
 
 protected: // Defense
@@ -599,7 +601,7 @@ protected: // Jump / Movement Helpers
 	void CacheDefaultMovementBrakingSettings();
 	void RestoreDefaultMovementBrakingSettings();
 	void TryInitializeCameraRotationFromController();
-	void ResetCameraToSpawnView(const FRotator& SpawnRotation);
+	void ResetCameraToSpawnView(const FRotator& SpawnRotation, float CameraPitch);
 	void SnapCameraToCurrentFreeView();
 	void StartCameraHardSnap(int32 FrameCount = 2);
 	void UpdateCameraHardSnap();
@@ -785,6 +787,9 @@ protected: // Runtime Camera State
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
 	FVector2D PendingCameraLookInput = FVector2D::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
+	bool bFreeCameraYawInputActiveThisFrame = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
 	float TargetCameraYaw = 0.f;
@@ -1575,7 +1580,7 @@ protected: // Camera Tuning
 	float CameraSocketOffsetInterpSpeed = 8.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
-	float DefaultSpringArmLength = 470.f;
+	float DefaultSpringArmLength = 400.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera")
 	float PitchArmShortenStartPitch = 0.f;
@@ -1590,10 +1595,10 @@ protected: // Camera Tuning
 	float PitchArmShortenInterpSpeed = 30.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera")
-	float FreeCameraFOV = 75.f;
+	float FreeCameraFOV = 80.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera")
-	float LockOnCameraFOV = 75.f;
+	float LockOnCameraFOV = 80.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera")
 	float ExecutionCameraFOV = 75.f;
@@ -1640,7 +1645,10 @@ protected: // Camera Tuning
 	float MaxCameraPitch = 40.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Free")
-	float SpawnCameraPitch = -15.f;
+	float SpawnCameraPitch = 30.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Free")
+	float RespawnCameraPitch = -15.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera|Free")
 	float MovingLookInputScale = 0.9f;
@@ -2097,13 +2105,13 @@ protected: // Attack / Defense Tuning
 	float RealDeathSoundFadeOutTime = 1.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Recovery", meta = (ClampMin = "0"))
-	float PostureRecoveryDelay = 1.f;
+	float PostureRecoveryDelay = 0.8f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Recovery", meta = (ClampMin = "0"))
-	float PostureRecoveryRate = 50.f;
+	float PostureRecoveryRate = 40.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Recovery", meta = (ClampMin = "0"))
-	float GuardPostureRecoveryMultiplier = 2.5f;
+	float GuardPostureRecoveryMultiplier = 3.5f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture|Recovery", meta = (ClampMin = "0"))
 	float RunPostureRecoveryMultiplier = 0.5f;
@@ -2113,6 +2121,9 @@ protected: // Attack / Defense Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
 	float HitReactMoveCancelBlendOutTime = 0.25f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
+	float HitReactDefenseCancelBlendOutTime = 0.25f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0"))
 	float HitReactBlendInTime = 0.08f;
@@ -2474,11 +2485,11 @@ protected: // Attack / Defense Tuning
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpCounter", meta = (ClampMin = "0"))
 	float JumpCounterStompJumpAttackCancelBlendOutTime = 0.08f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack", meta = (ClampMin = "0"))
-	float JumpAttackStartForwardImpulseStrength = 200.f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack", meta = (ClampMin = "0", FormerlySerializedAs = "JumpAttackStartForwardImpulseStrength"))
+	float JumpAttackStartForwardVelocity = 150.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack", meta = (ClampMin = "0"))
-	float JumpAttackStationaryImpulseMaxHorizontalSpeed = 120.f;
+	float JumpAttackStartUpVelocity = 0.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "JumpAttack")
 	FName JumpAttackStartSectionName = TEXT("Start");
@@ -2569,7 +2580,7 @@ protected: // Movement / Jump Tuning
 	float WalkMoveSpeed = 250.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement")
-	float FreeRunMoveSpeed = 700.f;
+	float FreeRunMoveSpeed = 600.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Rotation", meta = (ClampMin = "0.0"))
 	float FreeRunMinTurnRotationRate = 100.f;
@@ -2579,6 +2590,12 @@ protected: // Movement / Jump Tuning
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Rotation", meta = (ClampMin = "0.01"))
 	float FreeRunTurnAngleExponent = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Rotation", meta = (ClampMin = "0.0"))
+	float FreeRunCameraTurnMinRotationRate = 300.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Rotation", meta = (ClampMin = "0.0"))
+	float FreeRunCameraTurnMaxRotationRate = 1200.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement")
 	float LockOnRunMoveSpeed = 600.f;
@@ -2688,6 +2705,12 @@ protected: // Animation Assets
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution")
 	TObjectPtr<class UAnimMontage> ExecutionFinishMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|Transition", meta = (ClampMin = "0"))
+	float ExecutionActionCancelBlendOutTime = 0.15f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|Transition", meta = (ClampMin = "0"))
+	float ExecutionMontageBlendInTime = 0.15f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution|Sound")
 	TObjectPtr<class USoundBase> ExecutionStartSound = nullptr;

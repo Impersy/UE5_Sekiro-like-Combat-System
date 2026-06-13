@@ -10,6 +10,8 @@
 #include "Weapon/JunWeaponEffectTypes.h"
 #include "JunCharacter.generated.h"
 
+class UAnimMontage;
+
 UENUM(BlueprintType)
 enum class ETeamType : uint8
 {
@@ -337,6 +339,8 @@ public:
 
 	virtual void BeginWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType);
 	virtual void EndWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType);
+	void BeginPersistentWeaponNiagara(EJunWeaponNiagaraComponent ComponentType, class UAnimMontage* OwnerMontage);
+	void EndPersistentWeaponNiagara(EJunWeaponNiagaraComponent ComponentType);
 	virtual void BeginMikiriCounterCommandWindow();
 	virtual void EndMikiriCounterCommandWindow();
 
@@ -386,6 +390,11 @@ protected:
 	void UpdatePhysicalHitReaction(float DeltaTime);
 	void StopPhysicalHitReaction();
 
+	UFUNCTION()
+	void OnPersistentWeaponNiagaraMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted);
+
+	void UnbindPersistentWeaponNiagaraSafetyIfUnused();
+
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PhysicalHit")
 	TObjectPtr<class UPhysicalAnimationComponent> PhysicalAnimationComponent;
@@ -400,6 +409,7 @@ protected:
 	int32 ActiveJumpCounterThreatCount = 0;
 
 	TMap<EJunWeaponNiagaraComponent, EJunDangerAttackType> ActiveAttackTraceDangerTypes;
+	TMap<EJunWeaponNiagaraComponent, TWeakObjectPtr<UAnimMontage>> PersistentWeaponNiagaraOwners;
 
 	UPROPERTY(BlueprintReadOnly)
 	bool bHighLighted = false;

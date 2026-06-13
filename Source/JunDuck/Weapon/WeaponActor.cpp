@@ -5,6 +5,7 @@
 #include "Character/JunPlayer.h"
 #include "DrawDebugHelpers.h"
 #include "NiagaraComponent.h"
+#include "System/JunCombatVFXSubsystem.h"
 
 // Sets default values
 AWeaponActor::AWeaponActor()
@@ -198,6 +199,7 @@ void AWeaponActor::DeactivateAllWeaponNiagara()
 	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::LightingAura);
 	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::LightingTrail);
 	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::LightingSlash);
+	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::BloodTrail);
 }
 
 void AWeaponActor::SetWeaponEffectsEnabled(bool bEnabled)
@@ -281,7 +283,7 @@ void AWeaponActor::UpdateAttackTrace()
 			CurrentFrameHitActors.Add(HitActor);
 			HitActors.Add(HitActor);
 
-			ApplyDamageToHitCharacter(HitActor, SwingDirection);
+			ApplyDamageToHitCharacter(Hit, SwingDirection);
 		}
 	}
 
@@ -393,6 +395,12 @@ UNiagaraComponent* AWeaponActor::GetWeaponNiagaraComponent(EJunWeaponNiagaraComp
 			CachedLightingSlashNiagaraComponent = FindNiagaraComponentByName(LightingSlashNiagaraComponentName);
 		}
 		return CachedLightingSlashNiagaraComponent;
+	case EJunWeaponNiagaraComponent::BloodTrail:
+		if (!CachedBloodTrailNiagaraComponent)
+		{
+			CachedBloodTrailNiagaraComponent = FindNiagaraComponentByName(BloodTrailNiagaraComponentName);
+		}
+		return CachedBloodTrailNiagaraComponent;
 	default:
 		return nullptr;
 	}
@@ -425,6 +433,7 @@ void AWeaponActor::CacheWeaponNiagaraComponents()
 	CachedSpecialTrailNiagaraComponent = FindNiagaraComponentByName(SpecialTrailNiagaraComponentName);
 	CachedAuraNiagaraComponent = FindNiagaraComponentByName(AuraNiagaraComponentName);
 	CachedJigenNiagaraComponent = FindNiagaraComponentByName(JigenNiagaraComponentName);
+	CachedBloodTrailNiagaraComponent = FindNiagaraComponentByName(BloodTrailNiagaraComponentName);
 }
 
 void AWeaponActor::WarmupWeaponNiagaraComponents()
@@ -445,6 +454,10 @@ void AWeaponActor::WarmupWeaponNiagaraComponents()
 	if (CachedJigenNiagaraComponent)
 	{
 		ComponentsToWarmup.Add(CachedJigenNiagaraComponent);
+	}
+	if (CachedBloodTrailNiagaraComponent)
+	{
+		ComponentsToWarmup.Add(CachedBloodTrailNiagaraComponent);
 	}
 
 	if (ComponentsToWarmup.IsEmpty())
@@ -508,8 +521,9 @@ void AWeaponActor::DrawAttackTraceDebug(const FVector& TraceStart, const FVector
 	}
 }
 
-void AWeaponActor::ApplyDamageToHitCharacter(AActor* HitActor, const FVector& SwingDirection)
+void AWeaponActor::ApplyDamageToHitCharacter(const FHitResult& HitResult, const FVector& SwingDirection)
 {
+	AActor* HitActor = HitResult.GetActor();
 	AJunCharacter* VictimCharacter = Cast<AJunCharacter>(HitActor);   // 맞은 대상
 	AJunCharacter* AttackerCharacter = Cast<AJunCharacter>(GetOwner()); // 공격한 대상
 
@@ -548,7 +562,9 @@ void AWeaponActor::ApplyDamageToHitCharacter(AActor* HitActor, const FVector& Sw
 
 		
 		const float FinalDamage = AttackDamageData.GetFinalDamage();
+		const int32 HpBeforeHit = VictimCharacter->GetHp();
 		AJunMonster* HitMonster = Cast<AJunMonster>(VictimCharacter);
+		const bool bHitExecutionReadyMonster = HitMonster && HitMonster->IsExecutionReady();
 
 		if (HitMonster)
 		{
@@ -569,6 +585,19 @@ void AWeaponActor::ApplyDamageToHitCharacter(AActor* HitActor, const FVector& Sw
 		{
 			// 일단 플레이어 등 다른 캐릭터는 기존 방식 유지
 			VictimCharacter->OnDamaged(FMath::RoundToInt(FinalDamage), AttackerCharacter);
+		}
+
+		if (VictimCharacter->GetHp() < HpBeforeHit || bHitExecutionReadyMonster)
+		{
+			if (UJunCombatVFXSubsystem* VFXSubsystem = GetWorld()->GetSubsystem<UJunCombatVFXSubsystem>())
+			{
+				VFXSubsystem->SpawnBloodImpact(
+					VictimCharacter->GetMesh(),
+					HitResult,
+					SwingDirection,
+					AttackerCharacter->GetActorLocation(),
+					HitMonster && HitMonster->WasLastHitPhysicalReactionOnly());
+			}
 		}
 	}
 }

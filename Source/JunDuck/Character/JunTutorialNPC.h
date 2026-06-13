@@ -307,7 +307,7 @@ protected:
 	float TutorialPostureDrainToZeroDuration = 0.55f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "TutorialNPC|Task|Execution", meta = (ClampMin = "1.0"))
-	float TutorialExecutionMaxPosture = 30.f;
+	float TutorialExecutionMaxPosture = 40.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "TutorialNPC|Task|Attack")
 	TObjectPtr<UAnimMontage> TutorialParryTrainingAttackMontage = nullptr;

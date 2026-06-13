@@ -130,7 +130,7 @@ void AJunPlayer::BeginPlay()
 	GetPlayerAnimInstance();
 	CacheDefenseEffectComponents();
 	CacheDefaultMovementBrakingSettings();
-	ResetCameraToSpawnView(GetActorRotation());
+	ResetCameraToSpawnView(GetActorRotation(), SpawnCameraPitch);
 	StartCameraHardSnap();
 
 	if (CameraAnchor)
@@ -291,6 +291,14 @@ void AJunPlayer::Tick(float DeltaTime)
 	if (bIsDodgeAttacking)
 	{
 		DodgeAttackElapsedTime += DeltaTime * GetCurrentDodgeAttackTimelineRate();
+
+		// A defense press before the dodge-attack cancel window is a hold buffer.
+		// Consume it only while the physical input is still held, so a released tap
+		// cannot leak into a later dodge and start guard unexpectedly.
+		if (bDefenseButtonHeld)
+		{
+			TryCancelDodgeAttackIntoDefense();
+		}
 	}
 
 	UpdateDodgeState(DeltaTime);
@@ -776,11 +784,11 @@ void AJunPlayer::TryInitializeCameraRotationFromController()
 		return;
 	}
 
-	ResetCameraToSpawnView(GetActorRotation());
+	ResetCameraToSpawnView(GetActorRotation(), SpawnCameraPitch);
 	StartCameraHardSnap();
 }
 
-void AJunPlayer::ResetCameraToSpawnView(const FRotator& SpawnRotation)
+void AJunPlayer::ResetCameraToSpawnView(const FRotator& SpawnRotation, const float CameraPitch)
 {
 	if (!Controller)
 	{
@@ -789,7 +797,7 @@ void AJunPlayer::ResetCameraToSpawnView(const FRotator& SpawnRotation)
 	}
 
 	TargetCameraYaw = SpawnRotation.Yaw;
-	TargetCameraPitch = FMath::Clamp(SpawnCameraPitch, MinCameraPitch, MaxCameraPitch);
+	TargetCameraPitch = FMath::Clamp(CameraPitch, MinCameraPitch, MaxCameraPitch);
 	Controller->SetControlRotation(FRotator(TargetCameraPitch, TargetCameraYaw, 0.f));
 	bCameraRotationInitialized = true;
 }
@@ -872,7 +880,13 @@ void AJunPlayer::UpdateFreeRunRotationRate()
 		return;
 	}
 
-	const float MaxTurnRate = FMath::Max(0.f, FreeRunMaxTurnRotationRate);
+	const bool bUseCameraTurnRate = bFreeCameraYawInputActiveThisFrame;
+	const float MinTurnRate = FMath::Max(
+		0.f,
+		bUseCameraTurnRate ? FreeRunCameraTurnMinRotationRate : FreeRunMinTurnRotationRate);
+	const float MaxTurnRate = FMath::Max(
+		MinTurnRate,
+		bUseCameraTurnRate ? FreeRunCameraTurnMaxRotationRate : FreeRunMaxTurnRotationRate);
 	if (CameraMode != EJunCameraMode::Free ||
 		bLockOnActive ||
 		!MovementComponent->bOrientRotationToMovement ||
@@ -911,7 +925,7 @@ void AJunPlayer::UpdateFreeRunRotationRate()
 	const float AngleAlpha = FMath::Clamp(TurnAngle / 180.f, 0.f, 1.f);
 	const float CurvedAlpha = FMath::Pow(AngleAlpha, FMath::Max(0.01f, FreeRunTurnAngleExponent));
 	const float TurnRate = FMath::Lerp(
-		FMath::Max(0.f, FreeRunMinTurnRotationRate),
+		MinTurnRate,
 		MaxTurnRate,
 		CurvedAlpha
 	);
@@ -1222,7 +1236,7 @@ void AJunPlayer::Jump()
 		CancelJigenForRecoveryTransition(JigenJumpCancelBlendOutTime);
 	}
 
-	if (CurrentHitState == EJunPlayerHitState::HitReact && !TryCancelHitReactIntoJump())
+	if (CurrentHitState == EJunPlayerHitState::HitReact)
 	{
 		return;
 	}
@@ -1642,6 +1656,11 @@ void AJunPlayer::StartDodge()
 
 void AJunPlayer::StartDodgeInternal(bool bIgnoreDodgeBlockAndReleaseGate)
 {
+	if (CurrentHitState == EJunPlayerHitState::HitReact)
+	{
+		return;
+	}
+
 	if (bIsDodgeAttacking)
 	{
 		TryCancelDodgeAttackIntoDodge();
@@ -1848,6 +1867,28 @@ void AJunPlayer::OnDefenseStarted()
 		{
 			ParrySuccessDefenseHoldElapsedTime = 0.f;
 		}
+		return;
+	}
+
+	if (CurrentHitState == EJunPlayerHitState::GuardBlock)
+	{
+		// Re-pressing during a guard hit only refreshes the hold intent.
+		// A new GuardStart would overlap the active block reaction.
+		bDefenseButtonHeld = true;
+		bHoldRequestedForCurrentDeflect = true;
+		return;
+	}
+
+	if (CurrentHitState == EJunPlayerHitState::HitReact)
+	{
+		bDefenseButtonHeld = true;
+		bHoldRequestedForCurrentDeflect = true;
+		TryCancelHitReactIntoDefense();
+		return;
+	}
+
+	if (CurrentHitState == EJunPlayerHitState::GuardBreak)
+	{
 		return;
 	}
 
@@ -4505,35 +4546,26 @@ void AJunPlayer::StartJumpAttack()
 	CancelLockOnTurn();
 	TargetActor = LockOnTarget ? LockOnTarget.Get() : FindBestAttackTarget();
 
-	const FVector HorizontalVelocity = FVector(GetVelocity().X, GetVelocity().Y, 0.f);
-	const bool bHasMoveInput = !FMath::IsNearlyZero(DesiredMoveForward) ||
-		!FMath::IsNearlyZero(DesiredMoveRight) ||
-		!FMath::IsNearlyZero(PendingMoveForward) ||
-		!FMath::IsNearlyZero(PendingMoveRight);
-	const bool bShouldApplyStationaryJumpAttackImpulse =
-		!bHasMoveInput &&
-		HorizontalVelocity.SizeSquared() <= FMath::Square(JumpAttackStationaryImpulseMaxHorizontalSpeed);
-
-	if (bShouldApplyStationaryJumpAttackImpulse && JumpAttackStartForwardImpulseStrength > 0.f)
+	FVector ForwardVelocityDirection = FVector::ZeroVector;
+	if (TargetActor)
 	{
-		FVector ForwardImpulseDirection = FVector::ZeroVector;
-		if (TargetActor)
-		{
-			ForwardImpulseDirection = TargetActor->GetActorLocation() - GetActorLocation();
-			ForwardImpulseDirection.Z = 0.f;
-		}
+		ForwardVelocityDirection = TargetActor->GetActorLocation() - GetActorLocation();
+		ForwardVelocityDirection.Z = 0.f;
+	}
 
-		if (ForwardImpulseDirection.IsNearlyZero())
-		{
-			ForwardImpulseDirection = GetActorForwardVector();
-			ForwardImpulseDirection.Z = 0.f;
-		}
+	if (ForwardVelocityDirection.IsNearlyZero())
+	{
+		ForwardVelocityDirection = GetActorForwardVector();
+		ForwardVelocityDirection.Z = 0.f;
+	}
 
-		if (!ForwardImpulseDirection.IsNearlyZero())
-		{
-			ForwardImpulseDirection.Normalize();
-			GetCharacterMovement()->AddImpulse(ForwardImpulseDirection * JumpAttackStartForwardImpulseStrength, true);
-		}
+	ForwardVelocityDirection.Normalize();
+	const FVector JumpAttackAddedVelocity =
+		(ForwardVelocityDirection * FMath::Max(0.f, JumpAttackStartForwardVelocity)) +
+		(FVector::UpVector * FMath::Max(0.f, JumpAttackStartUpVelocity));
+	if (!JumpAttackAddedVelocity.IsNearlyZero())
+	{
+		LaunchCharacter(JumpAttackAddedVelocity, false, false);
 	}
 
 	AddGameplayTag(JunGameplayTags::State_Action_Attack);
@@ -5249,7 +5281,7 @@ void AJunPlayer::StartExecution(AJunMonster* Monster)
 		return;
 	}
 
-	InterruptActionsForHitReaction();
+	InterruptActionsForExecution();
 	FinishPlayerHitState();
 
 	bIsExecuting = true;
@@ -5315,7 +5347,10 @@ void AJunPlayer::StartExecution(AJunMonster* Monster)
 
 	AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnExecutionMontageEnded);
 	AnimInstance->OnMontageEnded.AddDynamic(this, &AJunPlayer::OnExecutionMontageEnded);
-	const float PlayResult = PlayAnimMontage(CurrentExecutionMontage);
+	const FMontageBlendSettings ExecutionBlendInSettings(FMath::Max(0.f, ExecutionMontageBlendInTime));
+	const float PlayResult = AnimInstance->Montage_PlayWithBlendSettings(
+		CurrentExecutionMontage,
+		ExecutionBlendInSettings);
 	if (PlayResult <= 0.f)
 	{
 		UE_LOG(LogJun, Warning,
@@ -5325,6 +5360,11 @@ void AJunPlayer::StartExecution(AJunMonster* Monster)
 			*GetNameSafe(CurrentExecutionMontage));
 		FinishExecution(true);
 	}
+}
+
+void AJunPlayer::InterruptActionsForExecution()
+{
+	InterruptActionsForHitReaction(FMath::Max(0.f, ExecutionActionCancelBlendOutTime));
 }
 
 void AJunPlayer::TriggerExecutionTargetMontage()
@@ -6995,6 +7035,9 @@ void AJunPlayer::ClearCombatInputBuffers()
 	BufferedDefenseTransitionCancelAction = EJunBufferedDefenseCancelAction::None;
 	BufferedParrySuccessCancelAction = EJunBufferedParrySuccessCancelAction::None;
 	bParrySuccessHeavyAttackInputHeld = false;
+	bDefenseButtonHeld = false;
+	bHoldRequestedForCurrentDeflect = false;
+	ParrySuccessDefenseHoldElapsedTime = 0.f;
 }
 
 void AJunPlayer::ClearDeathControlLock()
@@ -7155,7 +7198,7 @@ void AJunPlayer::RespawnAtPlayerStart()
 	}
 
 	EndLockOn();
-	ResetCameraToSpawnView(SpawnViewRotation);
+	ResetCameraToSpawnView(SpawnViewRotation, RespawnCameraPitch);
 	StartCameraHardSnap(3);
 	ClearDeathControlLock();
 
@@ -7258,6 +7301,7 @@ void AJunPlayer::StartLockOnAfterFakeDeathRevive(AJunCharacter* NewTarget)
 
 void AJunPlayer::ClearHitReactRuntimeStateForRevive()
 {
+	GetWorldTimerManager().ClearTimer(GuardBlockReleaseIntoGuardEndTimerHandle);
 	CurrentHitState = EJunPlayerHitState::None;
 	PlayerHitStateRemainTime = 0.f;
 	PlayerHitControlLockRemainTime = 0.f;
@@ -7907,6 +7951,7 @@ bool AJunPlayer::TryOpenMikiriCounterWindow(bool bRequireForwardInput)
 		Is_Dead() ||
 		bIsExecuting ||
 		IsInDeathSequence() ||
+		CurrentHitState != EJunPlayerHitState::None ||
 		(GetCharacterMovement() && GetCharacterMovement()->IsFalling()))
 	{
 		return false;
@@ -8259,6 +8304,7 @@ void AJunPlayer::StartParrySuccess()
 
 void AJunPlayer::StartGuardBlock()
 {
+	GetWorldTimerManager().ClearTimer(GuardBlockReleaseIntoGuardEndTimerHandle);
 	PlayDefenseEffect(
 		CachedDeflectParticleComponent,
 		DeflectParticleComponentName,
@@ -8919,9 +8965,22 @@ void AJunPlayer::ApplyCommonKnockback(
 	MovementComponent->AddImpulse(KnockbackDirection * Strength, true);
 }
 
-void AJunPlayer::InterruptActionsForHitReaction()
+void AJunPlayer::InterruptActionsForHitReaction(float BlendOutTime)
 {
+	const float ResolvedBlendOutTime = FMath::Max(0.f, BlendOutTime);
 	FinishDrinkPotion(true);
+
+	if (bMikiriCounterWindowOpen ||
+		MikiriCounterReadyRemainTime > 0.f ||
+		CurrentMikiriParryReadyMontage)
+	{
+		if (AnimInstance && CurrentMikiriParryReadyMontage)
+		{
+			AnimInstance->Montage_Stop(ResolvedBlendOutTime, CurrentMikiriParryReadyMontage);
+		}
+
+		FinishMikiriCounterReady();
+	}
 
 	if (EquippedWeapon)
 	{
@@ -8930,12 +8989,18 @@ void AJunPlayer::InterruptActionsForHitReaction()
 
 	if (HasGameplayTag(JunGameplayTags::State_Action_Dodge))
 	{
+		if (AnimInstance && CurrentDodgeMontage)
+		{
+			AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnDodgeMontageEnded);
+			AnimInstance->Montage_Stop(ResolvedBlendOutTime, CurrentDodgeMontage);
+		}
+
 		FinishDodgeState();
 	}
 
 	if (bIsBasicAttacking)
 	{
-		CancelBasicAttackForRecoveryTransition();
+		CancelBasicAttackForRecoveryTransition(ResolvedBlendOutTime);
 	}
 
 	if (bIsHeavyAttacking)
@@ -8943,7 +9008,7 @@ void AJunPlayer::InterruptActionsForHitReaction()
 		if (AnimInstance && CurrentHeavyAttackMontage)
 		{
 			AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnHeavyAttackMontageEnded);
-			AnimInstance->Montage_Stop(0.05f, CurrentHeavyAttackMontage);
+			AnimInstance->Montage_Stop(ResolvedBlendOutTime, CurrentHeavyAttackMontage);
 		}
 
 		FinishHeavyAttack();
@@ -8954,7 +9019,7 @@ void AJunPlayer::InterruptActionsForHitReaction()
 		if (AnimInstance && JigenMontage)
 		{
 			AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnJigenMontageEnded);
-			AnimInstance->Montage_Stop(0.05f, JigenMontage);
+			AnimInstance->Montage_Stop(ResolvedBlendOutTime, JigenMontage);
 		}
 
 		FinishJigen();
@@ -8965,7 +9030,7 @@ void AJunPlayer::InterruptActionsForHitReaction()
 		if (AnimInstance && JumpAttackMontage)
 		{
 			AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnJumpAttackMontageEnded);
-			AnimInstance->Montage_Stop(0.05f, JumpAttackMontage);
+			AnimInstance->Montage_Stop(ResolvedBlendOutTime, JumpAttackMontage);
 		}
 
 		FinishJumpAttack();
@@ -8976,7 +9041,7 @@ void AJunPlayer::InterruptActionsForHitReaction()
 		if (AnimInstance && CurrentDodgeAttackMontage)
 		{
 			AnimInstance->OnMontageEnded.RemoveDynamic(this, &AJunPlayer::OnDodgeAttackMontageEnded);
-			AnimInstance->Montage_Stop(0.05f, CurrentDodgeAttackMontage);
+			AnimInstance->Montage_Stop(ResolvedBlendOutTime, CurrentDodgeAttackMontage);
 		}
 
 		FinishDodgeAttack();
@@ -8993,22 +9058,22 @@ void AJunPlayer::InterruptActionsForHitReaction()
 
 			if (GuardStartMontage)
 			{
-				AnimInstance->Montage_Stop(0.05f, GuardStartMontage);
+				AnimInstance->Montage_Stop(ResolvedBlendOutTime, GuardStartMontage);
 			}
 
 			if (GuardEndMontage)
 			{
-				AnimInstance->Montage_Stop(0.05f, GuardEndMontage);
+				AnimInstance->Montage_Stop(ResolvedBlendOutTime, GuardEndMontage);
 			}
 
 			if (AirGuardStartMontage)
 			{
-				AnimInstance->Montage_Stop(0.05f, AirGuardStartMontage);
+				AnimInstance->Montage_Stop(ResolvedBlendOutTime, AirGuardStartMontage);
 			}
 
 			if (AirGuardEndMontage)
 			{
-				AnimInstance->Montage_Stop(0.05f, AirGuardEndMontage);
+				AnimInstance->Montage_Stop(ResolvedBlendOutTime, AirGuardEndMontage);
 			}
 		}
 
@@ -9097,20 +9162,19 @@ void AJunPlayer::UpdateGuardBreakVulnerability(float DeltaTime)
 void AJunPlayer::ReleaseHitReactControlLock()
 {
 	RemoveGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
-	RemoveGameplayTag(JunGameplayTags::State_Block_Jump);
-	RemoveGameplayTag(JunGameplayTags::State_Block_Attack);
-	RemoveGameplayTag(JunGameplayTags::State_Block_Dodge);
 
 	if (CurrentHitState == EJunPlayerHitState::HitReact)
 	{
-		if (TryCancelHitReactIntoMove())
-		{
-			return;
-		}
-
+		// Move and defense have explicit hit-react cancel paths. Jump and dodge
+		// remain blocked until HitReact itself ends.
+		RemoveGameplayTag(JunGameplayTags::State_Block_Attack);
+		TryCancelHitReactIntoMove();
 		return;
 	}
 
+	RemoveGameplayTag(JunGameplayTags::State_Block_Jump);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Attack);
+	RemoveGameplayTag(JunGameplayTags::State_Block_Dodge);
 	RemoveGameplayTag(JunGameplayTags::State_Block_Move);
 }
 
@@ -9209,8 +9273,40 @@ bool AJunPlayer::TryCancelHitReactIntoJump()
 	return true;
 }
 
+bool AJunPlayer::TryCancelHitReactIntoDefense()
+{
+	if (CurrentHitState != EJunPlayerHitState::HitReact ||
+		HasGameplayTag(JunGameplayTags::State_Condition_ControlLocked))
+	{
+		return false;
+	}
+
+	if (AnimInstance)
+	{
+		if (UAnimMontage* HitReactMontage = CurrentHitReactMontage.Get())
+		{
+			AnimInstance->Montage_Stop(HitReactDefenseCancelBlendOutTime, HitReactMontage);
+		}
+	}
+
+	FinishPlayerHitState();
+
+	if (GetCharacterMovement() && GetCharacterMovement()->IsFalling())
+	{
+		bHoldRequestedForCurrentDeflect = false;
+		StartAirParrySequence();
+	}
+	else
+	{
+		StartDefenseSequence();
+	}
+
+	return true;
+}
+
 void AJunPlayer::FinishPlayerHitState()
 {
+	GetWorldTimerManager().ClearTimer(GuardBlockReleaseIntoGuardEndTimerHandle);
 	const bool bWasGuardBlock = CurrentHitState == EJunPlayerHitState::GuardBlock;
 	const bool bWasGuardBreak = CurrentHitState == EJunPlayerHitState::GuardBreak;
 	const bool bShouldEndGuardAfterGuardBlock = bWasGuardBlock && !bDefenseButtonHeld;
@@ -10231,6 +10327,8 @@ float AJunPlayer::GetPitchAdjustedSpringArmLength() const
 
 void AJunPlayer::UpdateFreeCamera(float DeltaTime)
 {
+	bFreeCameraYawInputActiveThisFrame = false;
+
 	if (!Controller)
 	{
 		PendingCameraLookInput = FVector2D::ZeroVector;
@@ -10238,6 +10336,7 @@ void AJunPlayer::UpdateFreeCamera(float DeltaTime)
 	}
 
 	FVector2D Input = PendingCameraLookInput;
+	bFreeCameraYawInputActiveThisFrame = !FMath::IsNearlyZero(Input.X);
 
 	if (GetVelocity().SizeSquared2D() > 0.f)
 	{

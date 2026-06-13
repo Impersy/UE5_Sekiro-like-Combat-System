@@ -2,6 +2,8 @@
 
 
 #include "Character/JunCharacter.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 #include "JunDefine.h"
 #include "JunGameplayTags.h"
 #include "JunLogChannels.h"
@@ -266,6 +268,81 @@ void AJunCharacter::BeginWeaponNiagaraWindow(EJunWeaponNiagaraComponent Componen
 
 void AJunCharacter::EndWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType)
 {
+}
+
+void AJunCharacter::BeginPersistentWeaponNiagara(
+	const EJunWeaponNiagaraComponent ComponentType,
+	UAnimMontage* OwnerMontage)
+{
+	if (ComponentType == EJunWeaponNiagaraComponent::None)
+	{
+		return;
+	}
+
+	BeginWeaponNiagaraWindow(ComponentType);
+	PersistentWeaponNiagaraOwners.Add(ComponentType, OwnerMontage);
+
+	if (UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+	{
+		AnimInstance->OnMontageBlendingOut.RemoveDynamic(
+			this,
+			&AJunCharacter::OnPersistentWeaponNiagaraMontageBlendingOut);
+		AnimInstance->OnMontageBlendingOut.AddDynamic(
+			this,
+			&AJunCharacter::OnPersistentWeaponNiagaraMontageBlendingOut);
+	}
+}
+
+void AJunCharacter::EndPersistentWeaponNiagara(const EJunWeaponNiagaraComponent ComponentType)
+{
+	if (ComponentType == EJunWeaponNiagaraComponent::None)
+	{
+		return;
+	}
+
+	PersistentWeaponNiagaraOwners.Remove(ComponentType);
+	EndWeaponNiagaraWindow(ComponentType);
+	UnbindPersistentWeaponNiagaraSafetyIfUnused();
+}
+
+void AJunCharacter::OnPersistentWeaponNiagaraMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted)
+{
+	if (!Montage)
+	{
+		return;
+	}
+
+	TArray<EJunWeaponNiagaraComponent> ComponentsToDeactivate;
+	for (const TPair<EJunWeaponNiagaraComponent, TWeakObjectPtr<UAnimMontage>>& Pair : PersistentWeaponNiagaraOwners)
+	{
+		if (Pair.Value.Get() == Montage)
+		{
+			ComponentsToDeactivate.Add(Pair.Key);
+		}
+	}
+
+	for (const EJunWeaponNiagaraComponent ComponentType : ComponentsToDeactivate)
+	{
+		PersistentWeaponNiagaraOwners.Remove(ComponentType);
+		EndWeaponNiagaraWindow(ComponentType);
+	}
+
+	UnbindPersistentWeaponNiagaraSafetyIfUnused();
+}
+
+void AJunCharacter::UnbindPersistentWeaponNiagaraSafetyIfUnused()
+{
+	if (!PersistentWeaponNiagaraOwners.IsEmpty())
+	{
+		return;
+	}
+
+	if (UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+	{
+		AnimInstance->OnMontageBlendingOut.RemoveDynamic(
+			this,
+			&AJunCharacter::OnPersistentWeaponNiagaraMontageBlendingOut);
+	}
 }
 
 FVector AJunCharacter::GetLockOnTargetPoint() const

@@ -150,6 +150,7 @@ public:
 		const FJunAttackDefenseRuleData& DefenseRuleData = FJunAttackDefenseRuleData());
 	virtual bool NotifyMikiriCounteredBy(class AJunPlayer* CounterPlayer);
 	bool IsExecutionReady() const;
+	bool WasLastHitPhysicalReactionOnly() const { return bLastHitPhysicalReactionOnly; }
 	bool CanBeExecutedBy(const class AJunPlayer* Player) const;
 	virtual bool TryBeginExecutionBy(class AJunPlayer* Player);
 	virtual void TriggerPendingExecutionMontage(bool bApplyResultImmediately = true);
@@ -672,6 +673,12 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0.1"))
 	float ExecutionReadyDuration = 2.5f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|Transition", meta = (ClampMin = "0"))
+	float ExecutionReadyMontageBlendInTime = 0.15f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|Transition", meta = (ClampMin = "0"))
+	float ExecutedMontageBlendInTime = 0.15f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion")
 	bool bEnableExecutionReadySlowMotion = true;
 
@@ -725,6 +732,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
 	float ExecutionReadyRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	float ExecutionInputUnlockRealTime = 0.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
 	TObjectPtr<class AJunPlayer> CurrentExecutionInstigator = nullptr;
@@ -839,6 +849,9 @@ protected:
 
 protected:
 	// Hit react runtime state, timing, and animation assets.
+	UPROPERTY(Transient)
+	bool bLastHitPhysicalReactionOnly = false;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
 	EHitReactType CurrentHitReact = EHitReactType::None;
 

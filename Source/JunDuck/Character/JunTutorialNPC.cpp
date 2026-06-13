@@ -25,7 +25,7 @@ AJunTutorialNPC::AJunTutorialNPC()
 	bStartWithCutsceneWait = false;
 	Hp = 100;
 	MaxHp = 100;
-	MaxPosture = 100.f;
+	MaxPosture = 40.f;
 
 	DialogueRangeSphere = CreateDefaultSubobject<USphereComponent>(TEXT("DialogueRangeSphere"));
 	DialogueRangeSphere->SetupAttachment(RootComponent);

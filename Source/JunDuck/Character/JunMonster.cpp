@@ -437,8 +437,18 @@ void AJunMonster::ReceiveHit(
 	const FJunAttackDefenseRuleData& DefenseRuleData,
 	float PostureDamageAmount)
 {
+	bLastHitPhysicalReactionOnly = false;
+
 	if (CurrentState == EMonsterState::Dead || bBeingExecuted)
 	{
+		return;
+	}
+
+	// 처형 대기 중에는 레디 포즈와 상태를 유지한 채 타격 연출만 허용한다.
+	// 데미지, 체간, 히트 리액션, 넉백, 히트스탑은 적용하지 않는다.
+	if (bExecutionReady)
+	{
+		PlayHitDamageSound();
 		return;
 	}
 
@@ -483,6 +493,7 @@ void AJunMonster::ReceiveHit(
 				? (GetActorLocation() - (DamageCauser ? DamageCauser->GetActorLocation() : GetActorLocation())).GetSafeNormal()
 				: SwingDirection.GetSafeNormal();
 			ApplyPhysicalHitReaction(PhysicalHitDirection, SuperArmorPhysicalHitReactionSettings, 1.f);
+			bLastHitPhysicalReactionOnly = true;
 			RequestPlayerAttackHitStop(AttackerCharacter);
 			OnIncomingHitResolvedWithoutHitReact(HitType);
 			return;
@@ -508,6 +519,7 @@ void AJunMonster::ReceiveHit(
 			? (GetActorLocation() - (DamageCauser ? DamageCauser->GetActorLocation() : GetActorLocation())).GetSafeNormal()
 			: SwingDirection.GetSafeNormal();
 		ApplyPhysicalHitReaction(PhysicalHitDirection, SuperArmorPhysicalHitReactionSettings, 1.f);
+		bLastHitPhysicalReactionOnly = true;
 		RequestPlayerAttackHitStop(AttackerCharacter);
 		OnIncomingHitResolvedWithoutHitReact(HitType);
 		return;
@@ -519,6 +531,7 @@ void AJunMonster::ReceiveHit(
 			? (GetActorLocation() - (DamageCauser ? DamageCauser->GetActorLocation() : GetActorLocation())).GetSafeNormal()
 			: SwingDirection.GetSafeNormal();
 		ApplyPhysicalHitReaction(PhysicalHitDirection, SuperArmorPhysicalHitReactionSettings, 1.f);
+		bLastHitPhysicalReactionOnly = true;
 		RequestPlayerAttackHitStop(AttackerCharacter);
 		OnIncomingHitResolvedWithoutHitReact(HitType);
 		return;
@@ -672,6 +685,12 @@ bool AJunMonster::CanBeExecutedBy(const AJunPlayer* Player) const
 		return false;
 	}
 
+	if (const UWorld* World = GetWorld();
+		World && World->GetRealTimeSeconds() < ExecutionInputUnlockRealTime)
+	{
+		return false;
+	}
+
 	const float Range = FMath::Max(ExecutionInteractRange, 0.f);
 	if (FVector::DistSquared2D(GetActorLocation(), Player->GetActorLocation()) > FMath::Square(Range))
 	{
@@ -703,6 +722,7 @@ bool AJunMonster::TryBeginExecutionBy(AJunPlayer* Player)
 	CurrentExecutionInstigator = Player;
 	CurrentExecutionMontage = nullptr;
 	ExecutionReadyRemainTime = 0.f;
+	ExecutionInputUnlockRealTime = 0.f;
 	CurrentPosture = 0.f;
 	PostureRecoveryDelayRemainTime = 0.f;
 	GetWorldTimerManager().ClearTimer(ExecutionRecoveryTimerHandle);
@@ -726,14 +746,6 @@ bool AJunMonster::TryBeginExecutionBy(AJunPlayer* Player)
 	AddGameplayTag(JunGameplayTags::State_Condition_ControlLocked);
 	AddGameplayTag(JunGameplayTags::State_Condition_Invincible);
 	AddGameplayTag(JunGameplayTags::State_Block_Move);
-
-	if (ReadyExecutedMontage)
-	{
-		if (UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
-		{
-			MonsterAnimInstance->Montage_Stop(0.05f, ReadyExecutedMontage);
-		}
-	}
 
 	OnExecutionReadyEnded(false);
 
@@ -764,7 +776,11 @@ void AJunMonster::TriggerPendingExecutionMontage(bool bApplyResultImmediately)
 			}
 		}
 
-		PlayAnimMontage(MontageToPlay);
+		if (UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+		{
+			const FMontageBlendSettings BlendInSettings(FMath::Max(0.f, ExecutedMontageBlendInTime));
+			MonsterAnimInstance->Montage_PlayWithBlendSettings(MontageToPlay, BlendInSettings);
+		}
 	}
 
 	if (bApplyResultImmediately)
@@ -3623,6 +3639,7 @@ void AJunMonster::StartExecutionReady()
 
 	bExecutionReady = true;
 	ExecutionReadyRemainTime = FMath::Max(0.1f, ExecutionReadyDuration);
+	ExecutionInputUnlockRealTime = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.f;
 	CurrentPosture = MaxPosture;
 	PostureRecoveryDelayRemainTime = ExecutionReadyRemainTime;
 
@@ -3645,19 +3662,28 @@ void AJunMonster::StartExecutionReady()
 
 	if (ReadyExecutedMontage)
 	{
-		PlayAnimMontage(ReadyExecutedMontage);
+		if (UAnimInstance* MonsterAnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+		{
+			const FMontageBlendSettings BlendInSettings(FMath::Max(0.f, ExecutionReadyMontageBlendInTime));
+			MonsterAnimInstance->Montage_PlayWithBlendSettings(ReadyExecutedMontage, BlendInSettings);
+		}
 	}
 
 	if (bEnableExecutionReadySlowMotion && GetWorld())
 	{
 		if (UJunTimeEffectSubsystem* TimeEffectSubsystem = GetWorld()->GetSubsystem<UJunTimeEffectSubsystem>())
 		{
-			TimeEffectSubsystem->RequestSlowMotion(
+			const bool bSlowMotionStarted = TimeEffectSubsystem->RequestSlowMotion(
 				ExecutionReadySlowMotionDuration,
 				ExecutionReadySlowMotionTimeScale,
 				ExecutionReadySlowMotionBlendInTime,
 				ExecutionReadySlowMotionBlendOutTime,
 				ExecutionReadySlowMotionPriority);
+			if (bSlowMotionStarted)
+			{
+				ExecutionInputUnlockRealTime = GetWorld()->GetRealTimeSeconds() +
+					FMath::Max(0.f, ExecutionReadySlowMotionDuration);
+			}
 		}
 	}
 }
@@ -3671,6 +3697,7 @@ void AJunMonster::EndExecutionReady()
 
 	bExecutionReady = false;
 	ExecutionReadyRemainTime = 0.f;
+	ExecutionInputUnlockRealTime = 0.f;
 	CurrentPosture = MaxPosture > 0.f
 		? FMath::Clamp(MaxPosture * MissedExecutionPostureRatio, 0.f, MaxPosture - KINDA_SMALL_NUMBER)
 		: 0.f;
@@ -3846,6 +3873,7 @@ void AJunMonster::ResetExecutionRuntimeState()
 	bBeingExecuted = false;
 	bExecutionResultApplied = false;
 	ExecutionReadyRemainTime = 0.f;
+	ExecutionInputUnlockRealTime = 0.f;
 	CurrentExecutionInstigator = nullptr;
 	CurrentExecutionMontage = nullptr;
 	CurrentPosture = 0.f;

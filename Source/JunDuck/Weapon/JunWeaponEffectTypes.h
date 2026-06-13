@@ -13,5 +13,6 @@ enum class EJunWeaponNiagaraComponent : uint8
 	LightingAura,
 	LightingTrail,
 	LightingSlash,
-	None
+	None,
+	BloodTrail UMETA(DisplayName = "Blood Trail")
 };
