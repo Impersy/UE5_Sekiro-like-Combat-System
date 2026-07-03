@@ -7,6 +7,15 @@
 class UNiagaraSystem;
 class USkeletalMeshComponent;
 
+UENUM(BlueprintType)
+enum class EJunCombatDefenseVFX : uint8
+{
+	PerfectParry,
+	NormalParry,
+	GuardHit,
+	GuardBreak
+};
+
 UCLASS()
 class JUNDUCK_API UJunCombatVFXSubsystem : public UWorldSubsystem
 {
@@ -29,6 +38,12 @@ public:
 		float ScaleMultiplier = 1.f,
 		bool bAutoDestroy = true);
 
+	UFUNCTION(BlueprintCallable, Category = "Jun|CombatVFX")
+	void SpawnDefenseEffect(
+		EJunCombatDefenseVFX EffectType,
+		const USceneComponent* LocationComponent,
+		float ScaleMultiplier = 1.f);
+
 	void SpawnBloodImpact(
 		USkeletalMeshComponent* VictimMesh,
 		const FHitResult& InitialHit,
@@ -37,6 +52,18 @@ public:
 		bool bPhysicalHitOnly = false);
 
 private:
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraSystem> PerfectParryNiagaraSystem = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraSystem> NormalParryNiagaraSystem = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraSystem> GuardHitNiagaraSystem = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraSystem> GuardBreakNiagaraSystem = nullptr;
+
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UNiagaraSystem>> BloodNiagaraSystems;
 

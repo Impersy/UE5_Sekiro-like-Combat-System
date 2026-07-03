@@ -2,7 +2,8 @@
 
 
 #include "Animation/JunPlayerAnimInstance.h"
-#include "Character/JunPlayer.h"
+#include "Character/Player/JunPlayer.h"
+#include "GameFramework/CharacterMovementComponent.h"
 
 void UJunPlayerAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 {
@@ -21,6 +22,7 @@ void UJunPlayerAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 		bJumpStartTriggered = false;
 		bSuppressLandingAnim = false;
 		bSuppressAirborneAnim = false;
+		FootPlacementAlpha = 0.f;
 		bUseGuardBase = false;
 		DefenseState = EJunDefenseState::None;
 		bIsGuardStarting = false;
@@ -50,6 +52,31 @@ void UJunPlayerAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	bJumpStartTriggered = Player->IsJumpStartAnimTriggered();
 	bSuppressLandingAnim = Player->ShouldSuppressLandingAnim();
 	bSuppressAirborneAnim = Player->ShouldSuppressAirborneAnim();
+
+	float TargetFootPlacementAlpha = 0.f;
+	if (const UCharacterMovementComponent* PlayerMovementComponent = Player->GetCharacterMovement())
+	{
+		if (!PlayerMovementComponent->IsFalling() && PlayerMovementComponent->CurrentFloor.IsWalkableFloor())
+		{
+			const FVector FloorNormal = PlayerMovementComponent->CurrentFloor.HitResult.ImpactNormal.GetSafeNormal();
+			const float FloorNormalZ = FMath::Clamp(FloorNormal.Z, -1.f, 1.f);
+			const float SlopeAngle = FMath::RadiansToDegrees(FMath::Acos(FloorNormalZ));
+			const float FullAngle = FMath::Max(FootPlacementSlopeStartAngle + KINDA_SMALL_NUMBER, FootPlacementSlopeFullAngle);
+			TargetFootPlacementAlpha = FMath::GetMappedRangeValueClamped(
+				FVector2D(FootPlacementSlopeStartAngle, FullAngle),
+				FVector2D(0.f, 1.f),
+				SlopeAngle);
+		}
+	}
+
+	FootPlacementAlpha = FootPlacementAlphaInterpSpeed > 0.f
+		? FMath::FInterpTo(FootPlacementAlpha, TargetFootPlacementAlpha, DeltaSeconds, FootPlacementAlphaInterpSpeed)
+		: TargetFootPlacementAlpha;
+	if (FMath::IsNearlyEqual(FootPlacementAlpha, TargetFootPlacementAlpha, 0.001f))
+	{
+		FootPlacementAlpha = TargetFootPlacementAlpha;
+	}
+
 	bUseGuardBase = Player->ShouldUseGuardBase();
 	DefenseState = Player->GetDefenseState();
 	bIsGuardStarting = DefenseState == EJunDefenseState::Starting;

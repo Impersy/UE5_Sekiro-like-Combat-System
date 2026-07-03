@@ -3,7 +3,7 @@
 
 #include "AI/JunAIController.h"
 #include "Navigation/PathFollowingComponent.h"
-#include "Character/JunMonster.h"
+#include "Character/Monster/JunMonster.h"
 
 AJunAIController::AJunAIController(const FObjectInitializer& objectInitializer)
 {

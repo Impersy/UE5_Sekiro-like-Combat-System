@@ -6,7 +6,10 @@
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
 #include "Components/Widget.h"
-#include "Character/JunTutorialNPC.h"
+#include "Character/Monster/TutorialNPC/JunTutorialNPC.h"
+#include "PlayerController/JunPlayerController.h"
+#include "Input/Events.h"
+#include "InputCoreTypes.h"
 #include "MediaPlayer.h"
 #include "MediaSource.h"
 
@@ -29,6 +32,9 @@ void UJunCombatHUDWidget::NativeConstruct()
 	ApplyBossLifeWidgets();
 	HideDialogue();
 	ApplyWidgetOpacity(Tutorial_DimBlack, 0.f);
+	HidePauseMenu();
+	BeginRestartFadeFromBlack();
+	ApplyMapNoticeVisibility();
 	HideTutorialGuides();
 	HideTutorialTask();
 	if (PlayerPostureGuideMediaPlayer)
@@ -98,6 +104,28 @@ void UJunCombatHUDWidget::ShowPlayerPostureGuide()
 	}
 }
 
+FReply UJunCombatHUDWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	if (Pause_Root && Pause_Root->GetVisibility() == ESlateVisibility::Visible &&
+		!bRestartFadeToBlackActive && !bRestartFadeFromBlackActive &&
+		InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+	{
+		if (Restart_Game && Restart_Game->IsHovered())
+		{
+			HandleRestartClicked();
+			return FReply::Handled();
+		}
+
+		if (Quit_Game && Quit_Game->IsHovered())
+		{
+			HandleQuitClicked();
+			return FReply::Handled();
+		}
+	}
+
+	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
 void UJunCombatHUDWidget::HidePlayerPostureGuide()
 {
 	HideTutorialGuides();
@@ -150,6 +178,25 @@ void UJunCombatHUDWidget::ShowDangerAttackGuide()
 	}
 }
 
+void UJunCombatHUDWidget::ShowAirParryGuide()
+{
+	HideTutorialGuides();
+	if (Tutorial_AirParry_Guide)
+	{
+		Tutorial_AirParry_Guide->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	if (Video_4)
+	{
+		Video_4->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+
+	if (PlayerPostureGuideMediaPlayer && AirParryGuideMediaSource)
+	{
+		PlayerPostureGuideMediaPlayer->SetLooping(true);
+		PlayerPostureGuideMediaPlayer->OpenSource(AirParryGuideMediaSource);
+	}
+}
+
 void UJunCombatHUDWidget::HideTutorialGuides()
 {
 	if (PlayerPostureGuideMediaPlayer)
@@ -187,6 +234,14 @@ void UJunCombatHUDWidget::HideTutorialGuides()
 	if (Video_3_Sub)
 	{
 		Video_3_Sub->SetVisibility(ESlateVisibility::Hidden);
+	}
+	if (Tutorial_AirParry_Guide)
+	{
+		Tutorial_AirParry_Guide->SetVisibility(ESlateVisibility::Hidden);
+	}
+	if (Video_4)
+	{
+		Video_4->SetVisibility(ESlateVisibility::Hidden);
 	}
 }
 
@@ -340,6 +395,8 @@ void UJunCombatHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 	UpdateDeathUI(InDeltaTime);
 	UpdateDialogueUI(InDeltaTime);
 	UpdateTutorialDimBlackUI(InDeltaTime);
+	UpdatePauseUI(InDeltaTime);
+	UpdateMapNoticeUI(InDeltaTime);
 
 	if (bDialogueCombatUIHidden)
 	{
@@ -350,6 +407,349 @@ void UJunCombatHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 				Widget->SetVisibility(ESlateVisibility::Hidden);
 			}
 		}
+	}
+}
+
+void UJunCombatHUDWidget::ShowPauseMenu()
+{
+	bRestartFadeToBlackActive = false;
+	bRestartFadeFromBlackActive = false;
+	bRestartLevelRequested = false;
+	PauseDimBlackOpacity = 0.f;
+	TargetPauseDimBlackOpacity = PauseDimBlackTargetOpacity;
+	PauseOptionsOpacity = 1.f;
+	TargetPauseOptionsOpacity = 1.f;
+	RestartFullBlackHoldRemainTime = 0.f;
+	if (Pause_Root)
+	{
+		Pause_Root->SetVisibility(ESlateVisibility::Visible);
+	}
+	SetPauseOptionsVisible(true);
+	ApplyPauseOptionsOpacity();
+	ApplyWidgetOpacity(Pause_DimBlack, PauseDimBlackOpacity, false);
+	HandleRestartUnhovered();
+	HandleQuitUnhovered();
+}
+
+void UJunCombatHUDWidget::HidePauseMenu()
+{
+	bRestartFadeToBlackActive = false;
+	bRestartFadeFromBlackActive = false;
+	bRestartLevelRequested = false;
+	PauseDimBlackOpacity = 0.f;
+	TargetPauseDimBlackOpacity = 0.f;
+	PauseOptionsOpacity = 1.f;
+	TargetPauseOptionsOpacity = 1.f;
+	RestartFullBlackHoldRemainTime = 0.f;
+	ApplyPauseOptionsOpacity();
+	ApplyWidgetOpacity(Pause_DimBlack, 0.f, false);
+	if (Pause_Root)
+	{
+		Pause_Root->SetVisibility(ESlateVisibility::Hidden);
+	}
+	HandleRestartUnhovered();
+	HandleQuitUnhovered();
+}
+
+void UJunCombatHUDWidget::ShowMapNotice(int32 NoticeIndex)
+{
+	if (NoticeIndex != 1 && NoticeIndex != 2)
+	{
+		return;
+	}
+
+	ActiveMapNoticeIndex = NoticeIndex;
+	MapNoticeOpacity = 0.f;
+	TargetMapNoticeOpacity = 1.f;
+	MapNoticeHoldRemainTime = MapNoticeHoldDuration;
+	bMapNoticeHolding = false;
+	ApplyMapNoticeVisibility();
+}
+
+void UJunCombatHUDWidget::UpdateMapNoticeUI(float DeltaTime)
+{
+	if (bInitialMapNoticePending)
+	{
+		InitialMapNoticeDelayRemainTime = FMath::Max(0.f, InitialMapNoticeDelayRemainTime - DeltaTime);
+		if (InitialMapNoticeDelayRemainTime <= 0.f)
+		{
+			bInitialMapNoticePending = false;
+			ShowMapNotice(1);
+		}
+	}
+
+	if (ActiveMapNoticeIndex == 0)
+	{
+		return;
+	}
+
+	MapNoticeOpacity = MapNoticeFadeSpeed > 0.f
+		? FMath::FInterpConstantTo(MapNoticeOpacity, TargetMapNoticeOpacity, DeltaTime, MapNoticeFadeSpeed)
+		: TargetMapNoticeOpacity;
+
+	if (TargetMapNoticeOpacity >= 1.f && FMath::IsNearlyEqual(MapNoticeOpacity, 1.f, 0.001f))
+	{
+		MapNoticeOpacity = 1.f;
+		bMapNoticeHolding = true;
+	}
+
+	if (bMapNoticeHolding)
+	{
+		MapNoticeHoldRemainTime = FMath::Max(0.f, MapNoticeHoldRemainTime - DeltaTime);
+		if (MapNoticeHoldRemainTime <= 0.f)
+		{
+			bMapNoticeHolding = false;
+			TargetMapNoticeOpacity = 0.f;
+		}
+	}
+
+	if (TargetMapNoticeOpacity <= 0.f && FMath::IsNearlyZero(MapNoticeOpacity, 0.001f))
+	{
+		MapNoticeOpacity = 0.f;
+		ActiveMapNoticeIndex = 0;
+	}
+
+	ApplyMapNoticeVisibility();
+}
+
+void UJunCombatHUDWidget::ApplyMapNoticeVisibility()
+{
+	const bool bVisible = ActiveMapNoticeIndex != 0 && MapNoticeOpacity > 0.f;
+	if (Map_Notice_Root)
+	{
+		Map_Notice_Root->SetRenderOpacity(MapNoticeOpacity);
+		Map_Notice_Root->SetVisibility(bVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
+	if (Map_Notice_UnderLine)
+	{
+		Map_Notice_UnderLine->SetVisibility(bVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
+	if (Notice_1)
+	{
+		Notice_1->SetVisibility(bVisible && ActiveMapNoticeIndex == 1 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
+	if (Notice_2)
+	{
+		Notice_2->SetVisibility(bVisible && ActiveMapNoticeIndex == 2 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
+}
+
+void UJunCombatHUDWidget::HandleRestartHovered()
+{
+	if (UnderLine_1)
+	{
+		UnderLine_1->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+}
+
+void UJunCombatHUDWidget::HandleRestartUnhovered()
+{
+	if (UnderLine_1)
+	{
+		UnderLine_1->SetVisibility(ESlateVisibility::Hidden);
+	}
+}
+
+void UJunCombatHUDWidget::HandleRestartClicked()
+{
+	BeginRestartFadeToBlack();
+}
+
+void UJunCombatHUDWidget::HandleQuitHovered()
+{
+	if (UnderLine_2)
+	{
+		UnderLine_2->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+}
+
+void UJunCombatHUDWidget::HandleQuitUnhovered()
+{
+	if (UnderLine_2)
+	{
+		UnderLine_2->SetVisibility(ESlateVisibility::Hidden);
+	}
+}
+
+void UJunCombatHUDWidget::HandleQuitClicked()
+{
+	if (AJunPlayerController* PlayerController = GetOwningPlayer<AJunPlayerController>())
+	{
+		PlayerController->QuitPausedGame();
+	}
+}
+
+void UJunCombatHUDWidget::UpdatePauseUI(float DeltaTime)
+{
+	if (!Pause_Root || Pause_Root->GetVisibility() == ESlateVisibility::Hidden)
+	{
+		return;
+	}
+
+	if (bRestartFadeFromBlackActive && LevelIntroBlackHoldRemainTime > 0.f)
+	{
+		const float PreviousHoldRemainTime = LevelIntroBlackHoldRemainTime;
+		LevelIntroBlackHoldRemainTime = FMath::Max(0.f, LevelIntroBlackHoldRemainTime - DeltaTime);
+		PauseDimBlackOpacity = 1.f;
+		ApplyWidgetOpacity(Pause_DimBlack, 1.f, false);
+		if (PreviousHoldRemainTime > 0.f && LevelIntroBlackHoldRemainTime <= 0.f)
+		{
+			bInitialMapNoticePending = true;
+			InitialMapNoticeDelayRemainTime = InitialMapNoticeDelay;
+		}
+		return;
+	}
+
+	const float ActiveFadeSpeed = bRestartFadeToBlackActive
+		? RestartFadeToBlackSpeed
+		: (bRestartFadeFromBlackActive ? RestartFadeFromBlackSpeed : PauseDimBlackFadeSpeed);
+	PauseDimBlackOpacity = ActiveFadeSpeed > 0.f
+		? FMath::FInterpTo(PauseDimBlackOpacity, TargetPauseDimBlackOpacity, DeltaTime, ActiveFadeSpeed)
+		: TargetPauseDimBlackOpacity;
+	if (FMath::IsNearlyEqual(PauseDimBlackOpacity, TargetPauseDimBlackOpacity, 0.001f))
+	{
+		PauseDimBlackOpacity = TargetPauseDimBlackOpacity;
+	}
+	ApplyWidgetOpacity(Pause_DimBlack, PauseDimBlackOpacity, false);
+
+	PauseOptionsOpacity = ActiveFadeSpeed > 0.f
+		? FMath::FInterpTo(PauseOptionsOpacity, TargetPauseOptionsOpacity, DeltaTime, ActiveFadeSpeed)
+		: TargetPauseOptionsOpacity;
+	if (FMath::IsNearlyEqual(PauseOptionsOpacity, TargetPauseOptionsOpacity, 0.001f))
+	{
+		PauseOptionsOpacity = TargetPauseOptionsOpacity;
+	}
+	ApplyPauseOptionsOpacity();
+
+	if (bRestartFadeToBlackActive && PauseDimBlackOpacity >= 0.999f && !bRestartLevelRequested)
+	{
+		RestartFullBlackHoldRemainTime = FMath::Max(0.f, RestartFullBlackHoldRemainTime - DeltaTime);
+		if (RestartFullBlackHoldRemainTime > 0.f)
+		{
+			return;
+		}
+
+		bRestartLevelRequested = true;
+		if (AJunPlayerController* PlayerController = GetOwningPlayer<AJunPlayerController>())
+		{
+			PlayerController->RestartPausedGame();
+		}
+		return;
+	}
+
+	if (bRestartFadeFromBlackActive && PauseDimBlackOpacity <= 0.001f)
+	{
+		bRestartFadeFromBlackActive = false;
+		if (Pause_Root)
+		{
+			Pause_Root->SetVisibility(ESlateVisibility::Hidden);
+		}
+		PauseOptionsOpacity = 1.f;
+		TargetPauseOptionsOpacity = 1.f;
+		SetPauseOptionsVisible(true);
+		ApplyPauseOptionsOpacity();
+		if (AJunPlayerController* PlayerController = GetOwningPlayer<AJunPlayerController>())
+		{
+			PlayerController->CompleteLevelIntroTransition();
+		}
+		return;
+	}
+
+	if (bRestartFadeToBlackActive || bRestartFadeFromBlackActive)
+	{
+		return;
+	}
+
+	if (Restart_Game && Restart_Game->IsHovered())
+	{
+		HandleRestartHovered();
+	}
+	else
+	{
+		HandleRestartUnhovered();
+	}
+
+	if (Quit_Game && Quit_Game->IsHovered())
+	{
+		HandleQuitHovered();
+	}
+	else
+	{
+		HandleQuitUnhovered();
+	}
+}
+
+void UJunCombatHUDWidget::BeginRestartFadeToBlack()
+{
+	if (bRestartFadeToBlackActive || bRestartFadeFromBlackActive)
+	{
+		return;
+	}
+
+	bRestartFadeToBlackActive = true;
+	bRestartLevelRequested = false;
+	TargetPauseDimBlackOpacity = 1.f;
+	TargetPauseOptionsOpacity = 0.f;
+	RestartFullBlackHoldRemainTime = RestartFullBlackHoldDuration;
+	if (Restart_Game)
+	{
+		Restart_Game->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	if (Quit_Game)
+	{
+		Quit_Game->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	HandleRestartUnhovered();
+	HandleQuitUnhovered();
+}
+
+void UJunCombatHUDWidget::BeginRestartFadeFromBlack()
+{
+	bRestartFadeToBlackActive = false;
+	bRestartFadeFromBlackActive = true;
+	bRestartLevelRequested = false;
+	PauseDimBlackOpacity = 1.f;
+	TargetPauseDimBlackOpacity = 0.f;
+	PauseOptionsOpacity = 0.f;
+	TargetPauseOptionsOpacity = 0.f;
+	RestartFullBlackHoldRemainTime = 0.f;
+	LevelIntroBlackHoldRemainTime = LevelIntroBlackHoldDuration;
+	if (Pause_Root)
+	{
+		Pause_Root->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	SetPauseOptionsVisible(false);
+	ApplyPauseOptionsOpacity();
+	ApplyWidgetOpacity(Pause_DimBlack, 1.f, false);
+}
+
+void UJunCombatHUDWidget::SetPauseOptionsVisible(bool bVisible)
+{
+	const ESlateVisibility OptionVisibility = bVisible ? ESlateVisibility::Visible : ESlateVisibility::Hidden;
+	if (Restart_Game)
+	{
+		Restart_Game->SetVisibility(OptionVisibility);
+	}
+	if (Quit_Game)
+	{
+		Quit_Game->SetVisibility(OptionVisibility);
+	}
+	if (!bVisible)
+	{
+		HandleRestartUnhovered();
+		HandleQuitUnhovered();
+	}
+}
+
+void UJunCombatHUDWidget::ApplyPauseOptionsOpacity() const
+{
+	if (Restart_Game)
+	{
+		Restart_Game->SetRenderOpacity(PauseOptionsOpacity);
+	}
+	if (Quit_Game)
+	{
+		Quit_Game->SetRenderOpacity(PauseOptionsOpacity);
 	}
 }
 
@@ -688,11 +1088,39 @@ void UJunCombatHUDWidget::ShowRealDeathUI()
 void UJunCombatHUDWidget::StartFullBlackFadeIn()
 {
 	SetDeathRootVisible(true);
+	bRespawnFullBlackFadeOutActive = false;
 	TargetFullBlackOpacity = 1.f;
+}
+
+void UJunCombatHUDWidget::StartRespawnFadeOut()
+{
+	SetDeathRootVisible(true);
+	bRespawnFullBlackFadeOutActive = true;
+
+	DimBlackOpacity = 0.f;
+	FakeDeathOpacity = 0.f;
+	RealDeathOpacity = 0.f;
+	TargetDimBlackOpacity = 0.f;
+	TargetFakeDeathOpacity = 0.f;
+	TargetRealDeathOpacity = 0.f;
+	TargetFullBlackOpacity = 0.f;
+
+	ApplyWidgetOpacity(DimBlack, 0.f);
+	ApplyWidgetOpacity(Fake_Death, 0.f);
+	ApplyWidgetOpacity(Real_Death, 0.f);
+	if (Die_Select)
+	{
+		Die_Select->SetVisibility(ESlateVisibility::Hidden);
+	}
+	if (Resurrect_Select)
+	{
+		Resurrect_Select->SetVisibility(ESlateVisibility::Hidden);
+	}
 }
 
 void UJunCombatHUDWidget::HideDeathUI()
 {
+	bRespawnFullBlackFadeOutActive = false;
 	DimBlackOpacity = 0.f;
 	FullBlackOpacity = 0.f;
 	FakeDeathOpacity = 0.f;
@@ -849,7 +1277,12 @@ void UJunCombatHUDWidget::UpdateDeathUI(float DeltaTime)
 	};
 
 	DimBlackOpacity = InterpOpacity(DimBlackOpacity, TargetDimBlackOpacity);
-	FullBlackOpacity = InterpOpacity(FullBlackOpacity, TargetFullBlackOpacity);
+	const float FullBlackFadeSpeed = bRespawnFullBlackFadeOutActive
+		? RespawnFullBlackFadeOutSpeed
+		: DeathUIFadeSpeed;
+	FullBlackOpacity = FullBlackFadeSpeed > 0.f
+		? FMath::FInterpTo(FullBlackOpacity, TargetFullBlackOpacity, DeltaTime, FullBlackFadeSpeed)
+		: TargetFullBlackOpacity;
 	FakeDeathOpacity = InterpOpacity(FakeDeathOpacity, TargetFakeDeathOpacity);
 	RealDeathOpacity = InterpOpacity(RealDeathOpacity, TargetRealDeathOpacity);
 
@@ -860,6 +1293,10 @@ void UJunCombatHUDWidget::UpdateDeathUI(float DeltaTime)
 	if (FMath::IsNearlyEqual(FullBlackOpacity, TargetFullBlackOpacity, 0.005f))
 	{
 		FullBlackOpacity = TargetFullBlackOpacity;
+		if (FullBlackOpacity <= 0.f)
+		{
+			bRespawnFullBlackFadeOutActive = false;
+		}
 	}
 	if (FMath::IsNearlyEqual(FakeDeathOpacity, TargetFakeDeathOpacity, 0.005f))
 	{

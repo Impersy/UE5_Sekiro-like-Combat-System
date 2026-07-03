@@ -17,6 +17,11 @@ void UJunCombatVFXSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		return;
 	}
 
+	PerfectParryNiagaraSystem = Settings->PerfectParry.LoadSynchronous();
+	NormalParryNiagaraSystem = Settings->NormalParry.LoadSynchronous();
+	GuardHitNiagaraSystem = Settings->GuardHit.LoadSynchronous();
+	GuardBreakNiagaraSystem = Settings->GuardBreak.LoadSynchronous();
+
 	const TSoftObjectPtr<UNiagaraSystem> BloodAssets[] =
 	{
 		Settings->SplashMetal,
@@ -87,6 +92,33 @@ void UJunCombatVFXSubsystem::SpawnCombatNiagaraAtComponent(
 		LocationComponent->GetComponentTransform(),
 		ScaleMultiplier,
 		bAutoDestroy);
+}
+
+void UJunCombatVFXSubsystem::SpawnDefenseEffect(
+	EJunCombatDefenseVFX EffectType,
+	const USceneComponent* LocationComponent,
+	float ScaleMultiplier)
+{
+	UNiagaraSystem* NiagaraSystem = nullptr;
+	switch (EffectType)
+	{
+	case EJunCombatDefenseVFX::PerfectParry:
+		NiagaraSystem = PerfectParryNiagaraSystem;
+		break;
+	case EJunCombatDefenseVFX::NormalParry:
+		NiagaraSystem = NormalParryNiagaraSystem;
+		break;
+	case EJunCombatDefenseVFX::GuardHit:
+		NiagaraSystem = GuardHitNiagaraSystem;
+		break;
+	case EJunCombatDefenseVFX::GuardBreak:
+		NiagaraSystem = GuardBreakNiagaraSystem;
+		break;
+	default:
+		break;
+	}
+
+	SpawnCombatNiagaraAtComponent(NiagaraSystem, LocationComponent, ScaleMultiplier);
 }
 
 void UJunCombatVFXSubsystem::SpawnBloodImpact(

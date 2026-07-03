@@ -29,8 +29,19 @@ public:
 	FORCEINLINE UStaticMeshComponent* GetWeaponMesh() const { return WeaponMesh; }
 
 public:
+	struct FAttackTraceConfig
+	{
+		EHitReactType HitReactType = EHitReactType::LightHit;
+		FJunAttackDamageData DamageData;
+		FJunAttackDefenseKnockbackData DefenseKnockbackData;
+		FJunAttackDefenseRuleData DefenseRuleData;
+		FJunAttackTraceOverrideData OverrideData;
+		EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail;
+	};
+
 	UFUNCTION(BlueprintCallable)
 	void StartAttackTrace(EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail);
+	void StartAttackTrace(const FAttackTraceConfig& TraceConfig);
 
 	UFUNCTION(BlueprintCallable)
 	void EndAttackTrace(EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail);
@@ -72,16 +83,36 @@ public:
 	void SetWeaponEffectsEnabled(bool bEnabled);
 
 protected:
+	struct FAttackTraceFrame
+	{
+		FVector PreviousStart = FVector::ZeroVector;
+		FVector PreviousEnd = FVector::ZeroVector;
+		FVector CurrentStart = FVector::ZeroVector;
+		FVector CurrentEnd = FVector::ZeroVector;
+		FVector SwingDirection = FVector::ZeroVector;
+		float Radius = 0.f;
+		int32 SampleCount = 2;
+	};
+
 	void UpdateAttackTrace();
+	bool BuildAttackTraceFrame(FAttackTraceFrame& OutFrame) const;
+	void SweepAttackTraceFrame(const FAttackTraceFrame& Frame);
+	void FinishAttackTrace(EJunWeaponNiagaraComponent NiagaraComponentToDeactivate);
 	FVector GetCurrentTraceEndLocation(const FVector& CurrentTraceStart) const;
 	float GetCurrentTraceRadius() const;
 	int32 GetCurrentTraceSampleCount(const FVector& CurrentTraceStart, const FVector& CurrentTraceEnd) const;
 	void DrawAttackTraceDebug(const FVector& TraceStart, const FVector& TraceEnd, bool bSweepDebug, const FVector& PrevStart = FVector::ZeroVector, const FVector& PrevEnd = FVector::ZeroVector) const;
 
 	void ApplyDamageToHitCharacter(const FHitResult& HitResult, const FVector& SwingDirection);
+	class AJunCharacter* ResolveValidHitTarget(const FHitResult& HitResult) const;
+	FJunAttackHitContext BuildAttackHitContext(
+		const FHitResult& HitResult,
+		const FVector& SwingDirection,
+		class AJunCharacter* AttackerCharacter) const;
 	class UNiagaraComponent* GetWeaponNiagaraComponent(EJunWeaponNiagaraComponent ComponentType) const;
 	class UNiagaraComponent* FindNiagaraComponentByName(FName ComponentName) const;
 	void CacheWeaponNiagaraComponents();
+	void InitializeWeaponNiagaraComponents();
 	void WarmupWeaponNiagaraComponents();
 
 protected:
@@ -146,13 +177,13 @@ protected:
 	bool bShowAttackTraceDebugAlways = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace")
-	bool bShowAttackTraceSweepDebug = true;
+	bool bShowAttackTraceSweepDebug = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX")
 	bool bActivateTrailWithAttackTrace = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX|Warmup")
-	bool bWarmupWeaponNiagaraOnBeginPlay = true;
+	bool bWarmupWeaponNiagaraOnBeginPlay = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VFX|Warmup", meta = (ClampMin = "0"))
 	float WeaponNiagaraWarmupDeactivateDelay = 0.05f;
@@ -174,6 +205,8 @@ protected:
 	FJunAttackDefenseKnockbackData AttackDefenseKnockbackData;
 
 	FJunAttackDefenseRuleData AttackDefenseRuleData;
+
+	FAttackTraceConfig ActiveAttackTraceConfig;
 
 	FVector PrevTraceStart = FVector::ZeroVector;
 	FVector PrevTraceEnd = FVector::ZeroVector;

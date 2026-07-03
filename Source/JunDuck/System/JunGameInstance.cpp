@@ -22,3 +22,10 @@ void UJunGameInstance::Shutdown()
 {
 	Super::Shutdown();
 }
+
+bool UJunGameInstance::ConsumeRestartFadeInRequest()
+{
+	const bool bWasRequested = bRestartFadeInRequested;
+	bRestartFadeInRequested = false;
+	return bWasRequested;
+}

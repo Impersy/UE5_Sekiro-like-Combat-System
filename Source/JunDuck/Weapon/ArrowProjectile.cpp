@@ -1,11 +1,9 @@
 #include "Weapon/ArrowProjectile.h"
 
-#include "Character/JunMonster.h"
-#include "Character/JunPlayer.h"
+#include "Combat/JunCombatHitProcessor.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
-#include "System/JunCombatVFXSubsystem.h"
 
 AArrowProjectile::AArrowProjectile()
 {
@@ -149,39 +147,18 @@ void AArrowProjectile::OnArrowOverlap(
 	}
 
 	bHasHit = true;
-	const int32 HpBeforeHit = HitCharacter->GetHp();
-	AJunMonster* HitMonster = Cast<AJunMonster>(HitCharacter);
-	const bool bHitExecutionReadyMonster = HitMonster && HitMonster->IsExecutionReady();
 	const FVector SwingDirection = GetVelocity().GetSafeNormal();
 	FJunAttackDefenseRuleData ResolvedDefenseRuleData = DefenseRuleData;
 	ResolvedDefenseRuleData.bCanBeDodgedByInvincibility = false;
-	if (AJunPlayer* HitPlayer = Cast<AJunPlayer>(HitCharacter))
-	{
-		HitPlayer->ReceiveHit(HitReactType, DamageData.GetFinalDamage(), OwnerCharacter.Get(), SwingDirection, DefenseKnockbackData, ResolvedDefenseRuleData, false);
-	}
-	else if (HitMonster)
-	{
-		HitMonster->ReceiveHit(
-			HitReactType,
-			DamageData.GetFinalDamage(),
-			OwnerCharacter.Get(),
-			SwingDirection,
-			DefenseKnockbackData,
-			ResolvedDefenseRuleData,
-			DamageData.PoiseDamage);
-	}
-
-	if (HitCharacter->GetHp() < HpBeforeHit || bHitExecutionReadyMonster)
-	{
-		if (UJunCombatVFXSubsystem* VFXSubsystem = GetWorld()->GetSubsystem<UJunCombatVFXSubsystem>())
-		{
-			VFXSubsystem->SpawnBloodImpact(
-				HitCharacter->GetMesh(),
-				SweepResult,
-				SwingDirection,
-				OwnerCharacter->GetActorLocation(),
-				HitMonster && HitMonster->WasLastHitPhysicalReactionOnly());
-		}
-	}
+	FJunAttackHitContext HitContext;
+	HitContext.HitReactType = HitReactType;
+	HitContext.DamageData = DamageData;
+	HitContext.Attacker = OwnerCharacter.Get();
+	HitContext.SwingDirection = SwingDirection;
+	HitContext.DefenseKnockbackData = DefenseKnockbackData;
+	HitContext.DefenseRuleData = ResolvedDefenseRuleData;
+	HitContext.HitResult = SweepResult;
+	HitContext.bCanBuildAttackerPostureOnParry = false;
+	FJunCombatHitProcessor::ProcessHit(*HitCharacter, HitContext);
 	Destroy();
 }

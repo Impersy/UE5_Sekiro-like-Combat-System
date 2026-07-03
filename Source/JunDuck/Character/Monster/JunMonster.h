@@ -1,0 +1,1040 @@
+
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Character/JunCharacter.h"
+#include "Interface/JunAttackTargetInterface.h"
+#include "Interface/JunDefenseReactionTargetInterface.h"
+#include "Interface/JunExecutionTargetInterface.h"
+#include "Interface/JunJumpCounterTargetInterface.h"
+#include "Interface/JunLockOnTargetInterface.h"
+#include "Interface/JunMikiriCounterTargetInterface.h"
+#include "Interface/JunPlayerCombatTargetInterface.h"
+#include "JunMonster.generated.h"
+
+/**
+ * 
+ */
+UENUM(BlueprintType)
+enum class EMonsterState : uint8
+{
+	CutsceneWait,
+	Idle,
+	Patrol,
+	Chase,
+	Return,
+	BattleStart,
+	Combat,
+	Dead
+};
+
+UENUM(BlueprintType)
+enum class EMonsterMoveState : uint8
+{
+	Walk,
+	Run,
+	Guard
+};
+
+USTRUCT(BlueprintType)
+struct FMonsterAIData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MonsterAIData")
+	float PatrolRadius = 800.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MonsterAIData")
+	float PatrolWaitTime = 2.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MonsterAIData")
+	float PatrolAcceptRadius = 30.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MonsterAIData")
+	float DetectRange = 1000.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MonsterAIData")
+	float LoseTargetRange = 2500.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MonsterAIData")
+	float ChaseMoveAcceptanceRadius = 110.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MonsterAIData")
+	float BattleStartRange = 400.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MonsterAIData")
+	float CombatBreakRange = 3500.f;
+};
+
+USTRUCT(BlueprintType)
+struct FMonsterAttackSelection
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack")
+	TObjectPtr<class UAnimMontage> Montage = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack")
+	float AttackRange = 250.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack")
+	bool bFaceTargetDuringAttack = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack")
+	float FacingDuration = -1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack")
+	float FacingInterpSpeed = 8.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack")
+	float PlayRate = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack")
+	bool bTryTurnAfterAttack = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attack")
+	float PostAttackTurnStartAngle = 55.f;
+};
+
+USTRUCT(BlueprintType)
+struct FJunMonsterCodeMoveData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Monster|CodeMove", meta = (ClampMin = "0.0"))
+	float MoveSpeed = 2500.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Monster|CodeMove", meta = (ClampMin = "0.0"))
+	float MoveStandOffDistance = 50.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Monster|CodeMove", meta = (ClampMin = "-1.0"))
+	float GroundMotionOverrideDuration = -1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Monster|CodeMove", meta = (ClampMin = "0.0"))
+	float StopDistance = 120.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Monster|CodeMove", meta = (ClampMin = "0.0"))
+	float MaxDistance = 500.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Monster|CodeMove")
+	bool bTrackTarget = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Monster|CodeMove", meta = (ClampMin = "0.0"))
+	float TrackInterpSpeed = 8.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Monster|CodeMove")
+	bool bFaceTarget = true;
+};
+
+UCLASS()
+class JUNDUCK_API AJunMonster : public AJunCharacter, public IJunAttackTargetInterface, public IJunDefenseReactionTargetInterface, public IJunExecutionTargetInterface, public IJunJumpCounterTargetInterface, public IJunLockOnTargetInterface, public IJunMikiriCounterTargetInterface, public IJunPlayerCombatTargetInterface
+{
+	GENERATED_BODY()
+	friend class UJunPlayerExecutionComponent;
+
+public:
+	// Engine / external entry points
+	AJunMonster();
+	virtual void Tick(float DeltaTime) override;
+
+	// Called from AI/path following or weapon/damage systems.
+	void HandlePatrolMoveCompleted(bool bSuccess);
+	void ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* DamageCauser);
+	void ReceiveHit(EHitReactType HitType, float DamageAmount, AActor* DamageCauser, const FVector& SwingDirection);
+	FJunAttackHitResult ReceiveHit(
+		EHitReactType HitType,
+		float DamageAmount,
+		AActor* DamageCauser,
+		const FVector& SwingDirection,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
+		const FJunAttackDefenseRuleData& DefenseRuleData = FJunAttackDefenseRuleData(),
+		float PostureDamageAmount = 0.f);
+	virtual FJunAttackHitResult ProcessAttackHit(const FJunAttackHitContext& Context) override;
+	virtual void OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker) override;
+	virtual void NotifyAttackParriedBy(
+		class AJunPlayer* Parrier,
+		float PostureScale = 1.f,
+		const FJunAttackDefenseRuleData& DefenseRuleData = FJunAttackDefenseRuleData()) override;
+	virtual void NotifyPlayerParrySucceeded(
+		class AJunPlayer* Parrier,
+		bool bPerfectParry,
+		bool bAirParry) override;
+	virtual bool IsMikiriCounterThreatActiveFor(const class AJunPlayer* Player) const override;
+	virtual bool CanBeMikiriCounteredBy(const class AJunPlayer* Player) const override;
+	virtual bool NotifyMikiriCounteredBy(class AJunPlayer* CounterPlayer) override;
+	virtual bool IsExecutionReady() const override;
+	bool WasLastHitPhysicalReactionOnly() const { return bLastHitPhysicalReactionOnly; }
+	virtual bool CanBeExecutedBy(const class AJunPlayer* Player) const override;
+	virtual bool TryBeginExecutionBy(class AJunPlayer* Player) override;
+	virtual void TriggerPendingExecutionMontage(bool bApplyResultImmediately = true) override;
+	virtual void ApplyPendingExecutionResult() override;
+	virtual void CancelPendingExecution() override;
+	void RestoreExecutionCapsuleCollisionIgnore();
+	virtual void ReduceExecutionCapsuleRadius() override;
+	virtual void RestoreExecutionCapsuleRadius() override;
+	virtual bool ShouldIgnoreExecutorCapsuleCollisionDuringExecution() const override { return bIgnoreExecutorCapsuleCollisionDuringExecution; }
+	virtual bool HasExecutionResultApplied() const override;
+	void HandleEquipWeaponNotify();
+
+	// Animation or external gameplay code queries these states.
+	bool HasCombatTarget();
+	bool IsGuardOn() const;
+	virtual bool IsInCombat();
+	bool IsAttacking();
+	bool IsRunning() const;
+	bool ShouldUseRunLocomotion() const;
+	virtual bool ShouldShowBossCombatHUD() const { return false; }
+	virtual bool ShouldUseMonsterWorldHUD() const;
+	EMonsterState GetCurrentState() const;
+	EMonsterMoveState GetMoveState() const;
+	int32 GetCurrentLifeCount() const;
+	int32 GetMaxLifeCount() const;
+	virtual bool IsFinalExecution() const override;
+	virtual FVector GetExecutionCameraTargetPoint() const override;
+	virtual bool CanBeLockedOnBy(const AJunPlayer* Player) const override;
+	virtual FVector GetLockOnCameraTargetPoint() const override;
+	virtual bool IsLockOnExecutionReady() const override;
+	virtual bool CanBeAttackTargetedBy(const AJunPlayer* Player) const override;
+	virtual FVector GetAttackTargetPoint(const AJunPlayer* Player) const override;
+	float GetCurrentPosture() const;
+	float GetMaxPosture() const;
+	FVector2D GetCombatMoveInput() const;
+	float GetDesiredMoveForward() const;
+	float GetDesiredMoveRight() const;
+	float GetDesiredMaxWalkSpeed() const;
+	void SetDesiredMoveAxes(float NewForward, float NewRight);
+	void StopCombatBGM();
+	void SetMonsterWorldHUDRevealed(bool bRevealed);
+	void UpdateMonsterWorldHUD();
+
+	virtual void BeginAttackTraceWindow(
+		EHitReactType HitReactType = EHitReactType::LightHit,
+		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData(),
+		const FJunAttackDefenseRuleData& DefenseRuleData = FJunAttackDefenseRuleData(),
+		EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail,
+		const FJunAttackTraceOverrideData& TraceOverrideData = FJunAttackTraceOverrideData()) override;
+	virtual void EndAttackTraceWindow(EJunWeaponNiagaraComponent NiagaraComponent = EJunWeaponNiagaraComponent::Trail) override;
+	virtual void BeginKickAttackTraceWindow(
+		EHitReactType HitReactType = EHitReactType::LightHit,
+		const FJunAttackDamageData& DamageData = FJunAttackDamageData(),
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData = FJunAttackDefenseKnockbackData()) override;
+	virtual void EndKickAttackTraceWindow() override;
+	virtual void BeginWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType) override;
+	virtual void EndWeaponNiagaraWindow(EJunWeaponNiagaraComponent ComponentType) override;
+	void BeginMonsterCodeMoveWindow(const FJunMonsterCodeMoveData& CodeMoveData);
+	void EndMonsterCodeMoveWindow();
+	void BeginAttackFacingWindow(float InterpSpeed);
+	void EndAttackFacingWindow();
+	void BeginHitReactFacingWindow(float InterpSpeed);
+	void EndHitReactFacingWindow();
+	virtual void HandleGameplayEventNotify(FGameplayTag EventTag) override;
+
+	virtual void ApplyPostureFromPlayer(float Amount) override;
+	virtual void OnPlayerFakeDeathStarted() override;
+	virtual void OnPlayerFakeDeathRevived() override;
+	virtual void OnPlayerRealDeathStarted() override;
+	virtual void OnPlayerRealDeathRespawned() override;
+	virtual FVector ResolveJumpCounterStompAnchorLocation(
+		const class AJunPlayer* Player,
+		const FJunJumpCounterStompPlacementSettings& PlacementSettings) const override;
+	virtual bool IsJumpCounterStompThreatActive() const override;
+	virtual bool CanStartJumpCounterStompFrom(const class AJunPlayer* Player, float MaxStartDistance) const override;
+	virtual void SetJumpCounterStompCollisionIgnored(class AJunPlayer* Player, bool bIgnore) override;
+	virtual void ApplyJumpCounterStompResult(
+		class AJunPlayer* Player,
+		EHitReactType HitReactType,
+		const FJunAttackDamageData& DamageData,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
+		float PostureAmount) override;
+
+protected:
+	// Spawn-time setup: team, weapon, home position and initial top-level state.
+	virtual void BeginPlay() override;
+
+protected:
+	// Top-level state machine.
+	// Enter*() configures the state once, Update*() advances it every Tick.
+	void SetMonsterState(EMonsterState NewState);
+	virtual void EnterPlayerDeathWait();
+	virtual void ResumeAfterPlayerFakeDeath();
+	virtual void ResetAfterPlayerRealDeath();
+	void EnterCutsceneWaitState();
+	void EnterIdleState();
+	void EnterPatrolState();
+	void EnterChaseState();
+	void EnterBattleStartState();
+	void EnterReturnState();
+	virtual void EnterCombatState();
+	void EnterDeadState();
+
+	void Update_State(float DeltaTime);
+	void UpdateCutsceneWait(float DeltaTime);
+	void UpdateIdle(float DeltaTime);
+	void UpdatePatrol(float DeltaTime);
+	void UpdateChase(float DeltaTime);
+	void UpdateBattleStart(float DeltaTime);
+	void UpdateReturn(float DeltaTime);
+	virtual void UpdateCombat(float DeltaTime);
+	void UpdateBattleStartMovementBlend(float DeltaTime);
+	bool PlayCutsceneWaitEquipMontage(float BlendInTime);
+	void UpdateCombatFacing(float DeltaTime);
+	void TryStartCombatTurn();
+	void UpdateCombatTurn(float DeltaTime);
+	bool TryStartTurnTowardsTargetThenState(EMonsterState NextState);
+	bool CanStartGenericTurnTowardsTarget() const;
+	bool CanStartCombatTurn() const;
+	bool CanStartTurnInternal(bool bRequireCombatState) const;
+	bool StartCombatTurnMontage(float YawDelta, bool bSetPendingState, EMonsterState PendingState);
+	void StopMovementForCombatTurn();
+	bool IsCombatTurnPlaying() const;
+	float GetCombatTargetYawDelta() const;
+	UAnimMontage* ChooseCombatTurnMontage(float YawDelta) const;
+	void CancelCombatTurn(float BlendOutTime = 0.05f);
+	void FinishCombatTurnEarly(float BlendOutTime);
+	void UpdateAttack(float DeltaTime);
+	void FinishAttack();
+	virtual FMonsterAttackSelection ChooseNextAttackSelection() const;
+	virtual bool TryStartPostAttackTurn();
+	virtual void OnAttackTick(float DeltaTime);
+	UAnimMontage* GetCurrentAttackMontage() const;
+	const FMonsterAttackSelection& GetCurrentAttackSelection() const;
+	bool TryStartCombatTurnWithThreshold(float MinimumTurnAngle);
+	bool TryGetCombatFacingTargetRotation(FRotator& OutTargetRotation) const;
+	virtual FString GetMonsterDebugExtraText() const;
+
+protected:
+	// AI / target helpers used by the state machine.
+	void TryFindTarget();
+	bool CanDetectTarget(AActor* Target) const;
+	bool CanKeepTarget(AActor* Target) const;
+	bool CanRemainInCombat(AActor* Target) const;
+	bool CanAttackTarget() const;
+	void ChooseNextPatrolLocation();
+	void MoveToLocation(const FVector& Dest, float AcceptanceRadius = -1.f);
+	void MoveToTarget(AActor* Target);
+	void StartChase(AActor* NewTarget);
+	void StopAIMovement();
+	void TryAttack();
+	void ClearCurrentTarget();
+	bool TryHandleDeadCurrentTarget(EMonsterState NextStateIfDead);
+	void StopAllAttackTraces();
+	void UpdateMonsterCodeMove(float DeltaTime);
+	void StopMonsterCodeMove(bool bClearVelocity = true);
+	void ApplyMonsterCodeMoveGroundMotionOverride(float Duration);
+	void RestoreMonsterCodeMoveGroundMotionOverride();
+	virtual void ResetCurrentAttackRuntimeState();
+	bool TryResolveReachableLocationToward(const FVector& DesiredLocation, FVector& OutReachableLocation) const;
+	float GetEffectiveReturnReachedDistance() const;
+	bool HasReachedReturnTarget() const;
+	void ResetCombatTurnState();
+
+protected:
+	// Weapon lifecycle helper.
+	void SpawnAndAttachWeapon();
+	void AttachWeaponToSocket(FName SocketName);
+	void AttachWeaponToHandSocket();
+	void AttachWeaponToSheathedSocket();
+	void SetWeaponVisible(bool bVisible);
+	void SetBowVisible(bool bVisible);
+	void StartCombatBGM();
+
+public:
+	void SpawnAttachedArrow();
+	void FireAttachedArrow(
+		EHitReactType HitReactType,
+		const FJunAttackDamageData& DamageData,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
+		const FJunAttackDefenseRuleData& DefenseRuleData,
+		float Speed,
+		float LifeSeconds,
+		float HomingDuration,
+		float HomingInterpSpeed,
+		float HomingTargetHeightOffset);
+
+protected:
+	// Hit react lifecycle.
+	// Direction is decided from swing direction, not attacker location.
+	enum class EMonsterHitReactionMode : uint8
+	{
+		Montage,
+		PhysicalOnly,
+		SuperArmor
+	};
+
+	struct FMonsterHitReactionDecision
+	{
+		EMonsterHitReactionMode Mode = EMonsterHitReactionMode::PhysicalOnly;
+		ECharacterHitReactDirection Direction = ECharacterHitReactDirection::Front_F;
+		UAnimMontage* Montage = nullptr;
+	};
+
+	FMonsterHitReactionDecision EvaluateMonsterHitReaction(
+		EHitReactType HitType,
+		AActor* DamageCauser,
+		const FVector& SwingDirection,
+		const FJunAttackDefenseRuleData& DefenseRuleData) const;
+	EJunHitReactionOutcome ApplyMonsterHitReaction(
+		const FMonsterHitReactionDecision& Decision,
+		EHitReactType HitType,
+		AActor* DamageCauser,
+		const FVector& SwingDirection,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData);
+	FVector ResolvePhysicalHitDirection(AActor* DamageCauser, const FVector& SwingDirection) const;
+	void StartHitReact(EHitReactType NewHitReact, ECharacterHitReactDirection NewHitDirection);
+	void UpdateHitReact(float DeltaTime);
+	void UpdateHitReactFacing(float DeltaTime);
+	void EndHitReact();
+	void ReleaseHitReactControlLock();
+	virtual void OnHitReactStarted(EHitReactType NewHitReact, ECharacterHitReactDirection NewHitDirection);
+	virtual void OnHitReactEnded(EHitReactType EndedHitReact);
+	virtual void OnIncomingHitResolvedWithoutHitReact(EHitReactType HitType);
+	bool IsInHitReact() const;
+	virtual bool CanBeInterruptedBy(EHitReactType IncomingHitReact) const;
+	virtual bool ShouldStartHitReact(EHitReactType IncomingHitReact) const;
+	virtual EJunDefenseOutcome TryHandleIncomingHitBeforeDamage(
+		EHitReactType HitType,
+		float DamageAmount,
+		AActor* DamageCauser,
+		const FVector& SwingDirection,
+		const FJunAttackDefenseKnockbackData& DefenseKnockbackData,
+		const FJunAttackDefenseRuleData& DefenseRuleData);
+	virtual float GetHitReactDuration(EHitReactType HitType) const;
+	virtual float GetHitReactControlLockDuration(EHitReactType HitType) const;
+	virtual ECharacterHitReactDirection AdjustHitReactDirection(
+		EHitReactType HitType,
+		ECharacterHitReactDirection HitDirection,
+		const FJunAttackDefenseRuleData& DefenseRuleData) const;
+	ECharacterHitReactDirection DetermineHitReactDirection(const AActor* DamageCauser, const FVector& SwingDirection) const;
+	ECharacterHitReactDirection DetermineHitReactDirection(
+		const AActor* DamageCauser,
+		const FVector& SwingDirection,
+		const FJunAttackDefenseRuleData& DefenseRuleData) const;
+	UAnimMontage* GetHitReactMontage(EHitReactType HitType, ECharacterHitReactDirection HitDirection) const;
+	virtual bool CanUpdateBehavior() const;
+	ECharacterKnockbackDirection DetermineKnockbackDirectionFromDamageCauser(const AActor* DamageCauser) const;
+	void ApplyHitReactKnockback(AActor* DamageCauser, const FJunDefenseKnockbackData& KnockbackData, UAnimMontage* HitReactMontage);
+	void UpdateHitReactKnockbackBraking(float DeltaTime);
+	void RestoreDefaultMonsterMovementBrakingSettings();
+
+protected:
+	virtual void AddPosture(float Amount);
+	void UpdatePostureRecovery(float DeltaTime);
+	bool CanRecoverPosture() const;
+	bool IsTargetMaintainingAttackPosturePressure() const;
+	float GetPostureRecoveryVitalityScale() const;
+	void StartExecutionReady();
+	void EndExecutionReady();
+	virtual void FinishExecutionRecovery();
+	void UpdateExecutionFacing(float DeltaTime);
+	void ResetExecutionRuntimeState();
+	float GetExecutionMontageDuration(const UAnimMontage* Montage, float FallbackDuration) const;
+	virtual void OnExecutionReadyStarted();
+	virtual void OnExecutionReadyEnded(bool bMissedExecution);
+
+	UFUNCTION()
+	void OnExecutionMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+	UFUNCTION()
+	void OnCutsceneWaitMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+	UFUNCTION()
+	void OnCutsceneWaitEquipMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+protected:
+	// AI tuning / top-level state runtime
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI")
+	FMonsterAIData AIData;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI")
+	EMonsterState CurrentState = EMonsterState::Idle;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI")
+	float StateTime = 0.f; // 어떤 상태에 들어온 후 지난 시간
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI")
+	float BattleStartDuration = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI")
+	float BattleStartMoveBlendDuration = 0.4f;
+
+protected:
+	// Boss intro / staging state. Idle waits in its own montage, then Equip plays and enters BattleStart.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cutscene")
+	bool bStartWithCutsceneWait = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Cutscene")
+	TObjectPtr<class UAnimMontage> CutsceneWaitMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Cutscene")
+	TObjectPtr<class UAnimMontage> CutsceneWaitEquipMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cutscene")
+	FName CutsceneWaitIdleSectionName = TEXT("Idle");
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cutscene", meta = (ClampMin = "0"))
+	float CutsceneWaitEquipBlendInTime = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cutscene", meta = (ClampMin = "0"))
+	float CutsceneTriggerRange = 2000.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Cutscene")
+	bool bCutsceneTriggered = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Cutscene")
+	bool bCutsceneWaitEquipMontageActive = false;
+
+protected:
+	// Runtime references cached after spawn / detection.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Target")
+	TObjectPtr<AActor> CurrentTarget = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
+	TObjectPtr<class AWeaponActor> EquippedWeapon = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
+	TObjectPtr<class AWeaponActor> EquippedScabbard = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
+	TObjectPtr<class AWeaponActor> EquippedKickWeapon = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
+	TObjectPtr<class AWeaponActor> EquippedKickWeaponRight = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
+	TObjectPtr<class AWeaponActor> EquippedBow = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
+	TObjectPtr<class AArrowProjectile> AttachedArrow = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
+	bool bWeaponAttachedToHand = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
+	TObjectPtr<class UAudioComponent> CombatBGMComponent = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI")
+	TObjectPtr<class UWidgetComponent> MonsterHUDWidgetComponent = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI")
+	FVector MonsterHUDRelativeLocation = FVector(0.f, 0.f, 170.f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI")
+	FVector2D MonsterHUDBaseDrawSize = FVector2D(320.f, 120.f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI", meta = (ClampMin = "0.0"))
+	float MonsterHUDScaleNearDistance = 500.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI", meta = (ClampMin = "0.0"))
+	float MonsterHUDScaleFarDistance = 2200.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI", meta = (ClampMin = "0.01"))
+	float MonsterHUDNearScale = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI", meta = (ClampMin = "0.01"))
+	float MonsterHUDFarScale = 0.75f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "UI", meta = (ClampMin = "0.0"))
+	float MonsterHUDMaxVisibleDistance = 800.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI")
+	bool bMonsterWorldHUDRevealed = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio|BGM", meta = (ToolTip = "Assign a looping BGM asset for boss combat."))
+	TObjectPtr<class USoundBase> CombatBGM = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio|BGM", meta = (ClampMin = "0"))
+	float CombatBGMFadeInTime = 0.1f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio|BGM", meta = (ClampMin = "0"))
+	float CombatBGMFadeOutTime = 1.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio|SFX")
+	TObjectPtr<class USoundBase> BossClearSound = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio|SFX", meta = (ClampMin = "0"))
+	float BossClearSoundVolume = 1.0f;
+
+protected:
+	// Patrol / return runtime data.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Patrol")
+	FVector HomeLocation = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Patrol")
+	FRotator HomeRotation = FRotator::ZeroRotator;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Patrol")
+	FVector PatrolTargetLocation = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Patrol")
+	bool bStartWithPatrol = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Patrol")
+	float IdleToPatrolDelay = 0.5f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Return")
+	FVector LastKnownTargetLocation = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Return")
+	FVector ReturnTargetLocation = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Return")
+	float SearchWaitTime = 5.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Return")
+	float ReturnAcceptRadius = 120.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Return")
+	float ReturnReachedTolerance = 15.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Return")
+	bool bIsSearching = false;
+
+protected:
+	// Combat / movement runtime flags and transient values.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
+	bool bDebugFreezeMovement = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	bool bIsGuardOn = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	bool bIsAttacking = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	bool bAttackInterruptedByHitReact = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|CodeMove")
+	bool bMonsterCodeMoveActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|CodeMove")
+	FJunMonsterCodeMoveData ActiveMonsterCodeMoveData;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|CodeMove")
+	FVector MonsterCodeMoveStartLocation = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|CodeMove")
+	bool bMonsterCodeMoveGroundMotionOverrideActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|CodeMove")
+	float MonsterCodeMoveGroundMotionOverrideRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|CodeMove")
+	float MonsterCodeMoveDefaultGroundFriction = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|CodeMove")
+	float MonsterCodeMoveDefaultBrakingDecelerationWalking = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|CodeMove")
+	float MonsterCodeMoveDefaultBrakingFrictionFactor = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	bool bCombatTurnInProgress = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	bool bHasPendingStateAfterCombatTurn = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	float AttackTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	float AttackFacingRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Target")
+	bool bIsHasTarget = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
+	bool bIsRunning = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
+	bool bRunLocomotionRequested = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement")
+	float CombatFacingInterpSpeed = 4.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement")
+	float AttackFacingInterpSpeed = 8.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat")
+	float CombatTurnStartAngle = 55.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat")
+	float CombatTurn180Threshold = 95.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat")
+	float CombatTurnMaxGroundSpeed = 10.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Turn", meta = (ClampMin = "0.01"))
+	float CombatTurnPlayRate = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Turn")
+	bool bEarlyBlendOutCombatTurnOnTargetYaw = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Turn", meta = (ClampMin = "0.0"))
+	float CombatTurnEarlyBlendOutYawTolerance = 10.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Turn", meta = (ClampMin = "0.0"))
+	float CombatTurnEarlyBlendOutTime = 0.2f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Debug")
+	bool bDebugCombatTurnYaw = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Debug")
+	float LastCombatTurnStartYaw = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Debug")
+	float LastCombatTurnPostPlayYaw = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Debug")
+	float LastCombatTurnEndYaw = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
+	FVector2D CombatMoveInput = FVector2D::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
+	float DesiredMoveForward = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
+	float DesiredMoveRight = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
+	float BattleStartInitialMoveForward = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
+	float BattleStartInitialMoveRight = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
+	float BattleStartMoveBlendRemainTime = 0.f;
+
+protected:
+	// Execution / posture system shared by normal monsters and bosses.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "1"))
+	int32 MaxLifeCount = 2;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	int32 CurrentLifeCount = 1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "1"))
+	float MaxPosture = 700.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	float CurrentPosture = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	float PostureRecoveryDelayRemainTime = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution")
+	bool bDisablePostureGain = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0"))
+	float ParriedPostureGain = 25.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|PostureRecovery", meta = (ClampMin = "0"))
+	float PostureRecoveryDelay = 2.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|PostureRecovery", meta = (ClampMin = "0"))
+	float PostureRecoveryRate = 50.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|PostureRecovery", meta = (ClampMin = "0"))
+	float AttackPosturePressureDistance = 800.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0.1"))
+	float ExecutionReadyDuration = 2.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|Transition", meta = (ClampMin = "0"))
+	float ExecutionReadyMontageBlendInTime = 0.15f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|Transition", meta = (ClampMin = "0"))
+	float ExecutedMontageBlendInTime = 0.15f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion")
+	bool bEnableExecutionReadySlowMotion = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
+	float ExecutionReadySlowMotionDuration = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0.001", ClampMax = "1"))
+	float ExecutionReadySlowMotionTimeScale = 0.3f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
+	float ExecutionReadySlowMotionBlendInTime = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion", meta = (ClampMin = "0"))
+	float ExecutionReadySlowMotionBlendOutTime = 0.1f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution|SlowMotion")
+	int32 ExecutionReadySlowMotionPriority = 30;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0", ClampMax = "1"))
+	float MissedExecutionPostureRatio = 0.99f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0"))
+	float ExecutionInteractRange = 180.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution", meta = (ClampMin = "0", ClampMax = "180"))
+	float ExecutionFrontAngle = 70.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Execution")
+	bool bIgnoreExecutorCapsuleCollisionDuringExecution = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution")
+	TObjectPtr<class UAnimMontage> ReadyExecutedMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution")
+	TObjectPtr<class UAnimMontage> ExecutedMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution")
+	TObjectPtr<class UAnimMontage> ExecutedDeathMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Execution")
+	TObjectPtr<class UAnimMontage> ExecutedFinishMontage = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	bool bExecutionReady = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	bool bBeingExecuted = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	bool bExecutionResultApplied = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	float ExecutionReadyRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	float ExecutionInputUnlockRealTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	TObjectPtr<class AJunPlayer> CurrentExecutionInstigator = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	TObjectPtr<class UAnimMontage> CurrentExecutionMontage = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	float SavedExecutionCapsuleRadius = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Execution")
+	bool bExecutionCapsuleRadiusReduced = false;
+
+	FTimerHandle ExecutionRecoveryTimerHandle;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	TObjectPtr<class UAnimMontage> CurrentCombatTurnMontage = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	EMonsterState PendingStateAfterCombatTurn = EMonsterState::Idle;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement")
+	float WalkMoveSpeed = 250.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement")
+	float RunMoveSpeed = 500.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement")
+	float GuardMoveSpeed = 180.f;
+
+protected:
+	// Test attack setup for simple "in range -> attack montage" behavior.
+	UFUNCTION()
+	void OnCombatTurnMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Attack")
+	TObjectPtr<class UAnimMontage> AttackMontage = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Attack")
+	TObjectPtr<class UAnimMontage> CurrentAttackMontage = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Attack")
+	FMonsterAttackSelection CurrentAttackSelection;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Attack")
+	bool bAttackFacingWindowActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Attack")
+	float AttackFacingWindowInterpSpeed = 0.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Turn")
+	TObjectPtr<class UAnimMontage> TurnLeft90Montage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Turn")
+	TObjectPtr<class UAnimMontage> TurnRight90Montage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Turn")
+	TObjectPtr<class UAnimMontage> TurnLeft180Montage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Turn")
+	TObjectPtr<class UAnimMontage> TurnRight180Montage = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Attack")
+	float DefaultAttackDuration = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Attack")
+	float DefaultAttackRange = 250.f;
+
+protected:
+	// Designer-assigned weapon setup.
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	TSubclassOf<class AWeaponActor> DefaultWeaponClass;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	TSubclassOf<class AWeaponActor> DefaultScabbardClass;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Bow")
+	TSubclassOf<class AWeaponActor> DefaultBowClass;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Bow")
+	TSubclassOf<class AArrowProjectile> DefaultArrowProjectileClass;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	TSubclassOf<class AWeaponActor> DefaultKickWeaponClass;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	TSubclassOf<class AWeaponActor> DefaultKickWeaponRightClass;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	FName WeaponSocketName = TEXT("Weapon_r");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	FName SheathedWeaponSocketName = TEXT("katana_ScabSocket");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	FName ScabbardSocketName = TEXT("ScabSocket");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Bow")
+	FName BowSocketName = TEXT("Bow_l");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Bow")
+	FName ArrowSocketName = TEXT("Arrow_r");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	FName KickWeaponSocketName = TEXT("Foot_L");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	FName KickWeaponRightSocketName = TEXT("Foot_R");
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
+	int32 KickWeaponTraceSampleCount = 2;
+
+protected:
+	// Hit react runtime state, timing, and animation assets.
+	UPROPERTY(Transient)
+	bool bLastHitPhysicalReactionOnly = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	EHitReactType CurrentHitReact = EHitReactType::None;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	ECharacterHitReactDirection CurrentHitReactDirection = ECharacterHitReactDirection::Front_F;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float HitReactTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float CurrentHitReactDuration = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float CurrentHitReactControlLockRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<AActor> HitReactFacingTarget = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	bool bHitReactFacingWindowActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float HitReactFacingWindowInterpSpeed = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float HitReactKnockbackBrakingOverrideRemainTime = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	bool bHitReactKnockbackBrakingOverrideActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float HitReactKnockbackBrakingDecelerationOverride = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float HitReactKnockbackGroundFrictionOverride = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float HitReactKnockbackBrakingFrictionFactorOverride = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float DefaultMonsterBrakingDecelerationWalking = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float DefaultMonsterGroundFriction = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float DefaultMonsterBrakingFrictionFactor = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float LightHitDuration = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float HeavyHitDuration = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float LargeHitDuration = 0.6f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float LargeHitLongDuration = 0.8f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact")
+	float LightingShockDuration = 1.8f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact", meta = (ClampMin = "0.0"))
+	float HitReactBlendInTime = 0.15f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "HitReact", meta = (ClampMin = "0.0"))
+	float HitReactRestartBlendInTime = 0.15f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> HeavyHitFront_AMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> HeavyHitFront_BMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> HeavyHitFront_CMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> LargeHitBackMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> LargeHitFrontMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> LargeHitFrontLeftMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> LargeHitFrontRightMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> LargeHitLeftMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> LargeHitRightMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> LightHitBackMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> LightHitFront_FMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> LightHitFront_FLMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> LightHitFront_FRMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> LightHitLeftMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> LightHitRightMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReact")
+	TObjectPtr<class UAnimMontage> LightingShockMontage = nullptr;
+};

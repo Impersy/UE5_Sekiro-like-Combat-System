@@ -14,6 +14,18 @@ class JUNDUCK_API UJunCombatVFXSettings : public UDeveloperSettings
 public:
 	virtual FName GetCategoryName() const override { return TEXT("Game"); }
 
+	UPROPERTY(Config, EditAnywhere, Category = "Defense")
+	TSoftObjectPtr<UNiagaraSystem> PerfectParry;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Defense")
+	TSoftObjectPtr<UNiagaraSystem> NormalParry;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Defense")
+	TSoftObjectPtr<UNiagaraSystem> GuardHit;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Defense")
+	TSoftObjectPtr<UNiagaraSystem> GuardBreak;
+
 	UPROPERTY(Config, EditAnywhere, Category = "Blood")
 	TSoftObjectPtr<UNiagaraSystem> SplashMetal;
 

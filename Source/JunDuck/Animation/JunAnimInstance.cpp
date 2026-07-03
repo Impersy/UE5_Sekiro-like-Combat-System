@@ -2,9 +2,9 @@
 
 
 #include "Animation/JunAnimInstance.h"
-#include "Character/JunMonster.h"
-#include "Character/JunPlayer.h"
-#include "Character/JunTutorialNPC.h"
+#include "Character/Monster/JunMonster.h"
+#include "Character/Player/JunPlayer.h"
+#include "Character/Monster/TutorialNPC/JunTutorialNPC.h"
 #include "JunGameplayTags.h"
 #include "Engine/Engine.h"
 #include "GameFramework/CharacterMovementComponent.h"

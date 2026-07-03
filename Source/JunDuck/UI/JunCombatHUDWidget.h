@@ -65,6 +65,9 @@ public:
 	void ShowDangerAttackGuide();
 
 	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Tutorial")
+	void ShowAirParryGuide();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Tutorial")
 	void HideTutorialGuides();
 
 	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Tutorial")
@@ -119,10 +122,25 @@ public:
 	void StartFullBlackFadeIn();
 
 	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Death")
+	void StartRespawnFadeOut();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Death")
 	void HideDeathUI();
 
 	UFUNCTION(BlueprintPure, Category = "CombatHUD|Death")
 	bool IsFullBlackOpaque() const;
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Pause")
+	void ShowPauseMenu();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|Pause")
+	void HidePauseMenu();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatHUD|MapNotice")
+	void ShowMapNotice(int32 NoticeIndex);
+
+	UFUNCTION(BlueprintPure, Category = "CombatHUD|MapNotice")
+	bool IsMapNoticeActive() const { return ActiveMapNoticeIndex != 0 || bInitialMapNoticePending; }
 
 	UFUNCTION(BlueprintPure, Category = "CombatHUD")
 	float GetPlayerHealthPercent() const { return PlayerHealthPercent; }
@@ -152,12 +170,31 @@ protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 
 	UFUNCTION()
 	void HandleTutorialGuideMediaOpened(FString OpenedUrl);
 
 	UFUNCTION()
 	void HandleTutorialGuideSubMediaOpened(FString OpenedUrl);
+
+	UFUNCTION()
+	void HandleRestartHovered();
+
+	UFUNCTION()
+	void HandleRestartUnhovered();
+
+	UFUNCTION()
+	void HandleRestartClicked();
+
+	UFUNCTION()
+	void HandleQuitHovered();
+
+	UFUNCTION()
+	void HandleQuitUnhovered();
+
+	UFUNCTION()
+	void HandleQuitClicked();
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "CombatHUD")
 	void OnPlayerHealthChanged(int32 CurrentHealth, int32 MaxHealth, float HealthPercent);
@@ -194,6 +231,13 @@ private:
 	void UpdateDeathUI(float DeltaTime);
 	void UpdateDialogueUI(float DeltaTime);
 	void UpdateTutorialDimBlackUI(float DeltaTime);
+	void UpdatePauseUI(float DeltaTime);
+	void UpdateMapNoticeUI(float DeltaTime);
+	void ApplyMapNoticeVisibility();
+	void BeginRestartFadeToBlack();
+	void BeginRestartFadeFromBlack();
+	void SetPauseOptionsVisible(bool bVisible);
+	void ApplyPauseOptionsOpacity() const;
 	void ApplyWidgetOpacity(UWidget* Widget, float Opacity, bool bHideWhenZero = true) const;
 	void SetDeathRootVisible(bool bVisible);
 	void ApplyDialogueVisibility();
@@ -312,6 +356,7 @@ private:
 	float TargetFullBlackOpacity = 0.f;
 	float TargetFakeDeathOpacity = 0.f;
 	float TargetRealDeathOpacity = 0.f;
+	bool bRespawnFullBlackFadeOutActive = false;
 	float BossClearOpacity = 0.f;
 	float TargetBossClearOpacity = 0.f;
 	float BossClearHoldRemainTime = 0.f;
@@ -319,6 +364,22 @@ private:
 	float TargetDialogueBackgroundOpacity = 0.f;
 	float TutorialDimBlackOpacity = 0.f;
 	float TargetTutorialDimBlackOpacity = 0.f;
+	float PauseDimBlackOpacity = 0.f;
+	float TargetPauseDimBlackOpacity = 0.f;
+	float PauseOptionsOpacity = 1.f;
+	float TargetPauseOptionsOpacity = 1.f;
+	float RestartFullBlackHoldRemainTime = 0.f;
+	float LevelIntroBlackHoldRemainTime = 0.f;
+	bool bRestartFadeToBlackActive = false;
+	bool bRestartFadeFromBlackActive = false;
+	bool bRestartLevelRequested = false;
+	int32 ActiveMapNoticeIndex = 0;
+	float MapNoticeOpacity = 0.f;
+	float TargetMapNoticeOpacity = 0.f;
+	float MapNoticeHoldRemainTime = 0.f;
+	float InitialMapNoticeDelayRemainTime = 0.f;
+	bool bMapNoticeHolding = false;
+	bool bInitialMapNoticePending = false;
 	FText CurrentDialogueText;
 	FText CurrentDialogueSpeakerName;
 
@@ -330,6 +391,33 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Tutorial", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
 	float TutorialDimBlackFadeSpeed = 2.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Pause", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float PauseDimBlackFadeSpeed = 5.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Pause", meta = (AllowPrivateAccess = "true", ClampMin = "0", ClampMax = "1"))
+	float PauseDimBlackTargetOpacity = 0.8f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Pause", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float RestartFadeToBlackSpeed = 4.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Pause", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float RestartFadeFromBlackSpeed = 2.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Pause", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float LevelIntroBlackHoldDuration = 1.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|MapNotice", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float MapNoticeFadeSpeed = 5.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|MapNotice", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float MapNoticeHoldDuration = 2.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|MapNotice", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float InitialMapNoticeDelay = 0.7f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Pause", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float RestartFullBlackHoldDuration = 0.1f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Tutorial|PlayerPostureGuide", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UMediaPlayer> PlayerPostureGuideMediaPlayer;
@@ -349,6 +437,9 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Tutorial|DangerAttackGuide", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UMediaSource> DangerAttackGuideSubMediaSource;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Tutorial|AirParryGuide", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UMediaSource> AirParryGuideMediaSource;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|BossClear", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
 	float BossClearFadeInSpeed = 2.5f;
 
@@ -360,6 +451,9 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Death", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
 	float DeathUIFadeSpeed = 2.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Death", meta = (AllowPrivateAccess = "true", ClampMin = "0"))
+	float RespawnFullBlackFadeOutSpeed = 1.5f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CombatHUD|Death", meta = (AllowPrivateAccess = "true", ClampMin = "0", ClampMax = "1"))
 	float FakeDeathDimBlackOpacity = 0.32f;
@@ -542,10 +636,46 @@ private:
 	TObjectPtr<UImage> Video_3_Sub;
 
 	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Tutorial_AirParry_Guide;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Video_4;
+
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UPanelWidget> Tutorial_Task;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> Task_BackGround;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Pause_Root;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Pause_DimBlack;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Restart_Game;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> UnderLine_1;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Quit_Game;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> UnderLine_2;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Map_Notice_Root;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Map_Notice_UnderLine;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Notice_1;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Notice_2;
 
 	TMap<TWeakObjectPtr<UWidget>, ESlateVisibility> DialogueCombatWidgetVisibilities;
 	bool bDialogueCombatUIHidden = false;

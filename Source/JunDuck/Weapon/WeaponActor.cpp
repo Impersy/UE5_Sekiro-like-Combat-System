@@ -1,11 +1,9 @@
 
 #include "Weapon/WeaponActor.h"
 #include "Character/JunCharacter.h"
-#include "Character/JunMonster.h"
-#include "Character/JunPlayer.h"
+#include "Combat/JunCombatHitProcessor.h"
 #include "DrawDebugHelpers.h"
 #include "NiagaraComponent.h"
-#include "System/JunCombatVFXSubsystem.h"
 
 // Sets default values
 AWeaponActor::AWeaponActor()
@@ -47,14 +45,7 @@ void AWeaponActor::BeginPlay()
 	Super::BeginPlay();
 
 	CacheWeaponNiagaraComponents();
-	if (bWarmupWeaponNiagaraOnBeginPlay)
-	{
-		WarmupWeaponNiagaraComponents();
-	}
-	else
-	{
-		DeactivateAllWeaponNiagara();
-	}
+	InitializeWeaponNiagaraComponents();
 }
 
 // Called every frame
@@ -79,46 +70,69 @@ void AWeaponActor::Tick(float DeltaTime)
 
 void AWeaponActor::StartAttackTrace(EJunWeaponNiagaraComponent NiagaraComponent)
 {
+	FAttackTraceConfig TraceConfig;
+	TraceConfig.HitReactType = AttackHitReactType;
+	TraceConfig.DamageData = AttackDamageData;
+	TraceConfig.DefenseKnockbackData = AttackDefenseKnockbackData;
+	TraceConfig.DefenseRuleData = AttackDefenseRuleData;
+	TraceConfig.OverrideData = ActiveAttackTraceOverrideData;
+	TraceConfig.OverrideData.bUseTraceOverride = bAttackTraceOverrideActive;
+	TraceConfig.NiagaraComponent = NiagaraComponent;
+	StartAttackTrace(TraceConfig);
+}
+
+void AWeaponActor::StartAttackTrace(const FAttackTraceConfig& TraceConfig)
+{
+	if (!TraceStartPoint || !TraceEndPoint)
+	{
+		StopAttackTrace();
+		return;
+	}
+
+	if (bTraceActive)
+	{
+		FinishAttackTrace(ActiveAttackTraceNiagaraComponent);
+	}
+
+	ActiveAttackTraceConfig = TraceConfig;
+	ApplyAttackTraceOverride(TraceConfig.OverrideData);
+	ActiveAttackTraceNiagaraComponent = TraceConfig.NiagaraComponent;
+
 	bTraceActive = true;
 	HitActors.Empty();
-	ActiveAttackTraceNiagaraComponent = NiagaraComponent;
 
 	PrevTraceStart = TraceStartPoint->GetComponentLocation();
 	PrevTraceEnd = GetCurrentTraceEndLocation(PrevTraceStart);
 
 	if (bActivateTrailWithAttackTrace)
 	{
-		ActivateWeaponNiagara(NiagaraComponent);
+		ActivateWeaponNiagara(ActiveAttackTraceNiagaraComponent);
 	}
 }
 
 void AWeaponActor::EndAttackTrace(EJunWeaponNiagaraComponent NiagaraComponent)
 {
-	bTraceActive = false;
-	HitActors.Empty();
-	ActiveAttackTraceNiagaraComponent = NiagaraComponent;
-	ClearAttackTraceOverride();
-
-	if (bActivateTrailWithAttackTrace)
-	{
-		DeactivateWeaponNiagara(NiagaraComponent);
-	}
+	const EJunWeaponNiagaraComponent ComponentToDeactivate = bTraceActive
+		? ActiveAttackTraceNiagaraComponent
+		: NiagaraComponent;
+	FinishAttackTrace(ComponentToDeactivate);
 }
 
 void AWeaponActor::StopAttackTrace()
 {
-	if (!bTraceActive)
-	{
-		return;
-	}
+	FinishAttackTrace(ActiveAttackTraceNiagaraComponent);
+}
 
+void AWeaponActor::FinishAttackTrace(EJunWeaponNiagaraComponent NiagaraComponentToDeactivate)
+{
 	bTraceActive = false;
 	HitActors.Empty();
 	ClearAttackTraceOverride();
+	ActiveAttackTraceConfig = FAttackTraceConfig();
 
 	if (bActivateTrailWithAttackTrace)
 	{
-		DeactivateWeaponNiagara(ActiveAttackTraceNiagaraComponent);
+		DeactivateWeaponNiagara(NiagaraComponentToDeactivate);
 	}
 }
 
@@ -192,14 +206,18 @@ void AWeaponActor::DeactivateWeaponNiagara(EJunWeaponNiagaraComponent ComponentT
 
 void AWeaponActor::DeactivateAllWeaponNiagara()
 {
-	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::Trail);
-	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::SpecialTrail);
-	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::Aura);
-	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::Jigen);
-	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::LightingAura);
-	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::LightingTrail);
-	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::LightingSlash);
-	DeactivateWeaponNiagara(EJunWeaponNiagaraComponent::BloodTrail);
+	TArray<UNiagaraComponent*> NiagaraComponents;
+	GetComponents<UNiagaraComponent>(NiagaraComponents);
+
+	for (UNiagaraComponent* NiagaraComponent : NiagaraComponents)
+	{
+		if (!NiagaraComponent)
+		{
+			continue;
+		}
+
+		NiagaraComponent->DeactivateImmediate();
+	}
 }
 
 void AWeaponActor::SetWeaponEffectsEnabled(bool bEnabled)
@@ -213,36 +231,60 @@ void AWeaponActor::SetWeaponEffectsEnabled(bool bEnabled)
 
 void AWeaponActor::UpdateAttackTrace()
 {
-	if (!TraceStartPoint || !TraceEndPoint)
+	FAttackTraceFrame Frame;
+	if (!BuildAttackTraceFrame(Frame))
 	{
+		StopAttackTrace();
 		return;
 	}
 
-	// 현재 프레임과 이전 프레임의 trace 위치를 비교해서
-	// "이번 공격이 어느 방향으로 스윙됐는지"를 같이 계산한다.
+	SweepAttackTraceFrame(Frame);
+	PrevTraceStart = Frame.CurrentStart;
+	PrevTraceEnd = Frame.CurrentEnd;
+}
 
-	const FVector CurrentTraceStart = TraceStartPoint->GetComponentLocation();
-	const FVector CurrentTraceEnd = GetCurrentTraceEndLocation(CurrentTraceStart);
-	const FVector SwingDirection = (((CurrentTraceStart - PrevTraceStart) + (CurrentTraceEnd - PrevTraceEnd)) * 0.5f).GetSafeNormal();
+bool AWeaponActor::BuildAttackTraceFrame(FAttackTraceFrame& OutFrame) const
+{
+	if (!GetWorld() || !TraceStartPoint || !TraceEndPoint)
+	{
+		return false;
+	}
+
+	OutFrame.PreviousStart = PrevTraceStart;
+	OutFrame.PreviousEnd = PrevTraceEnd;
+	OutFrame.CurrentStart = TraceStartPoint->GetComponentLocation();
+	OutFrame.CurrentEnd = GetCurrentTraceEndLocation(OutFrame.CurrentStart);
+	OutFrame.SwingDirection =
+		(((OutFrame.CurrentStart - OutFrame.PreviousStart) +
+		  (OutFrame.CurrentEnd - OutFrame.PreviousEnd)) * 0.5f).GetSafeNormal();
+	OutFrame.Radius = GetCurrentTraceRadius();
+	OutFrame.SampleCount = GetCurrentTraceSampleCount(OutFrame.CurrentStart, OutFrame.CurrentEnd);
+	return true;
+}
+
+void AWeaponActor::SweepAttackTraceFrame(const FAttackTraceFrame& Frame)
+{
+	if (bShowAttackTraceSweepDebug)
+	{
+		DrawAttackTraceDebug(
+			Frame.CurrentStart,
+			Frame.CurrentEnd,
+			true,
+			Frame.PreviousStart,
+			Frame.PreviousEnd);
+	}
 
 	FCollisionQueryParams QueryParams;
 	QueryParams.AddIgnoredActor(this);
 	QueryParams.AddIgnoredActor(GetOwner());
 
 	TSet<AActor*> CurrentFrameHitActors;
-
-	const int32 SampleCount = GetCurrentTraceSampleCount(CurrentTraceStart, CurrentTraceEnd);
-	if (bShowAttackTraceSweepDebug)
+	for (int32 i = 0; i < Frame.SampleCount; ++i)
 	{
-		DrawAttackTraceDebug(CurrentTraceStart, CurrentTraceEnd, true, PrevTraceStart, PrevTraceEnd);
-	}
+		const float Alpha = static_cast<float>(i) / static_cast<float>(Frame.SampleCount - 1);
 
-	for (int32 i = 0; i < SampleCount; ++i)
-	{
-		const float Alpha = (float)i / (float)(SampleCount - 1);
-
-		const FVector PrevSamplePoint = FMath::Lerp(PrevTraceStart, PrevTraceEnd, Alpha);
-		const FVector CurrSamplePoint = FMath::Lerp(CurrentTraceStart, CurrentTraceEnd, Alpha);
+		const FVector PrevSamplePoint = FMath::Lerp(Frame.PreviousStart, Frame.PreviousEnd, Alpha);
+		const FVector CurrSamplePoint = FMath::Lerp(Frame.CurrentStart, Frame.CurrentEnd, Alpha);
 
 		TArray<FHitResult> HitResults;
 
@@ -252,7 +294,7 @@ void AWeaponActor::UpdateAttackTrace()
 			CurrSamplePoint,
 			FQuat::Identity,
 			TraceChannel,
-			FCollisionShape::MakeSphere(GetCurrentTraceRadius()),
+			FCollisionShape::MakeSphere(Frame.Radius),
 			QueryParams
 		);
 
@@ -283,14 +325,9 @@ void AWeaponActor::UpdateAttackTrace()
 			CurrentFrameHitActors.Add(HitActor);
 			HitActors.Add(HitActor);
 
-			ApplyDamageToHitCharacter(Hit, SwingDirection);
+			ApplyDamageToHitCharacter(Hit, Frame.SwingDirection);
 		}
 	}
-
-	PrevTraceStart = CurrentTraceStart;
-	PrevTraceEnd = CurrentTraceEnd;
-
-
 }
 
 FVector AWeaponActor::GetCurrentTraceEndLocation(const FVector& CurrentTraceStart) const
@@ -433,7 +470,27 @@ void AWeaponActor::CacheWeaponNiagaraComponents()
 	CachedSpecialTrailNiagaraComponent = FindNiagaraComponentByName(SpecialTrailNiagaraComponentName);
 	CachedAuraNiagaraComponent = FindNiagaraComponentByName(AuraNiagaraComponentName);
 	CachedJigenNiagaraComponent = FindNiagaraComponentByName(JigenNiagaraComponentName);
+	CachedLightingAuraNiagaraComponent = FindNiagaraComponentByName(LightingAuraNiagaraComponentName);
+	CachedLightingTrailNiagaraComponent = FindNiagaraComponentByName(LightingTrailNiagaraComponentName);
+	CachedLightingSlashNiagaraComponent = FindNiagaraComponentByName(LightingSlashNiagaraComponentName);
 	CachedBloodTrailNiagaraComponent = FindNiagaraComponentByName(BloodTrailNiagaraComponentName);
+}
+
+void AWeaponActor::InitializeWeaponNiagaraComponents()
+{
+	TArray<UNiagaraComponent*> NiagaraComponents;
+	GetComponents<UNiagaraComponent>(NiagaraComponents);
+
+	for (UNiagaraComponent* NiagaraComponent : NiagaraComponents)
+	{
+		if (!NiagaraComponent)
+		{
+			continue;
+		}
+
+		NiagaraComponent->SetAutoActivate(false);
+		NiagaraComponent->DeactivateImmediate();
+	}
 }
 
 void AWeaponActor::WarmupWeaponNiagaraComponents()
@@ -454,6 +511,18 @@ void AWeaponActor::WarmupWeaponNiagaraComponents()
 	if (CachedJigenNiagaraComponent)
 	{
 		ComponentsToWarmup.Add(CachedJigenNiagaraComponent);
+	}
+	if (CachedLightingAuraNiagaraComponent)
+	{
+		ComponentsToWarmup.Add(CachedLightingAuraNiagaraComponent);
+	}
+	if (CachedLightingTrailNiagaraComponent)
+	{
+		ComponentsToWarmup.Add(CachedLightingTrailNiagaraComponent);
+	}
+	if (CachedLightingSlashNiagaraComponent)
+	{
+		ComponentsToWarmup.Add(CachedLightingSlashNiagaraComponent);
 	}
 	if (CachedBloodTrailNiagaraComponent)
 	{
@@ -523,81 +592,50 @@ void AWeaponActor::DrawAttackTraceDebug(const FVector& TraceStart, const FVector
 
 void AWeaponActor::ApplyDamageToHitCharacter(const FHitResult& HitResult, const FVector& SwingDirection)
 {
-	AActor* HitActor = HitResult.GetActor();
-	AJunCharacter* VictimCharacter = Cast<AJunCharacter>(HitActor);   // 맞은 대상
-	AJunCharacter* AttackerCharacter = Cast<AJunCharacter>(GetOwner()); // 공격한 대상
-
-	// 무기 쪽은 팀/무적/중복 체크까지만 하고,
-	// 실제 피격 반응 선택은 각 캐릭터(특히 몬스터)에게 위임한다.
-	if (VictimCharacter && AttackerCharacter)
+	AJunCharacter* AttackerCharacter = Cast<AJunCharacter>(GetOwner());
+	AJunCharacter* VictimCharacter = ResolveValidHitTarget(HitResult);
+	if (!AttackerCharacter || !VictimCharacter)
 	{
-		if (!VictimCharacter || !AttackerCharacter)
-		{
-			return;
-		}
-
-		// 자기 자신이면 무시
-		if (VictimCharacter == AttackerCharacter)
-		{
-			return;
-		}
-
-		// 생존 체크
-		if (VictimCharacter->Is_Dead())
-		{
-			return;
-		}
-		
-		// Dodge invincibility only ignores attacks that explicitly allow it.
-		if (AttackDefenseRuleData.bCanBeDodgedByInvincibility && VictimCharacter->Is_Invincible())
-		{
-			return;
-		}
-
-		// 팀 체크
-		if (!AttackerCharacter->IsEnemyTo(VictimCharacter))
-		{
-			return;
-		}
-
-		
-		const float FinalDamage = AttackDamageData.GetFinalDamage();
-		const int32 HpBeforeHit = VictimCharacter->GetHp();
-		AJunMonster* HitMonster = Cast<AJunMonster>(VictimCharacter);
-		const bool bHitExecutionReadyMonster = HitMonster && HitMonster->IsExecutionReady();
-
-		if (HitMonster)
-		{
-			HitMonster->ReceiveHit(
-				AttackHitReactType,
-				FinalDamage,
-				AttackerCharacter,
-				SwingDirection,
-				AttackDefenseKnockbackData,
-				AttackDefenseRuleData,
-				AttackDamageData.PoiseDamage);
-		}
-		else if (AJunPlayer* HitPlayer = Cast<AJunPlayer>(VictimCharacter))
-		{
-			HitPlayer->ReceiveHit(AttackHitReactType, FinalDamage, AttackerCharacter, SwingDirection, AttackDefenseKnockbackData, AttackDefenseRuleData);
-		}
-		else
-		{
-			// 일단 플레이어 등 다른 캐릭터는 기존 방식 유지
-			VictimCharacter->OnDamaged(FMath::RoundToInt(FinalDamage), AttackerCharacter);
-		}
-
-		if (VictimCharacter->GetHp() < HpBeforeHit || bHitExecutionReadyMonster)
-		{
-			if (UJunCombatVFXSubsystem* VFXSubsystem = GetWorld()->GetSubsystem<UJunCombatVFXSubsystem>())
-			{
-				VFXSubsystem->SpawnBloodImpact(
-					VictimCharacter->GetMesh(),
-					HitResult,
-					SwingDirection,
-					AttackerCharacter->GetActorLocation(),
-					HitMonster && HitMonster->WasLastHitPhysicalReactionOnly());
-			}
-		}
+		return;
 	}
+
+	FJunCombatHitProcessor::ProcessHit(
+		*VictimCharacter,
+		BuildAttackHitContext(HitResult, SwingDirection, AttackerCharacter));
+}
+
+AJunCharacter* AWeaponActor::ResolveValidHitTarget(const FHitResult& HitResult) const
+{
+	AJunCharacter* AttackerCharacter = Cast<AJunCharacter>(GetOwner());
+	AJunCharacter* VictimCharacter = Cast<AJunCharacter>(HitResult.GetActor());
+	if (!AttackerCharacter || !VictimCharacter ||
+		VictimCharacter == AttackerCharacter ||
+		VictimCharacter->Is_Dead() ||
+		!AttackerCharacter->IsEnemyTo(VictimCharacter))
+	{
+		return nullptr;
+	}
+
+	if (ActiveAttackTraceConfig.DefenseRuleData.bCanBeDodgedByInvincibility && VictimCharacter->Is_Invincible())
+	{
+		return nullptr;
+	}
+
+	return VictimCharacter;
+}
+
+FJunAttackHitContext AWeaponActor::BuildAttackHitContext(
+	const FHitResult& HitResult,
+	const FVector& SwingDirection,
+	AJunCharacter* AttackerCharacter) const
+{
+	FJunAttackHitContext HitContext;
+	HitContext.HitReactType = ActiveAttackTraceConfig.HitReactType;
+	HitContext.DamageData = ActiveAttackTraceConfig.DamageData;
+	HitContext.Attacker = AttackerCharacter;
+	HitContext.SwingDirection = SwingDirection;
+	HitContext.DefenseKnockbackData = ActiveAttackTraceConfig.DefenseKnockbackData;
+	HitContext.DefenseRuleData = ActiveAttackTraceConfig.DefenseRuleData;
+	HitContext.HitResult = HitResult;
+	return HitContext;
 }

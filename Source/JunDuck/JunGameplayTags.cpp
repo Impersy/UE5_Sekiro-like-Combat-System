@@ -39,9 +39,9 @@ UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Boss_Clear, "Event.Notify.Boss.Clear");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Boss_StopCombatBGM, "Event.Notify.Boss.StopCombatBGM");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Boss_DangerAttack, "Event.Notify.Boss.DangerAttack");
 UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Monster_DangerAttack, "Event.Notify.Monster.DangerAttack");
-UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Wukong_ParryCounter, "Event.Notify.Wukong.ParryCounter");
-UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Wukong_ParryCounterFollowUpDecision, "Event.Notify.Wukong.ParryCounterFollowUpDecision");
-UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Wukong_BowAttackRestoreWeapon, "Event.Notify.Wukong.BowAttackRestoreWeapon");
+UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Boss_ParryCounter, "Event.Notify.Boss.ParryCounter");
+UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Boss_ParryCounterFollowUpDecision, "Event.Notify.Boss.ParryCounterFollowUpDecision");
+UE_DEFINE_GAMEPLAY_TAG(Event_Notify_Boss_BowAttackRestoreWeapon, "Event.Notify.Boss.BowAttackRestoreWeapon");
 
 UE_DEFINE_GAMEPLAY_TAG(State_Action_Attack, "State.Action.Attack");
 UE_DEFINE_GAMEPLAY_TAG(State_Action_Dodge, "State.Action.Dodge");
@@ -51,7 +51,6 @@ UE_DEFINE_GAMEPLAY_TAG(State_Condition_Invincible, "State.Condition.Invincible")
 UE_DEFINE_GAMEPLAY_TAG(State_Condition_HitReact, "State.Condition.HitReact");
 UE_DEFINE_GAMEPLAY_TAG(State_Condition_ControlLocked, "State.Condition.ControlLocked");
 UE_DEFINE_GAMEPLAY_TAG(State_Condition_SuperArmor, "State.Condition.SuperArmor");
-UE_DEFINE_GAMEPLAY_TAG(State_Condition_PostHitArmor, "State.Condition.PostHitArmor");
  
 UE_DEFINE_GAMEPLAY_TAG(State_Block_Move, "State.Block.Move");
 UE_DEFINE_GAMEPLAY_TAG(State_Block_Jump, "State.Block.Jump");

@@ -22,4 +22,10 @@ public:
 public:
 	virtual void Init() override;
 	virtual void Shutdown() override;
+
+	void RequestRestartFadeIn() { bRestartFadeInRequested = true; }
+	bool ConsumeRestartFadeInRequest();
+
+private:
+	bool bRestartFadeInRequested = false;
 };

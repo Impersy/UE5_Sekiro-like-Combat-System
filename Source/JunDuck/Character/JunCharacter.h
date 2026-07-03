@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "Interface/HighLightInterface.h"
+#include "Interface/JunCombatHitTargetInterface.h"
 #include "GameplayTagContainer.h"
 #include "JunDefine.h"
 #include "Weapon/JunWeaponEffectTypes.h"
@@ -236,6 +237,93 @@ struct FJunAttackDamageData
 };
 
 USTRUCT(BlueprintType)
+struct FJunAttackHitContext
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHit")
+	EHitReactType HitReactType = EHitReactType::None;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHit")
+	FJunAttackDamageData DamageData;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHit")
+	TObjectPtr<class AJunCharacter> Attacker = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHit")
+	FVector SwingDirection = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHit")
+	FJunAttackDefenseKnockbackData DefenseKnockbackData;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHit")
+	FJunAttackDefenseRuleData DefenseRuleData;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHit")
+	FHitResult HitResult;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHit")
+	bool bCanBuildAttackerPostureOnParry = true;
+};
+
+UENUM(BlueprintType)
+enum class EJunDefenseOutcome : uint8
+{
+	None,
+	Rejected,
+	Invincible,
+	Guarded,
+	NormalParried,
+	PerfectParried,
+	JumpCountered,
+	MikiriCountered
+};
+
+UENUM(BlueprintType)
+enum class EJunHitReactionOutcome : uint8
+{
+	None,
+	Montage,
+	PhysicalOnly,
+	SuperArmor
+};
+
+USTRUCT(BlueprintType)
+struct FJunAttackHitResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHit")
+	bool bProcessed = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHit")
+	EJunDefenseOutcome DefenseOutcome = EJunDefenseOutcome::None;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHit")
+	EJunHitReactionOutcome ReactionOutcome = EJunHitReactionOutcome::None;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHit")
+	bool bDamageApplied = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHit")
+	int32 HpBeforeHit = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHit")
+	int32 HpAfterHit = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHit")
+	bool bWasExecutionReadyBeforeHit = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CombatHit")
+	bool bPhysicalReactionOnly = false;
+
+	bool ShouldSpawnBlood() const
+	{
+		return bProcessed && (HpAfterHit < HpBeforeHit || bWasExecutionReadyBeforeHit);
+	}
+};
+
+USTRUCT(BlueprintType)
 struct FJunPhysicalHitReactionSettings
 {
 	GENERATED_BODY()
@@ -293,7 +381,7 @@ struct FJunPhysicalHitReactionSettings
 };
 
 UCLASS()
-class JUNDUCK_API AJunCharacter : public ACharacter, public IHighLightInterface
+class JUNDUCK_API AJunCharacter : public ACharacter, public IHighLightInterface, public IJunCombatHitTargetInterface
 {
 	GENERATED_BODY()
 
@@ -311,6 +399,7 @@ public:
 
 public:
 	virtual void OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker);
+	virtual FJunAttackHitResult ProcessAttackHit(const FJunAttackHitContext& Context) override;
 
 	virtual void HighLight() override;
 	virtual void UnHighLight() override;
@@ -387,6 +476,8 @@ protected:
 	void PlayDefenseSound(EJunDefenseSoundType SoundType);
 	void SetPendingDefenseSoundType(EJunDefenseSoundType NewSoundType, bool bPlayImmediately = true);
 	void PlayHitDamageSound() const;
+	void PrimeSoundForFirstPlayback(class USoundBase* Sound) const;
+	void PrimeSoundArrayForFirstPlayback(const TArray<TObjectPtr<class USoundBase>>& Sounds) const;
 	void UpdatePhysicalHitReaction(float DeltaTime);
 	void StopPhysicalHitReaction();
 

@@ -35,4 +35,19 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category = "Monster|Movement")
 	bool bUseRunLocomotion = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Monster|IK")
+	float FootPlacementAlpha = 0.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Monster|IK", meta = (ClampMin = "0.0", ClampMax = "90.0"))
+	float FootPlacementSlopeStartAngle = 5.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Monster|IK", meta = (ClampMin = "0.0", ClampMax = "90.0"))
+	float FootPlacementSlopeFullAngle = 15.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Monster|IK", meta = (ClampMin = "0.0"))
+	float FootPlacementAlphaInterpSpeed = 10.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Monster|IK", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float BossEvadeFootPlacementMaxAlpha = 0.3f;
 };

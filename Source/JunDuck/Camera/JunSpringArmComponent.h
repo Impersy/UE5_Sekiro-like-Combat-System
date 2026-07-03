@@ -29,7 +29,7 @@ protected:
 	float CollisionArmInterpSpeedIn = 20.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera Collision", meta = (ClampMin = "0.0"))
-	float CollisionArmInterpSpeedOut = 10.f;
+	float CollisionArmInterpSpeedOut = 3.f;
 
 private:
 	bool bCollisionBlendInitialized = false;

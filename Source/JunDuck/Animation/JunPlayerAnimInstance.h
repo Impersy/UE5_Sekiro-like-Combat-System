@@ -3,7 +3,7 @@
 
 #include "CoreMinimal.h"
 #include "Animation/JunAnimInstance.h"
-#include "Character/JunPlayer.h"
+#include "Character/Player/JunPlayer.h"
 #include "JunPlayerAnimInstance.generated.h"
 
 /**
@@ -50,6 +50,18 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category = "Player|Jump")
 	bool bSuppressAirborneAnim = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Player|IK")
+	float FootPlacementAlpha = 0.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|IK", meta = (ClampMin = "0.0", ClampMax = "90.0"))
+	float FootPlacementSlopeStartAngle = 5.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|IK", meta = (ClampMin = "0.0", ClampMax = "90.0"))
+	float FootPlacementSlopeFullAngle = 15.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|IK", meta = (ClampMin = "0.0"))
+	float FootPlacementAlphaInterpSpeed = 10.f;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Player|Guard")
 	bool bUseGuardBase = false;

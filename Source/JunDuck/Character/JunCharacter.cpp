@@ -15,6 +15,7 @@
 
 namespace
 {
+#if WITH_EDITOR
 	UClass* ResolveNativeComparisonClass(const UObject* Object)
 	{
 		UClass* Class = Object ? Object->GetClass() : nullptr;
@@ -48,6 +49,7 @@ namespace
 		const FString Category = Property->GetMetaData(TEXT("Category"));
 		return Category.IsEmpty() ? TEXT("Uncategorized") : Category;
 	}
+#endif
 }
 
 // Sets default values
@@ -100,6 +102,11 @@ void AJunCharacter::BeginPlay()
 	{
 		DumpRuntimeTuningSettings();
 	}
+
+	PrimeSoundArrayForFirstPlayback(PerfectParrySounds);
+	PrimeSoundArrayForFirstPlayback(NormalParrySounds);
+	PrimeSoundArrayForFirstPlayback(GuardHitSounds);
+	PrimeSoundArrayForFirstPlayback(HitDamageSounds);
 	
 }
 
@@ -125,6 +132,17 @@ void AJunCharacter::OnDamaged(int32 Damage, TObjectPtr<AJunCharacter> Attacker)
 		AddGameplayTag(JunGameplayTags::State_Condition_Dead);
 	}
 
+}
+
+FJunAttackHitResult AJunCharacter::ProcessAttackHit(const FJunAttackHitContext& Context)
+{
+	FJunAttackHitResult Result;
+	Result.bProcessed = true;
+	Result.HpBeforeHit = GetHp();
+	OnDamaged(FMath::RoundToInt(Context.DamageData.GetFinalDamage()), Context.Attacker);
+	Result.HpAfterHit = GetHp();
+	Result.bDamageApplied = Result.HpAfterHit < Result.HpBeforeHit;
+	return Result;
 }
 
 void AJunCharacter::HighLight()
@@ -154,6 +172,7 @@ void AJunCharacter::HandleDefenseSoundNotify()
 
 void AJunCharacter::DumpRuntimeTuningSettings() const
 {
+#if WITH_EDITOR
 	const UClass* RuntimeClass = GetClass();
 	const UClass* NativeClass = ResolveNativeComparisonClass(this);
 	const UObject* NativeDefaultObject = NativeClass ? NativeClass->GetDefaultObject() : nullptr;
@@ -222,6 +241,7 @@ void AJunCharacter::DumpRuntimeTuningSettings() const
 		PrintedCount,
 		ComparedCount,
 		SkippedBlueprintOnlyCount);
+#endif
 }
 
 void AJunCharacter::BeginAttackTraceWindow(EHitReactType HitReactType, const FJunAttackDamageData& DamageData, const FJunAttackDefenseKnockbackData& DefenseKnockbackData, const FJunAttackDefenseRuleData& DefenseRuleData, EJunWeaponNiagaraComponent NiagaraComponent, const FJunAttackTraceOverrideData& TraceOverrideData)
@@ -812,6 +832,24 @@ void AJunCharacter::PlayRandomDefenseSound(const TArray<TObjectPtr<USoundBase>>&
 
 	USoundBase* SoundToPlay = ValidSounds[FMath::RandRange(0, ValidSounds.Num() - 1)];
 	UGameplayStatics::PlaySoundAtLocation(this, SoundToPlay, GetActorLocation());
+}
+
+void AJunCharacter::PrimeSoundForFirstPlayback(USoundBase* Sound) const
+{
+	if (!Sound)
+	{
+		return;
+	}
+
+	UGameplayStatics::PrimeSound(Sound);
+}
+
+void AJunCharacter::PrimeSoundArrayForFirstPlayback(const TArray<TObjectPtr<USoundBase>>& Sounds) const
+{
+	for (USoundBase* Sound : Sounds)
+	{
+		PrimeSoundForFirstPlayback(Sound);
+	}
 }
 
 void AJunCharacter::PlayHitDamageSound() const

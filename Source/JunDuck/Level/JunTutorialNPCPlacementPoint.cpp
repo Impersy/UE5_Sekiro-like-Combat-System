@@ -1,6 +1,6 @@
 #include "Level/JunTutorialNPCPlacementPoint.h"
 
-#include "Character/JunTutorialNPC.h"
+#include "Character/Monster/TutorialNPC/JunTutorialNPC.h"
 #include "Components/ArrowComponent.h"
 #include "Components/SceneComponent.h"
 #include "Engine/World.h"
